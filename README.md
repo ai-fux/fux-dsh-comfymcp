@@ -24,6 +24,31 @@ node comfy-mcp-server/bin/comfy-mcp-server.mjs --selftest
 node mcp/bin/fux-comfymcp-host.mjs --selftest
 ```
 
+## Python 侧依赖（ComfyUI 链路）
+
+本链路对 Python **只有两个接触点**，全部经 ComfyUI HTTP API（:8000），无任何 Python 进程 spawn、无额外 pip 依赖：
+
+1. **ComfyUI 运行时**（用户自备）：`.venv`（Python 3.12）自行管理；链路只消费其 HTTP API
+   （`/prompt` `/history` `/view` `/object_info`）。
+2. **模型卸载节点 `comfyui-unload-model`**（手动安装进 `ComfyUI/custom_nodes/`）：
+   - 依赖仅 ComfyUI 自带（`comfy.model_management` / `torch` / `gc`），**无需 pip install**；
+   - 注册键名 `UnloadAllModels`（输入 `value: *` 直通、输出 `*`），与 `comfymcp_run_workflow`
+     的链路内插桩契约（上游输出 → value → 原消费者）一致；
+   - 安装后重启 ComfyUI 生效。
+
+**验证清单**（真实模式前逐项过一遍）：
+
+```powershell
+# ① ComfyUI 存活
+Invoke-WebRequest http://127.0.0.1:8000/system_stats -UseBasicParsing
+# ② 卸载节点已注册（返回 JSON 即为已加载）
+Invoke-WebRequest http://127.0.0.1:8000/object_info/UnloadAllModels -UseBasicParsing
+# ③ 链路级探测：comfymcp_status → unload.available = true（等效于 node_search UnloadAllModels）
+```
+
+真实模式后端（stdio MCP）入口：`F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs`
+（Node 程序，内部同样只讲 HTTP）。
+
 ## 部署（挂进 DSH profile）
 
 1. 启动 comfy-mcp 服务端（无 ComfyUI 先用 mock）：
