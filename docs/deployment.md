@@ -53,9 +53,13 @@ ComfyUI（:8000，用户自备，.venv Python 3.12）
 | **内嵌（默认，推荐单机）** | comfy-mcp 服务端由 DSH 插件**自动拉起**：随机空闲端口、随 DSH 启停、无需任何手动操作；ComfyUI 可在本机或局域网任意主机（后端仅走 HTTP） | 本机开发/单人使用 |
 | **外置** | comfy-mcp 服务端按 3.2 单独启动；设置页/行配置关闭内嵌开关，endpoint 指向该服务 | 多消费者共享、独立生命周期、部署在服务器主机 |
 
-内嵌模式的默认配置已写入行配置（`embeddedServer: true` + `serverEntry` + stdio 后端指向
-兄弟项目 `fux-comfyui-mcp.mjs`）；ComfyUI 原版服务即可，无需在 ComfyUI 内装任何 MCP 组件
-（可选 `comfyui-unload-model` 仅用于运行后释放显存）。
+内嵌模式的默认配置已写入行配置（`embeddedServer: true` + stdio 后端指向
+兄弟项目 `fux-comfyui-mcp.mjs`）；**comfy-mcp-server 程序已内置在插件包内**
+（`vendor/comfy-mcp-server.mjs`，esbuild 单文件零依赖打包），部署时无需关心其路径，
+env `DSH_COMFYMCP_SERVER_ENTRY` 或覆盖层 `serverEntry` 可显式覆盖。
+ComfyUI 服务地址可在设置页（内置模式）直接配置（`comfyuiUrl`，默认
+`http://127.0.0.1:8000`，保存后自动重启内置服务）。ComfyUI 原版服务即可，无需在
+ComfyUI 内装任何 MCP 组件（可选 `comfyui-unload-model` 仅用于运行后释放显存）。
 
 ### 3.1 安装仓内依赖并自检
 
@@ -134,7 +138,7 @@ plugin_manager install_bundle <项目>\plugins\dsh-comfymcp-client
 | `COMFY_MCP_BACKEND_CMD` / `_ARGS` | — | stdio 后端启动命令（见 3.2） |
 | `DSH_COMFYUI_URL` | `http://127.0.0.1:8000` | 兄弟后端用的 ComfyUI 地址（其 env 文件管理） |
 | 设置页可改 | endpoint / workflowDirs / saveSubdir / artifactsDir / hostEntry / autoUnloadModel / embeddedServer | 保存进覆盖文件，即时生效 |
-| `embeddedServer` / `serverEntry` / `embeddedBackend` / `embeddedBackendCommand` / `embeddedBackendArgs` | 行配置见 bundle patch | 内嵌服务端：开关 / 服务入口 / `mock`\|`stdio` / 后端命令 / 后端参数；env 别名 `DSH_COMFYMCP_SERVER_ENTRY` |
+| `embeddedServer` / `comfyuiUrl` / `embeddedBackend` / `embeddedBackendCommand` / `embeddedBackendArgs` / `serverEntry` | 行配置见 bundle patch | 内嵌服务端：开关 / ComfyUI 服务地址（设置页可配，保存即热重启内置服务）/ `mock`\|`stdio` / 后端命令 / 后端参数 / 服务入口（默认用插件内置 vendor 包）；env 别名 `DSH_COMFYMCP_SERVER_ENTRY` |
 
 完整示例见 [`config/comfymcp.env`](../config/comfymcp.env)。
 

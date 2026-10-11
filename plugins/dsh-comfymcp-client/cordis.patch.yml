@@ -15,10 +15,12 @@
         autoConnect: true
         requestTimeoutMs: 30000
         callTimeoutMs: 300000
-        # 内嵌 comfy-mcp 服务端：插件自动拉起（port 0 随机端口），无需单独部署/启动；
-        # 关闭（设置页开关或此处 false）则连接上方 endpoint 指向的外置服务。
+        # 内嵌 comfy-mcp 服务端：插件自动拉起（port 0 随机端口），无需单独部署/启动。
+        # 服务端程序已内置在插件包（vendor/comfy-mcp-server.mjs），无需配置路径；
+        # env DSH_COMFYMCP_SERVER_ENTRY 或设置页可显式覆盖。
+        # 关闭（设置页「远程地址」模式）则连接上方 endpoint 指向的外置服务。
         embeddedServer: true
-        serverEntry: F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp\comfy-mcp-server\bin\comfy-mcp-server.mjs
+        comfyuiUrl: http://127.0.0.1:8000
         embeddedBackend: stdio
         embeddedBackendCommand: node
         embeddedBackendArgs: F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs

@@ -57,6 +57,7 @@ export const OVERLAY_KEYS = [
   'embeddedBackend',
   'embeddedBackendCommand',
   'embeddedBackendArgs',
+  'comfyuiUrl',
   'controlToken',
 ]
 

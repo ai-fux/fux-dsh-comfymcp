@@ -14,12 +14,14 @@
   "scripts": {
     "start": "node bin/comfy-mcp-server.mjs",
     "selftest": "node bin/comfy-mcp-server.mjs --selftest",
+    "build:vendor": "esbuild src/main.ts --bundle --platform=node --format=esm --legal-comments=none --outfile=../plugins/dsh-comfymcp-client/vendor/comfy-mcp-server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "esbuild": "0.28.2",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -19,6 +19,7 @@ export const DEFAULTS = Object.freeze({
   embeddedBackend: 'mock',
   embeddedBackendCommand: 'node',
   embeddedBackendArgs: '',
+  comfyuiUrl: 'http://127.0.0.1:8000',
   controlPort: 18801,
   controlToken: '',
 })
@@ -147,15 +148,22 @@ export function candidateHostEntries(pluginDir) {
 }
 
 /**
- * Resolve the comfy-mcp-server entry for embedded mode: explicit config/env wins,
- * then derive from the host entry's sibling layout (…/mcp/bin → …/comfy-mcp-server/bin).
+ * Resolve the comfy-mcp-server entry for embedded mode, most specific first:
+ * 1. env override (DSH_COMFYMCP_SERVER_ENTRY / COMFY_MCP_SERVER_ENTRY)
+ * 2. explicit config (row/overlay serverEntry)
+ * 3. the BUNDLED copy shipped inside the plugin (vendor/comfy-mcp-server.mjs) —
+ *    makes the plugin self-contained on any machine
+ * 4. derivation from the host entry's sibling layout (…/mcp/bin → …/comfy-mcp-server/bin)
  */
-export function resolveServerEntry(env = {}, serverEntry, hostEntry) {
+export function resolveServerEntry(env = {}, serverEntry, hostEntry, pluginDir = '') {
   for (const name of ['DSH_COMFYMCP_SERVER_ENTRY', 'COMFY_MCP_SERVER_ENTRY']) {
     const value = env[name]
     if (typeof value === 'string' && value.trim().length > 0) return value.trim()
   }
   if (typeof serverEntry === 'string' && serverEntry.trim().length > 0) return serverEntry.trim()
+  if (typeof pluginDir === 'string' && pluginDir.trim().length > 0) {
+    return `${pluginDir.trim().replaceAll('\\', '/')}/vendor/comfy-mcp-server.mjs`
+  }
   if (typeof hostEntry === 'string' && hostEntry.trim().length > 0) {
     const normalized = hostEntry.trim().replaceAll('\\', '/')
     const cut = normalized.lastIndexOf('/mcp/bin/')

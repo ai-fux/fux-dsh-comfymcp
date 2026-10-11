@@ -50,6 +50,7 @@ export class ComfymcpBridge {
         }))
     this.client = null
     this.embedded = null
+    this.pluginDir = typeof options.pluginDir === 'string' ? options.pluginDir : ''
     this.runs = new Map()
     this.runOrder = []
     this.unloadProbe = { at: 0, available: false, reason: 'not-probed' }
@@ -66,14 +67,35 @@ export class ComfymcpBridge {
    * Apply a persisted overlay patch on top of the effective config (panel write
    * path). Mutates `this.config` in place so every holder sees the update; the
    * stdio client picks the new host entry up on its next spawn.
+   *
+   * 内嵌服务正在运行时，凡影响内嵌子进程的键发生变化 → 就地重启内嵌服务
+   * （杀旧子进程、清 endpoint，下一次探测/调用按新配置重新拉起）。
    */
   applyOverlay(patch) {
+    const previous = { ...this.config }
+    // 只应用补丁里出现的键：resolveConfig 会为缺省键填默认值，直接全量合并
+    // 会把未指定的布尔/端口重置回默认（例如 embeddedServer 被清成 false）。
     const overlay = resolveConfig(patch ?? {}, {}, resolve)
-    for (const [key, value] of Object.entries(overlay)) {
-      this.config[key] = value
+    for (const key of Object.keys(patch ?? {})) {
+      if (key in overlay) {
+        this.config[key] = overlay[key]
+      }
     }
     // 配置变了：下次探测/调用按新配置重连（旧客户端保留到失败为止）
     this.unloadProbe = { at: 0, available: false, reason: 'config-changed' }
+    if (this.embedded !== null) {
+      const EMBEDDED_KEYS = ['comfyuiUrl', 'embeddedBackend', 'embeddedBackendCommand', 'embeddedBackendArgs', 'serverEntry']
+      const changed = EMBEDDED_KEYS.some((key) => String(previous[key] ?? '') !== String(this.config[key] ?? ''))
+      if (changed) {
+        this.log('embedded-affecting config changed; restarting the embedded comfy-mcp server')
+        try {
+          this.embedded.kill()
+        } catch {
+          /* ignore */
+        }
+        this.embedded = null
+      }
+    }
     return { ...this.config }
   }
 
@@ -108,7 +130,7 @@ export class ComfymcpBridge {
       this.log(`embedded comfy-mcp server at ${this.embedded.url} (injected spawner)`)
       return this.embedded
     }
-    const entry = resolveServerEntry(process.env, this.config.serverEntry, this.config.hostEntry)
+    const entry = resolveServerEntry(process.env, this.config.serverEntry, this.config.hostEntry, this.pluginDir)
     if (entry === '') {
       throw new Error('内嵌服务端未配置 serverEntry（或无法从 hostEntry 推导 comfy-mcp-server 路径）')
     }
@@ -124,6 +146,8 @@ export class ComfymcpBridge {
         COMFY_MCP_BACKEND: this.config.embeddedBackend === 'stdio' ? 'stdio' : 'mock',
         ...(this.config.embeddedBackendCommand ? { COMFY_MCP_BACKEND_CMD: this.config.embeddedBackendCommand } : {}),
         ...(this.config.embeddedBackendArgs ? { COMFY_MCP_BACKEND_ARGS: this.config.embeddedBackendArgs } : {}),
+        // 面板可配的 ComfyUI 地址：server 透传给 stdio 后端（兄弟约定键 COMFYUI_URL）
+        ...(this.config.comfyuiUrl ? { COMFYUI_URL: this.config.comfyuiUrl } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

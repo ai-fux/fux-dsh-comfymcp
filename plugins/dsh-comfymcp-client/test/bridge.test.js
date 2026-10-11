@@ -98,6 +98,57 @@ describe('ComfymcpBridge.embeddedServer', () => {
     expect(bridge.config.endpoint).toBe('http://127.0.0.1:18800/mcp')
   })
 
+  it('restarts the embedded server when embedded-affecting config changes on applyOverlay', async () => {
+    let started = 0
+    let killed = 0
+    const bridge = makeBridge({ embeddedServer: true, comfyuiUrl: 'http://127.0.0.1:8000' }, {
+      embeddedSpawner: async () => {
+        started += 1
+        return { url: `http://127.0.0.1:41${String(started).padStart(3, '0')}/mcp`, kill: () => { killed += 1 } }
+      },
+      clientFactory: () => ({ serverInfo: null, initialize: async () => {}, close: async () => {}, status: () => ({}) }),
+    })
+    await bridge.ensureReady()
+    expect(started).toBe(1)
+    bridge.applyOverlay({ comfyuiUrl: 'http://192.168.1.7:8000' })
+    expect(bridge.embedded).toBeNull()
+    expect(killed).toBe(1)
+    await bridge.ensureReady()
+    expect(started).toBe(2)
+    expect(bridge.config.endpoint).toBe('http://127.0.0.1:41002/mcp')
+  })
+
+  it('passes COMFYUI_URL to the embedded server child env', async () => {
+    let capturedEnv = null
+    const fakeChild = {
+      stdout: { on: () => {} },
+      stderr: { on: () => {} },
+      on: (event, handler) => { if (event === 'exit') setTimeout(() => handler(1), 5) },
+    }
+    const entry = join(workdir, 'fake-server.mjs')
+    await writeFile(entry, '// fake server entry\n')
+    const bridge = makeBridge({ embeddedServer: true, comfyuiUrl: 'http://10.0.0.8:8000', serverEntry: entry }, {
+      spawn: (command, args, opts) => {
+        capturedEnv = opts.env
+        return fakeChild
+      },
+      clientFactory: () => ({ serverInfo: null, initialize: async () => {}, close: async () => {}, status: () => ({}) }),
+    })
+    await expect(bridge.ensureReady()).rejects.toThrow(/提前退出|未报告监听地址/)
+    expect(capturedEnv.COMFYUI_URL).toBe('http://10.0.0.8:8000')
+  })
+
+  it('resolves the bundled vendor entry when pluginDir is set', async () => {
+    const { resolveServerEntry } = await import('../lib/config.js')
+    const entry = resolveServerEntry({}, '', join(workdir, 'fake-host.mjs'), 'F:/deploy/profile/node_modules/dsh-comfymcp-client')
+    expect(entry).toBe('F:/deploy/profile/node_modules/dsh-comfymcp-client/vendor/comfy-mcp-server.mjs')
+    // 显式 serverEntry 仍优先于内置包
+    const explicit = resolveServerEntry({}, 'C:/keep.mjs', join(workdir, 'fake-host.mjs'), 'F:/deploy/profile/node_modules/dsh-comfymcp-client')
+    expect(explicit).toBe('C:/keep.mjs')
+    const bridge = makeBridge({}, { pluginDir: 'F:/deploy/profile/node_modules/dsh-comfymcp-client' })
+    expect(bridge.pluginDir).toBe('F:/deploy/profile/node_modules/dsh-comfymcp-client')
+  })
+
   it('detects the unload node in both camelCase and snake_case rows', async () => {
     const makeProbeBridge = (rows) =>
       makeBridge({ autoConnect: false }, {

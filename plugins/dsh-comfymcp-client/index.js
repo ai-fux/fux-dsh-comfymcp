@@ -10,7 +10,8 @@
  * 注册全部同步完成；MCP 宿主进程是懒连接——首次工具调用才 spawn，
  * 所以 comfy-mcp 服务不可达只是调用期错误，绝不影响插件激活。
  */
-import { resolve as resolvePath } from 'node:path'
+import { dirname, resolve as resolvePath } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineTool } from './lib/define.js'
 import { ComfymcpBridge } from './lib/bridge.js'
 import { resolveConfig } from './lib/config.js'
@@ -33,6 +34,8 @@ export function apply(ctx, config) {
   const overlay = persist.readOverlay(overlayPath)
   const effective = resolveConfig({ ...(config ?? {}), ...overlay }, process.env, resolvePath)
   const bridge = new ComfymcpBridge(effective, {
+    // 插件自身目录：内置 comfy-mcp-server（vendor/）的定位基准
+    pluginDir: dirname(fileURLToPath(import.meta.url)),
     log: (line) => console.log(`[dsh-comfymcp-client] ${line}`),
   })
 

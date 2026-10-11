@@ -79,8 +79,9 @@ Host 半区（工具/面板通道）受模块快照冻结约束，**必须重启
 | 启动告警 `1 entry did not activate` | 模块快照冻结（改码后未重启）或激活期异常 | 看堆栈行号是否旧代码 → 重启 DSH；仍复现则按堆栈定位 |
 | 启动有 `cannot get property "webServer"` | 面板通道在 webServer 落位前注册 | 已内置就绪重试；出现即说明运行的是旧代码，重启装载新版 |
 | 设置页显示「connection RPC 不可用」 | 面板通道未挂上（服务端未启动/旧代码） | 确认启动日志有 `panel channel /comfymcp ready`；没有则按上两行处理 |
-| `comfymcp_status` ok:false | comfy-mcp 服务端没起 / 端点错 | 内嵌模式：看日志有无 `embedded comfy-mcp server at <url>`；外置模式：起 18800 服务端后核对 endpoint |
-| 内嵌启动失败 `内嵌服务端…未报告监听地址/入口不存在` | serverEntry 路径不对或服务自身崩了 | 核对行配置 `serverEntry`；手动 `node comfy-mcp-server\bin\comfy-mcp-server.mjs --selftest` 验证 |
+| 设置页全部读写失败（测试不行/保存失败） | 静态挂载拿不到 connection RPC（平台限制）；环回控制端点未启动 | 看启动日志 `设置页通道就绪：http://127.0.0.1:18801`；没有则说明运行旧代码，重启 DSH |
+| `comfymcp_status` ok:false | comfy-mcp 服务端没起 / 端点错 | 内置模式：看日志有无 `embedded comfy-mcp server at <url>`；远程模式：起 18800 服务端后核对 endpoint |
+| 内嵌启动失败 `内嵌服务端…未报告监听地址/入口不存在` | 服务入口不对或服务自身崩了 | 服务端已内置（vendor 包）；env `DSH_COMFYMCP_SERVER_ENTRY` 覆盖时核对该路径；手动 `node <插件目录>\vendor\comfy-mcp-server.mjs --selftest` 验证 |
 | 卸载开关置灰 | 未连接，或服务端无 UnloadAllModels | 接通后自动可用；真实模式按部署文档 §5 验证 object_info |
 | 运行报 ComfyUI 相关错误 | ComfyUI 未运行/显存不足/图不合法 | 查 :8000 存活；看 ComfyUI 控制台输出；开自动卸载释放显存 |
 | 产物卡图片裂图 / 404 | 产物不在 containment 目录内 | 核对「产物下载目录」与运行输出目录一致 |

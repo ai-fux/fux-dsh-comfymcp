@@ -309,7 +309,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       function ComfymcpSettings(props) {
         var ctx = props.ctx
         var initial = react.useState({
-          endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false,
+          endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -344,6 +344,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 hostEntry: text(config.hostEntry),
                 autoUnloadModel: config.autoUnloadModel === true,
                 embeddedServer: config.embeddedServer === true,
+                comfyuiUrl: text(config.comfyuiUrl),
+                backendEntry: text(config.embeddedBackendArgs),
               }
               setDraft(next)
               setSaved(next)
@@ -362,7 +364,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         }, [refresh])
 
         function isDirty() {
-          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer'].some(function (key) {
+          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -400,6 +402,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             hostEntry: draft.hostEntry,
             autoUnloadModel: draft.autoUnloadModel === true,
             embeddedServer: draft.embeddedServer === true,
+            comfyuiUrl: draft.comfyuiUrl,
+            embeddedBackendArgs: draft.backendEntry,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -412,10 +416,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 hostEntry: text(applied.hostEntry),
                 autoUnloadModel: applied.autoUnloadModel === true,
                 embeddedServer: applied.embeddedServer === true,
+                comfyuiUrl: text(applied.comfyuiUrl),
+                backendEntry: text(applied.embeddedBackendArgs),
               }
               setDraft(next)
               setSaved(next)
-              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '已保存（覆盖层即时生效；内嵌服务端在下次运行/探测时按新开关拉起）' }) })
+              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '已保存（覆盖层即时生效；内置模式下改动 ComfyUI 地址/后端会自动重启内置服务）' }) })
               return rpc(ctx, 'status', {})
             })
             .then(function (value) { if (value) setProbe(value) })
@@ -471,9 +477,14 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               onChange: function (value) { edit('embeddedServer', value === 'embedded') },
             }),
             embeddedMode
-              ? h('span', { className: 'dshmcp-hint' },
-                '内置模式：无需填写地址。插件自动启动/停止 comfy-mcp（随机空闲端口，随 DSH 生命周期）；'
-                + 'ComfyUI 可在本机（:8000）或局域网任意主机。当前生效端点：' + (text(draft.endpoint).length > 0 ? draft.endpoint : '待首次运行时分配'))
+              ? h('div', { className: 'dshmcp-section' },
+                h('span', { className: 'dshmcp-hint' },
+                  '内置模式：无需填写 comfy-mcp 地址。插件自带服务端程序并自动启停（随机空闲端口，随 DSH 生命周期）。'),
+                h(Field, { label: 'ComfyUI 服务地址', hint: '内置 comfy-mcp 的后端指向的 ComfyUI（保存后自动重启内置服务生效）' },
+                  h(TextInput, { value: draft.comfyuiUrl, mono: true, placeholder: 'http://127.0.0.1:8000', onChange: function (value) { edit('comfyuiUrl', value) } })),
+                h(Field, { label: '后端入口（可选，高级）', hint: 'stdio 后端 MCP 程序路径；留空使用部署时的默认兄弟项目入口' },
+                  h(TextInput, { value: draft.backendEntry, mono: true, placeholder: '…\\projects\\dsh-comfyui\\mcp\\bin\\fux-comfyui-mcp.mjs', onChange: function (value) { edit('backendEntry', value) } })),
+                h('span', { className: 'dshmcp-hint' }, '当前生效端点：' + (text(draft.endpoint).length > 0 ? draft.endpoint : '待首次运行时分配')))
               : h(Field, { label: 'comfy-mcp 服务端点', hint: 'MCP Streamable HTTP 地址，例如 http://127.0.0.1:18800/mcp' },
                 h(TextInput, { value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp', onChange: function (value) { edit('endpoint', value) } })),
             host ? h(LinkRow, { label: '宿主入口', value: text(host.entry), empty: '未配置（环境变量 DSH_COMFYMCP_HOST_ENTRY）' }) : null,
