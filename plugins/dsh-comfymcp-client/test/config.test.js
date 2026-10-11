@@ -61,6 +61,14 @@ describe('embedded server config', () => {
     expect(resolveConfig({}, { DSH_COMFYMCP_EMBEDDED_SERVER: '1' }).embeddedServer).toBe(true)
   })
 
+  it('defaults controlPort to 18801 and allows 0 for a random port; controlToken passes through', () => {
+    expect(resolveConfig({}, {}).controlPort).toBe(18801)
+    expect(resolveConfig({ controlPort: 0 }, {}).controlPort).toBe(0)
+    expect(resolveConfig({ controlPort: '0' }, {}).controlPort).toBe(0)
+    expect(resolveConfig({ controlPort: '18900' }, {}).controlPort).toBe(18900)
+    expect(resolveConfig({ controlToken: ' t ' }, {}).controlToken).toBe('t')
+  })
+
   it('resolves the server entry: env beats config beats hostEntry derivation', () => {
     expect(resolveServerEntry({ DSH_COMFYMCP_SERVER_ENTRY: 'E:\\s.mjs' }, 'C:\\c.mjs', 'C:\\h\\mcp\\bin\\host.mjs')).toBe('E:\\s.mjs')
     expect(resolveServerEntry({}, 'C:\\c.mjs', 'C:\\h\\mcp\\bin\\host.mjs')).toBe('C:\\c.mjs')

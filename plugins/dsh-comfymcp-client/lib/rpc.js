@@ -40,26 +40,28 @@ export function createRpcMethods({ bridge, persist }) {
       bridge.applyOverlay(patch)
       return { applied: { ...bridge.config } }
     },
+    /** 环回控制端点的产物字节路由（<img>/下载直连，无自定义头）。 */
+    artifact(searchParams) {
+      return bridge.readArtifactBytes(searchParams)
+    },
   }
 }
 
 /**
- * Register the panel channel + artifact fetch route.
+ * Register the panel channel + artifact fetch route (BEST-EFFORT dynamic path).
  *
- * `connection.rpc.handle` internally mounts an HTTP route on the owner context's
- * `webServer` service, which in the web profile lands ASYNCHRONOUSLY after the
- * include tree applies (dsh-web-app defers its own webServer reads until the
- * loader settles for the same reason). Touching it too early raises the cordis
- * property guard and would fail activation. Registration therefore retries on a
- * timer until it succeeds; activation never fails because of this surface.
+ * 主通道是环回控制端点（control-server.js，对齐 dsh-comfyui 的同位实现）：
+ * 静态挂载进 profile 的插件拿不到宿主侧 connection RPC / webServer（dsh
+ * 0.1.5-rc.1 实测），所以本函数只在「动态插件路径」上尽力注册——短重试几次，
+ * 失败仅记日志，绝不影响激活；设置页流量走控制端点。
  *
  * @param ctx Host context with the optional connection service
  * @param options { attempts, intervalMs, schedule, log } test/verbosity seams
  * @returns disposers actually registered (always one: the retry disposer)
  */
 export function registerConnectionSurface({ ctx, methods, bridge, options = {} }) {
-  const maxAttempts = options.attempts ?? 120
-  const intervalMs = options.intervalMs ?? 1000
+  const maxAttempts = options.attempts ?? 10
+  const intervalMs = options.intervalMs ?? 500
   const log = options.log ?? (() => {})
   const schedule = options.schedule ?? ((fn) => setTimeout(fn, intervalMs))
   const handler = async (endpoint, payload) => {

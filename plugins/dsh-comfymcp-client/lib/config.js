@@ -19,9 +19,11 @@ export const DEFAULTS = Object.freeze({
   embeddedBackend: 'mock',
   embeddedBackendCommand: 'node',
   embeddedBackendArgs: '',
+  controlPort: 18801,
+  controlToken: '',
 })
 
-const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs'])
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])
 const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
@@ -36,6 +38,13 @@ function coerceNumber(value) {
     if (Number.isFinite(parsed) && parsed > 0) return parsed
   }
   return undefined
+}
+
+/** controlPort 允许 0（随机空闲端口）；>0 时按普通数值。 */
+function coercePort(value) {
+  if (value === 0) return 0
+  if (typeof value === 'string' && value.trim() === '0') return 0
+  return coerceNumber(value)
 }
 
 function coerceBoolean(value) {
@@ -61,6 +70,7 @@ export function splitPathList(value) {
 
 function coerceFor(key, value) {
   if (value === undefined || value === null) return undefined
+  if (key === 'controlPort') return coercePort(value)
   if (NUMBER_KEYS.has(key)) return coerceNumber(value)
   if (BOOLEAN_KEYS.has(key)) return coerceBoolean(value)
   if (LIST_KEYS.has(key)) {

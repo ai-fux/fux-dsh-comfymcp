@@ -57,6 +57,7 @@ export const OVERLAY_KEYS = [
   'embeddedBackend',
   'embeddedBackendCommand',
   'embeddedBackendArgs',
+  'controlToken',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

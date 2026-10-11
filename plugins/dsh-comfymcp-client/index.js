@@ -17,6 +17,7 @@ import { resolveConfig } from './lib/config.js'
 import { createTools } from './lib/catalog.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
+import { createControlServer } from './lib/control-server.js'
 import * as persist from './lib/persist.js'
 
 export const name = 'dsh-comfymcp-client'
@@ -65,7 +66,8 @@ export function apply(ctx, config) {
       }
     }
 
-    // 3. 面板通道 + 成果物字节路由（可选服务）
+    // 3. 面板通道：环回控制端点（主通道）+ connection RPC（动态路径，尽力而为）
+    const log = (line) => console.log(`[dsh-comfymcp-client] ${line}`)
     const methods = createRpcMethods({
       bridge,
       persist: {
@@ -73,7 +75,25 @@ export function apply(ctx, config) {
         writeOverlay: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
       },
     })
-    disposers.push(...registerConnectionSurface({ ctx, methods, bridge, options: { log: (line) => console.log(`[dsh-comfymcp-client] ${line}`) } }))
+    const control = createControlServer({
+      methods,
+      port: effective.controlPort,
+      token: effective.controlToken,
+      version,
+      log,
+    })
+    control
+      .start()
+      .then((bound) => {
+        bridge.controlUrl = bound.url
+        log(`设置页通道就绪：${bound.url}（浏览器直连环回控制端点）`)
+      })
+      .catch((error) => {
+        bridge.controlUrl = null
+        console.error(`[dsh-comfymcp-client] 控制端点启动失败（设置页将不可用）：${error instanceof Error ? error.message : String(error)}`)
+      })
+    disposers.push(() => control.close())
+    disposers.push(...registerConnectionSurface({ ctx, methods, bridge, options: { log } }))
 
     // 4. 自动连接（预热；失败不影响激活）
     if (effective.autoConnect) {

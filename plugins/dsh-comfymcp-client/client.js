@@ -98,7 +98,19 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       ].join('\n')
 
       // ─── 面板通道 ──────────────────────────────────────────────────────
+      // 主通道：插件宿主半区起的环回控制端点（静态挂载时拿不到 connection RPC）；
+      // 回落：connection RPC（动态插件路径）。端口扫描与宿主 controlPort 窗口对齐。
       var CHANNEL = '/comfymcp'
+      var CONTROL_PORTS = [18801, 18802, 18803, 18804, 18805, 18806, 18807, 18808, 18809, 18810]
+      var CONTROL_BASE = null
+      var CONTROL_PROBE = null
+      var CONTROL_TOKEN_SEEN = ''
+
+      var CONTROL_ROUTES = {
+        configRead: { verb: 'GET', path: '/config' },
+        status: { verb: 'GET', path: '/status' },
+        configWrite: { verb: 'POST', path: '/set-config' },
+      }
 
       function unwrap(result) {
         if (result && typeof result === 'object' && 'ok' in result) {
@@ -111,13 +123,61 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         return result
       }
 
+      function probeControlBase() {
+        if (CONTROL_BASE !== null) return Promise.resolve(CONTROL_BASE)
+        if (CONTROL_PROBE !== null) return CONTROL_PROBE
+        CONTROL_PROBE = new Promise(function (resolve) {
+          var index = 0
+          function next() {
+            if (index >= CONTROL_PORTS.length) {
+              CONTROL_PROBE = null
+              resolve(null)
+              return
+            }
+            var base = 'http://127.0.0.1:' + CONTROL_PORTS[index++]
+            fetch(base + '/health', { headers: { 'x-dsh-comfymcp': '1' } })
+              .then(function (response) { return response.ok ? response.json() : null })
+              .then(function (body) {
+                if (body && body.ok === true && body.value && body.value.plugin === 'dsh-comfymcp-client') {
+                  CONTROL_BASE = base
+                  resolve(base)
+                } else {
+                  next()
+                }
+              })
+              .catch(function () { next() })
+          }
+          next()
+        })
+        return CONTROL_PROBE
+      }
+
       function rpc(ctx, method, payload) {
-        var connection = ctx && ctx.connection
-        var api = connection && connection.rpc
-        if (!api || typeof api.call !== 'function') {
-          return Promise.reject(new Error('connection RPC 不可用（插件为动态挂载时才有面板通道）'))
-        }
-        return Promise.resolve(api.call(CHANNEL, method, payload || {})).then(unwrap)
+        return probeControlBase().then(function (base) {
+          var route = base !== null ? CONTROL_ROUTES[method] : undefined
+          if (route !== undefined) {
+            var init = { method: route.verb, headers: { 'x-dsh-comfymcp': '1' } }
+            if (route.verb === 'POST') {
+              init.headers['content-type'] = 'application/json'
+              init.body = JSON.stringify(payload || {})
+            }
+            return fetch(base + route.path, init)
+              .then(function (response) {
+                if (!response.ok) throw new Error('控制端点 HTTP ' + response.status)
+                return response.json()
+              })
+              .then(function (body) {
+                if (body && body.ok === false) throw new Error((body.error && body.error.message) || '控制端点错误')
+                return body ? body.value : null
+              })
+          }
+          var connection = ctx && ctx.connection
+          var api = connection && connection.rpc
+          if (!api || typeof api.call !== 'function') {
+            return Promise.reject(new Error('面板通道不可用：控制端点未监听且 connection RPC 不可用（检查 DSH 控制台日志中 dsh-comfymcp-client 的输出）'))
+          }
+          return Promise.resolve(api.call(CHANNEL, method, payload || {})).then(unwrap)
+        })
       }
 
       function text(value) {
@@ -228,6 +288,23 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         )
       }
 
+      /** 分段选择（radiogroup）：内置 / 远程 二选一，激活项用品牌色实心。 */
+      function ModeSwitch(props) {
+        return h('div', { className: 'dshmcp-row dshmcp-row-tight', role: 'radiogroup', 'aria-label': props.label },
+          props.options.map(function (option) {
+            var active = props.value === option.value
+            return h('button', {
+              key: option.value,
+              type: 'button',
+              role: 'radio',
+              'aria-checked': active ? 'true' : 'false',
+              className: 'dshmcp-btn dshmcp-btn-sm' + (active ? ' dshmcp-btn-primary' : ''),
+              onClick: function () { if (!active) props.onChange(option.value) },
+            }, option.label)
+          }),
+        )
+      }
+
       // ─── 设置页 ─────────────────────────────────────────────────────────
       function ComfymcpSettings(props) {
         var ctx = props.ctx
@@ -258,6 +335,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           setUi(function (previous) { return Object.assign({}, previous, { loading: true, note: '' }) })
           return rpc(ctx, 'configRead', {})
             .then(function (config) {
+              CONTROL_TOKEN_SEEN = text(config.controlToken)
               var next = {
                 endpoint: text(config.endpoint),
                 workflowDirs: (config.workflowDirs || []).join(';'),
@@ -359,13 +437,15 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var host = (probe && probe.host) || null
         var dirty = isDirty()
 
-        return h('div', { className: 'dshmcp-root' },
+          var embeddedMode = draft.embeddedServer === true
+          return h('div', { className: 'dshmcp-root' },
           // 头部：身份 + 连接状态
           h('div', { className: 'dshmcp-section-head' },
             h('span', { className: 'dshmcp-dot' + (probeOk ? ' dshmcp-dot-ok' : (probe ? ' dshmcp-dot-err' : ' dshmcp-dot-warn')) }),
             h('span', { className: 'dshmcp-badge-strong' }, 'ComfyUI MCP'),
             h('span', { className: probeOk ? 'dshmcp-ok' : 'dshmcp-muted' },
               probeOk ? 'comfy-mcp 已连接' : (probe ? 'comfy-mcp 未连接' : '尚未探测')),
+            h('span', { className: 'dshmcp-badge' }, embeddedMode ? '内置服务' : '远程地址'),
             h('span', { className: 'dshmcp-spacer' }),
             probeOk && unloadAvailable ? h('span', { className: 'dshmcp-badge dshmcp-ok' }, '卸载节点可用') : null,
             !probeOk && probe ? h('span', { className: 'dshmcp-badge dshmcp-err' }, '离线') : null,
@@ -379,10 +459,23 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
           h(SettingsSection, {
             title: '连接',
-            description: 'comfy-mcp 服务端点（MCP Streamable HTTP）。保存后新运行立即使用新端点。',
+            description: '选择 comfy-mcp 服务的来源：内置由插件自动启停（推荐单机），远程连接已部署的外置服务。',
           },
-            h(Field, { label: 'comfy-mcp 服务端点' },
-              h(TextInput, { value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp', onChange: function (value) { edit('endpoint', value) } })),
+            h(ModeSwitch, {
+              label: 'comfy-mcp 服务来源',
+              value: embeddedMode ? 'embedded' : 'remote',
+              options: [
+                { value: 'embedded', label: '内置服务（推荐）' },
+                { value: 'remote', label: '远程地址' },
+              ],
+              onChange: function (value) { edit('embeddedServer', value === 'embedded') },
+            }),
+            embeddedMode
+              ? h('span', { className: 'dshmcp-hint' },
+                '内置模式：无需填写地址。插件自动启动/停止 comfy-mcp（随机空闲端口，随 DSH 生命周期）；'
+                + 'ComfyUI 可在本机（:8000）或局域网任意主机。当前生效端点：' + (text(draft.endpoint).length > 0 ? draft.endpoint : '待首次运行时分配'))
+              : h(Field, { label: 'comfy-mcp 服务端点', hint: 'MCP Streamable HTTP 地址，例如 http://127.0.0.1:18800/mcp' },
+                h(TextInput, { value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp', onChange: function (value) { edit('endpoint', value) } })),
             host ? h(LinkRow, { label: '宿主入口', value: text(host.entry), empty: '未配置（环境变量 DSH_COMFYMCP_HOST_ENTRY）' }) : null,
             host && host.serverInfo ? h(LinkRow, {
               label: '桥接版本',
@@ -408,27 +501,11 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           ),
 
           h(SettingsSection, {
-            title: 'MCP 宿主与 comfy-mcp 服务端',
-            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内嵌模式由插件自动拉起 comfy-mcp 服务（随机端口，随 DSH 生命周期）；关闭后使用下方端点连接外置服务。',
+            title: 'MCP 宿主',
+            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内置模式下宿主还会按需拉起 comfy-mcp 服务端。',
           },
             h(Field, { label: 'MCP 宿主入口（可选）' },
               h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
-            h(SwitchRow, {
-              label: '内嵌 comfy-mcp 服务端（推荐单机使用）',
-              checked: draft.embeddedServer === true,
-              disabled: false,
-              onChange: function (value) { edit('embeddedServer', value) },
-            }),
-            h('span', { className: 'dshmcp-hint' },
-              draft.embeddedServer === true
-                ? '开启：端点由内嵌服务自动分配并接管（当前生效端点见「连接」分区）；ComfyUI 可在本机或局域网任意主机'
-                : '关闭：连接下方端点指向的外置 comfy-mcp 服务'),
-            h(Field, { label: 'comfy-mcp 服务端点（外置模式）' },
-              h(TextInput, {
-                value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp',
-                disabled: draft.embeddedServer === true,
-                onChange: function (value) { edit('endpoint', value) },
-              })),
           ),
 
           h(SettingsSection, {
@@ -462,7 +539,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       function artifactSrc(entry) {
         if (entry === null || typeof entry !== 'object') return null
         if (typeof entry.path === 'string' && entry.path.length > 0) {
-          return '/api/comfymcp/artifact?path=' + encodeURIComponent(entry.path)
+          var query = 'path=' + encodeURIComponent(entry.path)
+          if (CONTROL_BASE !== null) {
+            if (CONTROL_TOKEN_SEEN.length > 0) query += '&token=' + encodeURIComponent(CONTROL_TOKEN_SEEN)
+            return CONTROL_BASE + '/artifact?' + query
+          }
+          return '/api/comfymcp/artifact?' + query
         }
         return null
       }
