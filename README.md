@@ -14,6 +14,15 @@
 
 链路：**大模型 → dsh-comfymcp-client → MCP 宿主(stdio) → comfy-mcp(Streamable HTTP :18800) → ComfyUI MCP(stdio) → ComfyUI(:8000)**
 
+## 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| [部署文档](docs/deployment.md) | 架构总览、前置条件、安装/挂载/重启、配置参考、真实模式切换、卸载回滚、CheckList |
+| [操作手册](docs/operations.md) | 日常自然语言生成流程、设置页操作、服务启停/热迭代、故障排查表、E2E 清单 |
+| [协议说明](docs/protocol.md) | MCP 协议细节、stdio 桥接、表单契约、卸载插桩设计 |
+| [配置示例](config/comfymcp.env) | 环境变量样例（含真实模式与 Python 侧要求注释） |
+
 ## 本地验证
 
 ```powershell
