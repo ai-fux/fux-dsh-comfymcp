@@ -24,8 +24,8 @@ export const version = '0.1.0'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 
-/** 硬依赖：没有工具注册能力本插件没有意义。 */
-export const inject = ['tools']
+/** 硬依赖：工具注册 + 面板通道（connection.rpc.handle 内部以本 ctx 挂 webServer 路由）。 */
+export const inject = ['tools', 'connection', 'webServer']
 
 export function apply(ctx, config) {
   const overlayPath = persist.overlayPath()

@@ -1,285 +1,570 @@
-/* global window */
+/* global window, document */
+/**
+ * dsh-comfymcp-client · Client 半区
+ *
+ * - settings.section：ComfyUI MCP 服务配置（DSH 设置页风格，theme tokens）
+ * - tool.call.toolview（keyed comfymcp_run_workflow / comfymcp_fetch_artifacts）：运行产物卡
+ *
+ * 样式遵循 harness kit：28px 控件、8px 圆角、tonal 填充、悬停才显边框；
+ * 颜色只用 `--dsw-alias-*` 主题令牌（自动适配亮/暗主题）。
+ */
 if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
   window.__ModuleLoader__.load({
     id: 'dsh-comfymcp-client',
     factory(require) {
-    const React = require('react');
-    const h = React.createElement;
+      var react = require('react')
+      var h = react.createElement
 
-    // ---------------------------------------------------------------- helpers
-
-    function textClass(extra) {
-      return extra ? 'comfymcp-text ' + extra : 'comfymcp-text';
-    }
-
-    function Field({ label, hint, children }) {
-      return h('label', { className: 'comfymcp-field' },
-        h('span', { className: 'comfymcp-field-label' }, label),
-        children,
-        hint ? h('span', { className: 'comfymcp-field-hint' }, hint) : null,
-      );
-    }
-
-    function TextInput(props) {
-      return h('input', {
-        className: 'comfymcp-input',
-        type: 'text',
-        value: props.value,
-        placeholder: props.placeholder || '',
-        disabled: props.disabled === true,
-        onChange: (event) => props.onChange(event.target.value),
-      });
-    }
-
-    function Toggle({ checked, disabled, onChange, label }) {
-      return h('button', {
-        type: 'button',
-        role: 'switch',
-        'aria-checked': checked ? 'true' : 'false',
-        'aria-label': label,
-        disabled: disabled === true,
-        className: 'comfymcp-switch' + (checked ? ' is-on' : '') + (disabled ? ' is-disabled' : ''),
-        onClick: () => { if (!disabled) onChange(!checked); },
-      }, h('span', { className: 'comfymcp-switch-knob' }));
-    }
-
-    function Button({ children, onClick, disabled, kind }) {
-      return h('button', {
-        type: 'button',
-        disabled: disabled === true,
-        className: 'comfymcp-button' + (kind === 'primary' ? ' is-primary' : ''),
-        onClick,
-      }, children);
-    }
-
-    /** Read a localized string with a fallback map (keys are zh text themselves). */
-    function useT(props) {
-      return (key, fallback) => {
-        if (props && typeof props.t === 'function') {
-          const translated = props.t(key);
-          if (typeof translated === 'string' && translated.length > 0 && translated !== key) return translated;
-        }
-        return fallback ?? key;
-      };
-    }
-
-    // ------------------------------------------------------------- settings page
-
-    function SettingsPage(props) {
-      const t = useT(props);
-      const [state, setState] = React.useState({
-        endpoint: '',
-        workflowDirs: '',
-        saveSubdir: '',
-        artifactsDir: '',
-        autoUnloadModel: true,
-        hostEntry: '',
-        loading: true,
-        saving: false,
-        testing: false,
-        probe: null,
-        message: '',
-      });
-      const load = React.useCallback(async () => {
-        try {
-          const connection = ctx.get('connection');
-          if (connection === undefined || connection.rpc === undefined) {
-            setState((prev) => ({ ...prev, loading: false, message: '连接服务不可用，无法读取配置' }));
-            return;
-          }
-          const result = await connection.rpc.call('/comfymcp', 'config/read', {});
-          if (result.ok) {
-            const config = result.value;
-            setState((prev) => ({
-              ...prev,
-              endpoint: config.endpoint,
-              workflowDirs: (config.workflowDirs || []).join('; '),
-              saveSubdir: config.saveSubdir,
-              artifactsDir: config.artifactsDir,
-              autoUnloadModel: config.autoUnloadModel === true,
-              hostEntry: config.hostEntry || '',
-              loading: false,
-            }));
-            const probe = await connection.rpc.call('/comfymcp', 'status', {});
-            if (probe.ok) setState((prev) => ({ ...prev, probe: probe.value }));
-          } else {
-            setState((prev) => ({ ...prev, loading: false, message: result.error ? result.error.message : '读取配置失败' }));
-          }
-        } catch (error) {
-          setState((prev) => ({ ...prev, loading: false, message: String(error) }));
-        }
-      }, []);
-
-      React.useEffect(() => { void load(); }, [load]);
-
-      const save = async () => {
-        setState((prev) => ({ ...prev, saving: true, message: '' }));
-        try {
-          const connection = ctx.get('connection');
-          const result = await connection.rpc.call('/comfymcp', 'config/write', {
-            endpoint: state.endpoint,
-            workflowDirs: state.workflowDirs,
-            saveSubdir: state.saveSubdir,
-            artifactsDir: state.artifactsDir,
-            autoUnloadModel: state.autoUnloadModel,
-            hostEntry: state.hostEntry,
-          });
-          if (result.ok) {
-            setState((prev) => ({ ...prev, saving: false, message: '已保存' }));
-            const probe = await connection.rpc.call('/comfymcp', 'status', {});
-            if (probe.ok) setState((prev) => ({ ...prev, probe: probe.value }));
-          } else {
-            setState((prev) => ({ ...prev, saving: false, message: result.error ? result.error.message : '保存失败' }));
-          }
-        } catch (error) {
-          setState((prev) => ({ ...prev, saving: false, message: String(error) }));
-        }
-      };
-
-      const testConnection = async () => {
-        setState((prev) => ({ ...prev, testing: true, message: '' }));
-        try {
-          const connection = ctx.get('connection');
-          const probe = await connection.rpc.call('/comfymcp', 'status', {});
-          setState((prev) => ({ ...prev, testing: false, probe: probe.ok ? probe.value : null, message: probe.ok ? (probe.value.ok ? '已连接' : probe.value.error) : '探测失败' }));
-        } catch (error) {
-          setState((prev) => ({ ...prev, testing: false, message: String(error) }));
-        }
-      };
-
-      const probe = state.probe;
-      const unloadAvailable = probe !== null && probe.ok === true && probe.unload !== undefined && probe.unload.available === true;
-      const unloadChecked = probe === null ? state.autoUnloadModel : state.autoUnloadModel && unloadAvailable;
-      const unloadDisabled = probe === null || probe.ok !== true || !unloadAvailable;
-      const unloadHint = probe === null
-        ? t('settings.unloadHintUnknown', '尚未连接服务端，无法确认卸载插件是否可用')
-        : (probe.ok !== true
-          ? t('settings.offline', '未连接：{error}').replace('{error}', probe.error || '')
-          : (unloadAvailable
-            ? t('settings.unloadHintOk', '已连接：服务端支持 UnloadAllModels 节点整合')
-            : t('settings.unloadHintMissing', '服务端未安装或未启用卸载模型插件，该选项不可用')));
-
-      return h('div', { className: 'comfymcp-settings' },
-        h('div', { className: 'comfymcp-row' },
-          h(Field, { label: t('settings.endpoint', 'comfy-mcp 服务端点'), hint: t('settings.endpointHint', 'MCP Streamable HTTP 地址，例如 http://127.0.0.1:18800/mcp') },
-            h(TextInput, { value: state.endpoint, placeholder: 'http://127.0.0.1:18800/mcp', onChange: (v) => setState((p) => ({ ...p, endpoint: v })) })),
-          h(Button, { onClick: testConnection, disabled: state.testing }, state.testing ? t('settings.testing', '探测中…') : t('settings.test', '测试连接')),
-        ),
-        h(Field, { label: t('settings.workflowDirs', '工作流空间目录'), hint: t('settings.workflowDirsHint', '分号分隔；模板检索与保存都发生在这些目录') },
-          h(TextInput, { value: state.workflowDirs, placeholder: 'F:\\Comfy\\workflows; F:\\Comfy\\templates', onChange: (v) => setState((p) => ({ ...p, workflowDirs: v })) })),
-        h(Field, { label: t('settings.saveSubdir', '生成保存子目录'), hint: t('settings.saveSubdirHint', '每次运行先保存到该子目录，保证可回溯') },
-          h(TextInput, { value: state.saveSubdir, placeholder: 'dsh-generated', onChange: (v) => setState((p) => ({ ...p, saveSubdir: v })) })),
-        h(Field, { label: t('settings.artifactsDir', '成果物下载目录'), hint: t('settings.artifactsDirHint', '留空则使用 DSH 数据目录') },
-          h(TextInput, { value: state.artifactsDir, placeholder: '', onChange: (v) => setState((p) => ({ ...p, artifactsDir: v })) })),
-        h(Field, { label: t('settings.hostEntry', 'MCP 宿主入口（可选）'), hint: t('settings.hostEntryHint', 'projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs 的绝对路径；留空用环境变量 DSH_COMFYMCP_HOST_ENTRY') },
-          h(TextInput, { value: state.hostEntry, placeholder: '', onChange: (v) => setState((p) => ({ ...p, hostEntry: v })) })),
-        h('div', { className: 'comfymcp-row comfymcp-unload-row' },
-          h(Toggle, {
-            checked: unloadChecked,
-            disabled: unloadDisabled,
-            label: t('settings.autoUnload', '运行后自动卸载模型（释放显存）'),
-            onChange: (v) => setState((p) => ({ ...p, autoUnloadModel: v })),
-          }),
-          h('span', { className: textClass(unloadDisabled ? 'is-muted' : '') }, t('settings.autoUnload', '运行后自动卸载模型（释放显存）')),
-        ),
-        h('span', { className: 'comfymcp-field-hint' }, unloadHint),
-        h('div', { className: 'comfymcp-row comfymcp-actions' },
-          h(Button, { kind: 'primary', onClick: save, disabled: state.saving || state.loading }, state.saving ? t('settings.saving', '保存中…') : t('settings.save', '保存配置')),
-          h('span', { className: 'comfymcp-status' },
-            probe === null ? '' : (probe.ok ? t('settings.connected', '● 已连接 comfy-mcp') : t('settings.disconnected', '● 未连接'))),
-        ),
-        state.message ? h('span', { className: 'comfymcp-message' }, state.message) : null,
-      );
-    }
-
-    // ------------------------------------------------------------- run artifact card
-
-    function artifactSrc(entry) {
-      if (typeof entry.path !== 'string' || entry.path.length === 0) return null;
-      return '/api/comfymcp/artifact?path=' + encodeURIComponent(entry.path);
-    }
-
-    function ArtifactsGrid({ files }) {
-      const list = Array.isArray(files) ? files : [];
-      if (list.length === 0) return null;
-      return h('div', { className: 'comfymcp-artifacts' },
-        list.map((entry, index) => {
-          const src = artifactSrc(entry);
-          const kind = entry.kind || 'file';
-          if (kind === 'image' && src !== null) {
-            return h('a', { key: index, href: src, target: '_blank', rel: 'noreferrer', className: 'comfymcp-artifact-thumb' },
-              h('img', { src, alt: entry.filename || ('artifact-' + index), loading: 'lazy' }));
-          }
-          return h('a', { key: index, href: src || '#', target: '_blank', rel: 'noreferrer', className: 'comfymcp-artifact-file' },
-            (kind === 'video' ? '▶ ' : '📄 ') + (entry.filename || entry.path || ('artifact-' + index)));
-        }),
-      );
-    }
-
-    function RunCard(props) {
-      const t = useT(props);
-      const block = props.block;
-      if (block === undefined || block === null || block.kind === undefined) return null;
-      if (props.phase === 'preparing') {
-        return h('div', { className: 'comfymcp-card comfymcp-card-running' }, t('card.running', '工作流运行中…'));
+      // ─── 主题令牌（与 @deepseek-ai/dsh-client-ui-theme 公开的 13 个对齐） ───
+      var T = {
+        text: 'var(--dsw-alias-label-primary, inherit)',
+        textSecondary: 'var(--dsw-alias-label-secondary, inherit)',
+        surface: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.08))',
+        surface2: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12))',
+        base: 'var(--dsw-alias-bg-base, transparent)',
+        overlay: 'var(--dsw-alias-bg-overlay, Canvas)',
+        border: 'var(--dsw-alias-border-l1, rgba(127,127,127,.3))',
+        borderStrong: 'var(--dsw-alias-border-l2, rgba(127,127,127,.5))',
+        brand: 'var(--dsw-alias-brand-primary, #4c8bf5)',
+        error: 'var(--dsw-alias-state-error-primary, #c0392b)',
+        success: 'var(--dsw-alias-state-success-primary, #1a7f37)',
+        warn: 'var(--dsw-alias-state-warn-primary, #9a6700)',
       }
-      const meta = block.meta !== undefined && block.meta !== null && typeof block.meta === 'object' ? block.meta : {};
-      const call = block.call !== undefined && block.call !== null ? block.call : {};
-      let args = {};
-      try { args = JSON.parse(call.argsRaw || '{}') || {}; } catch { args = {}; }
-      const state = typeof meta.state === 'string' ? meta.state : (block.isError ? 'failed' : 'completed');
-      const unload = meta.unload !== undefined && meta.unload !== null ? meta.unload : {};
-      return h('div', { className: 'comfymcp-card', 'data-state': state },
-        h('div', { className: 'comfymcp-card-head' },
-          h('span', { className: 'comfymcp-card-title' }, t('card.title', '工作流运行') + ' · ' + (typeof args.name === 'string' ? args.name : 'workflow')),
-          h('span', { className: 'comfymcp-card-state', 'data-state': state }, state)),
-        h(ArtifactsGrid, { files: Array.isArray(meta.localFiles) ? meta.localFiles : (Array.isArray(meta.artifacts) ? meta.artifacts : []) }),
-        h('div', { className: 'comfymcp-card-meta' },
-          meta.saved !== undefined && meta.saved !== null
-            ? h('span', null, t('card.saved', '已保存 {subdir} / {name}').replace('{subdir}', meta.saved.subdir || '').replace('{name}', meta.saved.name || meta.saved.id || ''))
-            : null,
-          unload.requested === true
-            ? h('span', null, unload.applied === true
-              ? t('card.unloadApplied', '自动卸载：已整合 UnloadAllModels')
-              : t('card.unloadSkipped', '自动卸载未生效') + '（' + (unload.reason || '') + '）')
-            : null,
-          (typeof meta.seed === 'number' || (meta.seed !== undefined && meta.seed !== null))
-            ? h('span', null, t('card.seed', '种子') + ' ' + meta.seed)
-            : null,
-          typeof meta.prompt === 'string' && meta.prompt.length > 0
-            ? h('span', { className: 'comfymcp-card-prompt' }, t('card.prompt', '提示词') + ' ' + (meta.prompt.length > 80 ? meta.prompt.slice(0, 77) + '…' : meta.prompt))
-            : null,
-          typeof meta.error === 'string' && meta.error.length > 0
-            ? h('span', { className: 'comfymcp-card-error' }, meta.error)
-            : null,
-        ));
-    }
 
-    // ---------------------------------------------------------------- apply
+      // ─── 样式（harness kit：28px 高控件 / 8px 圆角 / tonal 填充 / 悬停显边） ───
+      var CSS = [
+        '.dshmcp-root{font-size:13px;line-height:1.5;color:' + T.text + ';display:flex;flex-direction:column;gap:8px}',
+        '.dshmcp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
+        '.dshmcp-row-tight{gap:6px}',
+        '.dshmcp-spacer{flex:1 1 auto}',
+        '.dshmcp-field{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1}',
+        '.dshmcp-label{font-size:11px;color:' + T.textSecondary + '}',
+        '.dshmcp-hint{font-size:11px;color:' + T.textSecondary + '}',
+        '.dshmcp-input{background:' + T.surface2 + ';border:1px solid transparent;border-radius:8px;color:inherit;padding:0 8px;font:inherit;font-size:13px;min-width:0;height:28px;width:100%;box-sizing:border-box}',
+        '.dshmcp-input:hover{border-color:' + T.border + '}',
+        '.dshmcp-input:focus{outline:none;border-color:' + T.brand + '}',
+        '.dshmcp-input[disabled]{opacity:.55;cursor:default}',
+        '.dshmcp-btn{background:' + T.surface2 + ';border:1px solid transparent;border-radius:8px;color:inherit;padding:0 10px;height:28px;font:inherit;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:background .12s ease,border-color .12s ease}',
+        '.dshmcp-btn:hover:not([disabled]){border-color:' + T.border + '}',
+        '.dshmcp-btn:focus-visible{outline:2px solid ' + T.brand + ';outline-offset:1px}',
+        '.dshmcp-btn[disabled]{cursor:default;color:' + T.textSecondary + ';opacity:.55}',
+        '.dshmcp-btn-primary{background:' + T.brand + ';color:#fff}',
+        '.dshmcp-btn-primary:hover:not([disabled]){border-color:' + T.brand + ';filter:brightness(1.06)}',
+        '.dshmcp-btn-ghost{background:transparent}',
+        '.dshmcp-btn-ghost:hover:not([disabled]){background:' + T.surface2 + '}',
+        '.dshmcp-btn-sm{height:24px;padding:0 8px;font-size:12px;border-radius:6px}',
+        '.dshmcp-muted{color:' + T.textSecondary + '}',
+        '.dshmcp-err{color:' + T.error + '}',
+        '.dshmcp-ok{color:' + T.success + '}',
+        '.dshmcp-warn{color:' + T.warn + '}',
+        '.dshmcp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}',
+        '.dshmcp-badge{font-size:11px;background:' + T.surface2 + ';border-radius:6px;padding:2px 7px;color:' + T.textSecondary + ';white-space:nowrap}',
+        '.dshmcp-badge-strong{color:' + T.text + ';font-weight:600}',
+        '.dshmcp-dot{width:7px;height:7px;border-radius:50%;background:' + T.textSecondary + ';flex:0 0 auto}',
+        '.dshmcp-dot-ok{background:' + T.success + '}',
+        '.dshmcp-dot-err{background:' + T.error + '}',
+        '.dshmcp-dot-warn{background:' + T.warn + '}',
+        '.dshmcp-panel{display:flex;flex-direction:column;gap:8px;border:1px solid ' + T.border + ';border-radius:10px;padding:10px;background:' + T.surface + '}',
+        '.dshmcp-section{display:flex;flex-direction:column;gap:6px}',
+        '.dshmcp-section-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+        '.dshmcp-section-title{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:' + T.textSecondary + '}',
+        '.dshmcp-banner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-radius:8px;padding:6px 8px;background:' + T.surface2 + ';box-shadow:inset 3px 0 0 ' + T.error + '}',
+        '.dshmcp-banner-info{box-shadow:inset 3px 0 0 ' + T.brand + '}',
+        '.dshmcp-banner-warn{box-shadow:inset 3px 0 0 ' + T.warn + '}',
+        '.dshmcp-note{min-height:18px;font-size:12px;color:' + T.textSecondary + '}',
+        /* 开关：28px 药丸，tonal 轨道，品牌色激活；disabled 时整行降透明度 */
+        '.dshmcp-switch{position:relative;width:40px;height:22px;border-radius:999px;border:1px solid transparent;background:' + T.surface2 + ';cursor:pointer;padding:0;flex:0 0 auto;transition:background .12s ease,border-color .12s ease}',
+        '.dshmcp-switch:hover:not([disabled]){border-color:' + T.border + '}',
+        '.dshmcp-switch[aria-checked="true"]{background:' + T.brand + '}',
+        '.dshmcp-switch[disabled]{opacity:.5;cursor:default}',
+        '.dshmcp-switch-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .12s ease}',
+        '.dshmcp-switch[aria-checked="true"] .dshmcp-switch-knob{left:20px}',
+        '.dshmcp-switchrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+        /* 运行产物卡 */
+        '.dshmcp-card{display:flex;flex-direction:column;gap:8px;border:1px solid ' + T.border + ';border-radius:10px;padding:10px;background:' + T.surface + ';max-width:720px}',
+        '.dshmcp-card[data-state="running"]{border-color:' + T.borderStrong + '}',
+        '.dshmcp-card[data-state="failed"]{box-shadow:inset 3px 0 0 ' + T.error + '}',
+        '.dshmcp-card[data-state="completed"]{box-shadow:inset 3px 0 0 ' + T.success + '}',
+        '.dshmcp-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+        '.dshmcp-card-title{font-weight:600}',
+        '.dshmcp-card-meta{display:flex;flex-direction:column;gap:2px;font-size:12px;color:' + T.textSecondary + '}',
+        '.dshmcp-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px}',
+        '.dshmcp-tile{position:relative;border:1px solid transparent;border-radius:10px;overflow:hidden;background:' + T.surface2 + ';cursor:pointer;padding:0;display:block;width:100%;transition:border-color .12s ease}',
+        '.dshmcp-tile:hover{border-color:' + T.brand + '}',
+        '.dshmcp-tile img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;background:' + T.surface2 + '}',
+        '.dshmcp-tile-kind{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;font-size:10px;padding:1px 6px;letter-spacing:.02em}',
+        '.dshmcp-fileline{display:inline-flex;align-items:center;gap:6px;background:' + T.surface2 + ';border:1px solid transparent;border-radius:8px;padding:3px 8px;font-size:12px;color:inherit;text-decoration:none;max-width:100%}',
+        '.dshmcp-fileline:hover{border-color:' + T.border + '}',
+      ].join('\n')
 
-    return {
-      inject: ['slots'],
-      apply(ctx) {
-        ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'comfymcp',
-          order: 60,
-          label: 'ComfyUI MCP',
-          locale: 'dsh-comfymcp-client',
-        }, SettingsPage));
+      // ─── 面板通道 ──────────────────────────────────────────────────────
+      var CHANNEL = '/comfymcp'
 
-        ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
-          name: 'tool.call.toolview',
-          key: 'comfymcp_run_workflow',
-          locale: 'dsh-comfymcp-client',
-        }, RunCard));
-        ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
-          name: 'tool.call.toolview',
-          key: 'comfymcp_fetch_artifacts',
-          locale: 'dsh-comfymcp-client',
-        }, RunCard));
-      },
-    };
-  },
-  });
+      function unwrap(result) {
+        if (result && typeof result === 'object' && 'ok' in result) {
+          if (result.ok === false) {
+            var message = (result.error && result.error.message) || 'RPC failed'
+            throw new Error(message)
+          }
+          return result.value
+        }
+        return result
+      }
+
+      function rpc(ctx, method, payload) {
+        var connection = ctx && ctx.connection
+        var api = connection && connection.rpc
+        if (!api || typeof api.call !== 'function') {
+          return Promise.reject(new Error('connection RPC 不可用（插件为动态挂载时才有面板通道）'))
+        }
+        return Promise.resolve(api.call(CHANNEL, method, payload || {})).then(unwrap)
+      }
+
+      function text(value) {
+        if (value === undefined || value === null) return ''
+        return typeof value === 'string' ? value : JSON.stringify(value)
+      }
+
+      // ─── 通用小组件（harness kit 词汇） ─────────────────────────────────
+      function Field(props) {
+        return h('label', { className: 'dshmcp-field' },
+          h('span', { className: 'dshmcp-label' }, props.label),
+          props.children,
+          props.hint ? h('span', { className: 'dshmcp-hint' }, props.hint) : null,
+        )
+      }
+
+      function TextInput(props) {
+        return h('input', {
+          className: 'dshmcp-input' + (props.mono ? ' dshmcp-mono' : ''),
+          type: 'text',
+          value: props.value,
+          placeholder: props.placeholder || '',
+          spellCheck: false,
+          disabled: props.disabled === true,
+          onChange: function (event) { props.onChange(event.target.value) },
+        })
+      }
+
+      function ErrorLine(props) {
+        if (!props.error) return null
+        return h('div', { className: 'dshmcp-banner' },
+          h('span', { className: 'dshmcp-err' }, props.label || '出错了：'),
+          h('span', { className: 'dshmcp-muted' }, String(props.error)),
+          props.onRetry
+            ? h('button', { className: 'dshmcp-btn dshmcp-btn-sm', onClick: props.onRetry }, props.retryLabel || '重试')
+            : null,
+        )
+      }
+
+      function CopyButton(props) {
+        var state = react.useState(false)
+        var copied = state[0]
+        function copy() {
+          var value = text(props.value)
+          if (value.length === 0) return
+          try {
+            if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(value).then(function () {
+                state[1](true)
+                setTimeout(function () { state[1](false) }, 1500)
+              })
+              return
+            }
+          } catch (error) {
+            /* fall through */
+          }
+          state[1](true)
+          setTimeout(function () { state[1](false) }, 1500)
+        }
+        return h('button', {
+          className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost',
+          onClick: copy,
+          disabled: text(props.value).length === 0,
+          title: text(props.value),
+        }, copied ? '已复制' : props.label || '复制')
+      }
+
+      /** 只读行：标签 + 等宽值（可复制）。 */
+      function LinkRow(props) {
+        return h('div', { className: 'dshmcp-row' },
+          h('span', { className: 'dshmcp-label', style: { minWidth: 76 } }, props.label),
+          h('span', {
+            className: 'dshmcp-mono dshmcp-linkvalue' + (props.value ? '' : ' dshmcp-muted'),
+            style: { flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            title: props.value || '',
+          }, props.value || props.empty || '—'),
+          h(CopyButton, { value: props.value }),
+        )
+      }
+
+      /** 一个设置块：标题 + 描述 + 子元素。 */
+      function SettingsSection(props) {
+        return h('section', { className: 'dshmcp-section dshmcp-panel' },
+          h('div', { className: 'dshmcp-section-head' },
+            h('span', { className: 'dshmcp-section-title' }, props.title),
+            h('span', { className: 'dshmcp-spacer' }),
+            props.extra || null,
+          ),
+          props.description ? h('div', { className: 'dshmcp-note' }, props.description) : null,
+          props.children,
+        )
+      }
+
+      /** 开关行：switch + 标签 +（可选）状态说明。 */
+      function SwitchRow(props) {
+        return h('div', { className: 'dshmcp-switchrow' },
+          h('button', {
+            type: 'button',
+            role: 'switch',
+            'aria-checked': props.checked ? 'true' : 'false',
+            'aria-label': props.label,
+            disabled: props.disabled === true,
+            className: 'dshmcp-switch',
+            onClick: function () { if (!props.disabled) props.onChange(!props.checked) },
+          }, h('span', { className: 'dshmcp-switch-knob' })),
+          h('span', { className: props.disabled ? 'dshmcp-muted' : '' }, props.label),
+          props.hint ? h('span', { className: 'dshmcp-hint' }, props.hint) : null,
+        )
+      }
+
+      // ─── 设置页 ─────────────────────────────────────────────────────────
+      function ComfymcpSettings(props) {
+        var ctx = props.ctx
+        var initial = react.useState({
+          endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true,
+        })
+        var draft = initial[0]
+        var setDraft = initial[1]
+        var saved = react.useState(initial[0])
+        var savedConfig = saved[0]
+        var setSaved = saved[1]
+        var probeState = react.useState(null)
+        var probe = probeState[0]
+        var setProbe = probeState[1]
+        var uiState = react.useState({ loading: true, saving: false, testing: false, note: '' })
+        var ui = uiState[0]
+        var setUi = uiState[1]
+
+        function edit(key, value) {
+          setDraft(function (previous) {
+            var patch = {}
+            patch[key] = value
+            return Object.assign({}, previous, patch)
+          })
+        }
+
+        var refresh = react.useCallback(function () {
+          setUi(function (previous) { return Object.assign({}, previous, { loading: true, note: '' }) })
+          return rpc(ctx, 'configRead', {})
+            .then(function (config) {
+              var next = {
+                endpoint: text(config.endpoint),
+                workflowDirs: (config.workflowDirs || []).join(';'),
+                saveSubdir: text(config.saveSubdir),
+                artifactsDir: text(config.artifactsDir),
+                hostEntry: text(config.hostEntry),
+                autoUnloadModel: config.autoUnloadModel === true,
+              }
+              setDraft(next)
+              setSaved(next)
+              setUi(function (previous) { return Object.assign({}, previous, { loading: false }) })
+              return rpc(ctx, 'status', {})
+            })
+            .then(function (value) { setProbe(value) })
+            .catch(function (error) {
+              setUi(function (previous) { return Object.assign({}, previous, { loading: false, note: error.message || String(error) }) })
+            })
+        }, [ctx])
+
+        react.useEffect(function () {
+          refresh()
+          return function () {}
+        }, [refresh])
+
+        function isDirty() {
+          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel'].some(function (key) {
+            return text(draft[key]) !== text(savedConfig[key])
+          })
+        }
+
+        function testConnection() {
+          setUi(function (previous) { return Object.assign({}, previous, { testing: true, note: '' }) })
+          rpc(ctx, 'status', {})
+            .then(function (value) {
+              setProbe(value)
+              setUi(function (previous) {
+                return Object.assign({}, previous, {
+                  testing: false,
+                  note: value && value.ok === true
+                    ? '已连接 comfy-mcp' + (value.remote && value.remote.backend ? '（后端 ' + value.remote.backend + '）' : '')
+                    : '未连接：' + text(value && value.error),
+                })
+              })
+            })
+            .catch(function (error) {
+              setUi(function (previous) { return Object.assign({}, previous, { testing: false, note: '探测失败：' + error.message }) })
+            })
+        }
+
+        function save() {
+          setUi(function (previous) { return Object.assign({}, previous, { saving: true, note: '' }) })
+          var patch = {
+            endpoint: draft.endpoint,
+            workflowDirs: text(draft.workflowDirs)
+              .split(';')
+              .map(function (entry) { return entry.trim() })
+              .filter(function (entry) { return entry.length > 0 })
+              .join(';'),
+            saveSubdir: draft.saveSubdir,
+            artifactsDir: draft.artifactsDir,
+            hostEntry: draft.hostEntry,
+            autoUnloadModel: draft.autoUnloadModel === true,
+          }
+          rpc(ctx, 'configWrite', patch)
+            .then(function (result) {
+              var applied = (result && result.applied) || {}
+              var next = {
+                endpoint: text(applied.endpoint),
+                workflowDirs: (applied.workflowDirs || []).join(';'),
+                saveSubdir: text(applied.saveSubdir),
+                artifactsDir: text(applied.artifactsDir),
+                hostEntry: text(applied.hostEntry),
+                autoUnloadModel: applied.autoUnloadModel === true,
+              }
+              setDraft(next)
+              setSaved(next)
+              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '已保存（覆盖层即时生效；卸载开关按新配置重新判定）' }) })
+              return rpc(ctx, 'status', {})
+            })
+            .then(function (value) { if (value) setProbe(value) })
+            .catch(function (error) {
+              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '保存失败：' + (error.message || String(error)) }) })
+            })
+        }
+
+        // 卸载开关三态：未连接=未知（禁用）；连接但无插件=不可用（禁用）；否则可用
+        var probeOk = probe !== null && probe.ok === true
+        var unloadAvailable = probeOk && probe.unload !== undefined && probe.unload !== null && probe.unload.available === true
+        var unloadDisabled = !probeOk || !unloadAvailable
+        var unloadHint = !probeOk
+          ? '未连接服务端，无法确认卸载插件是否可用'
+          : (unloadAvailable
+            ? '服务端支持 UnloadAllModels 节点整合，运行时自动插桩释放显存'
+            : '服务端未安装或未启用卸载模型插件（' + text(probe.unload && probe.unload.reason) + '）')
+
+        var host = (probe && probe.host) || null
+        var dirty = isDirty()
+
+        return h('div', { className: 'dshmcp-root' },
+          // 头部：身份 + 连接状态
+          h('div', { className: 'dshmcp-section-head' },
+            h('span', { className: 'dshmcp-dot' + (probeOk ? ' dshmcp-dot-ok' : (probe ? ' dshmcp-dot-err' : ' dshmcp-dot-warn')) }),
+            h('span', { className: 'dshmcp-badge-strong' }, 'ComfyUI MCP'),
+            h('span', { className: probeOk ? 'dshmcp-ok' : 'dshmcp-muted' },
+              probeOk ? 'comfy-mcp 已连接' : (probe ? 'comfy-mcp 未连接' : '尚未探测')),
+            h('span', { className: 'dshmcp-spacer' }),
+            probeOk && unloadAvailable ? h('span', { className: 'dshmcp-badge dshmcp-ok' }, '卸载节点可用') : null,
+            !probeOk && probe ? h('span', { className: 'dshmcp-badge dshmcp-err' }, '离线') : null,
+          ),
+          h(ErrorLine, {
+            error: probe && !probeOk ? probe.error : '',
+            label: 'comfy-mcp 不可达：',
+            onRetry: testConnection,
+            retryLabel: '重新探测',
+          }),
+
+          h(SettingsSection, {
+            title: '连接',
+            description: 'comfy-mcp 服务端点（MCP Streamable HTTP）。保存后新运行立即使用新端点。',
+          },
+            h(Field, { label: 'comfy-mcp 服务端点' },
+              h(TextInput, { value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp', onChange: function (value) { edit('endpoint', value) } })),
+            host ? h(LinkRow, { label: '宿主入口', value: text(host.entry), empty: '未配置（环境变量 DSH_COMFYMCP_HOST_ENTRY）' }) : null,
+            host && host.serverInfo ? h(LinkRow, {
+              label: '桥接版本',
+              value: text(host.serverInfo.name) + ' ' + text(host.serverInfo.version),
+            }) : null,
+            h('div', { className: 'dshmcp-row dshmcp-row-tight' },
+              h('button', { className: 'dshmcp-btn dshmcp-btn-sm', onClick: testConnection, disabled: ui.testing || ui.loading },
+                ui.testing ? '探测中…' : '测试连接'),
+              h('button', { className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost', onClick: refresh, disabled: ui.loading }, '重新加载'),
+            ),
+          ),
+
+          h(SettingsSection, {
+            title: '工作流空间',
+            description: '模板检索与强制保存都发生在这里；多个目录用分号分隔。',
+          },
+            h(Field, { label: '工作流目录（分号分隔）' },
+              h(TextInput, { value: draft.workflowDirs, mono: true, placeholder: 'F:\\Comfy\\ComfyUI\\user\\default\\workflows', onChange: function (value) { edit('workflowDirs', value) } })),
+            h(Field, { label: '生成保存子目录', hint: '每次运行先保存到该子目录，保证可回溯' },
+              h(TextInput, { value: draft.saveSubdir, placeholder: 'dsh-generated', onChange: function (value) { edit('saveSubdir', value) } })),
+            h(Field, { label: '产物下载目录', hint: '留空使用 DSH 数据目录' },
+              h(TextInput, { value: draft.artifactsDir, mono: true, placeholder: '', onChange: function (value) { edit('artifactsDir', value) } })),
+          ),
+
+          h(SettingsSection, {
+            title: 'MCP 宿主与模型卸载',
+            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY；卸载开关在服务端无 UnloadAllModels 插件时自动置灰。',
+          },
+            h(Field, { label: 'MCP 宿主入口（可选）' },
+              h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
+            h(SwitchRow, {
+              label: '运行后自动卸载模型（释放显存）',
+              checked: draft.autoUnloadModel === true,
+              disabled: unloadDisabled,
+              onChange: function (value) { edit('autoUnloadModel', value) },
+            }),
+            h('span', { className: 'dshmcp-hint' }, unloadHint),
+          ),
+
+          h('div', { className: 'dshmcp-row' },
+            h('button', {
+              className: 'dshmcp-btn dshmcp-btn-primary',
+              onClick: save,
+              disabled: ui.saving || ui.loading,
+            }, ui.saving ? '保存中…' : (dirty ? '保存配置（有未保存改动）' : '保存配置')),
+            dirty
+              ? h('span', { className: 'dshmcp-warn' }, '有未保存的改动')
+              : h('span', { className: 'dshmcp-muted' }, '配置与当前一致'),
+          ),
+          ui.note ? h('div', { className: 'dshmcp-note' }, ui.note) : null,
+        )
+      }
+
+      // ─── 运行产物卡（keyed toolview） ───────────────────────────────────
+      function artifactSrc(entry) {
+        if (entry === null || typeof entry !== 'object') return null
+        if (typeof entry.path === 'string' && entry.path.length > 0) {
+          return '/api/comfymcp/artifact?path=' + encodeURIComponent(entry.path)
+        }
+        return null
+      }
+
+      var IMG_ATTRS = { loading: 'lazy', decoding: 'async' }
+
+      function ArtifactsGrid(props) {
+        var list = Array.isArray(props.files) ? props.files : []
+        if (list.length === 0) return null
+        var images = []
+        var files = []
+        list.forEach(function (entry, index) {
+          var src = artifactSrc(entry)
+          var kind = entry.kind || 'file'
+          var name = text(entry.filename) || text(entry.path) || 'artifact-' + index
+          if (src !== null && (kind === 'image' || /\.(png|jpe?g|webp|gif|bmp)$/i.test(name))) {
+            images.push(h('a', { key: 'i' + index, href: src, target: '_blank', rel: 'noreferrer', className: 'dshmcp-tile' },
+              h('img', Object.assign({ src: src, alt: name }, IMG_ATTRS)),
+              h('span', { className: 'dshmcp-tile-kind' }, 'IMG'),
+            ))
+            return
+          }
+          files.push(h('a', { key: 'f' + index, href: src || '#', target: '_blank', rel: 'noreferrer', className: 'dshmcp-fileline' },
+            h('span', null, kind === 'video' ? '▶' : '📄'),
+            h('span', { className: 'dshmcp-mono', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name),
+          ))
+        })
+        return h('div', { className: 'dshmcp-section', style: { gap: 6 } },
+          images.length > 0 ? h('div', { className: 'dshmcp-tiles' }, images) : null,
+          files.length > 0 ? h('div', { className: 'dshmcp-row dshmcp-row-tight' }, files) : null,
+        )
+      }
+
+      function RunCard(props) {
+        var block = props.block
+        if (block === undefined || block === null || block.kind === undefined) return null
+        if (props.phase === 'preparing') {
+          return h('div', { className: 'dshmcp-card', 'data-state': 'running' },
+            h('div', { className: 'dshmcp-card-head' },
+              h('span', { className: 'dshmcp-dot dshmcp-dot-warn' }),
+              h('span', { className: 'dshmcp-card-title' }, '工作流运行中…'),
+            ),
+          )
+        }
+        var meta = block.meta !== undefined && block.meta !== null && typeof block.meta === 'object' ? block.meta : {}
+        var call = block.call !== undefined && block.call !== null ? block.call : {}
+        var args = {}
+        try { args = JSON.parse(call.argsRaw || '{}') || {} } catch (error) { args = {} }
+        var state = typeof meta.state === 'string' ? meta.state : (block.isError ? 'failed' : 'completed')
+        var unload = meta.unload !== undefined && meta.unload !== null && typeof meta.unload === 'object' ? meta.unload : {}
+        var stateLabel = state === 'completed' ? '已完成' : (state === 'running' ? '运行中' : '失败')
+        return h('div', { className: 'dshmcp-card', 'data-state': state },
+          h('div', { className: 'dshmcp-card-head' },
+            h('span', { className: 'dshmcp-dot' + (state === 'completed' ? ' dshmcp-dot-ok' : (state === 'failed' ? ' dshmcp-dot-err' : ' dshmcp-dot-warn')) }),
+            h('span', { className: 'dshmcp-card-title' }, '工作流 · ' + (typeof args.name === 'string' && args.name.length > 0 ? args.name : 'workflow')),
+            h('span', { className: 'dshmcp-spacer' }),
+            h('span', {
+              className: 'dshmcp-badge ' + (state === 'completed' ? 'dshmcp-ok' : (state === 'failed' ? 'dshmcp-err' : '')),
+            }, stateLabel),
+            unload.requested === true
+              ? h('span', { className: 'dshmcp-badge ' + (unload.applied === true ? 'dshmcp-ok' : 'dshmcp-warn') },
+                unload.applied === true ? '卸载已插桩' : '卸载未生效')
+              : null,
+          ),
+          h(ArtifactsGrid, {
+            files: Array.isArray(meta.localFiles) && meta.localFiles.length > 0 ? meta.localFiles : (Array.isArray(meta.artifacts) ? meta.artifacts : []),
+          }),
+          h('div', { className: 'dshmcp-card-meta' },
+            meta.saved !== undefined && meta.saved !== null
+              ? h('span', { className: 'dshmcp-mono' }, '已保存 ' + text(meta.saved.subdir) + ' / ' + text(meta.saved.name || meta.saved.id || ''))
+              : null,
+            (meta.seed !== undefined && meta.seed !== null) ? h('span', null, '种子 ' + text(meta.seed)) : null,
+            typeof meta.prompt === 'string' && meta.prompt.length > 0
+              ? h('span', null, '提示词 ' + (meta.prompt.length > 80 ? meta.prompt.slice(0, 77) + '…' : meta.prompt))
+              : null,
+            typeof meta.error === 'string' && meta.error.length > 0
+              ? h('span', { className: 'dshmcp-err' }, meta.error)
+              : null,
+          ),
+        )
+      }
+
+      // ─── 挂载 ────────────────────────────────────────────────────────────
+      var inject = ['slots', 'connection']
+
+      function apply(ctx) {
+        var slots = ctx.slots
+        if (slots === undefined) return
+
+        // 样式表挂载/卸载（disposer 移除 <style>）
+        if (typeof document !== 'undefined' && typeof ctx.effect === 'function') {
+          ctx.effect(function () {
+            var tag = document.createElement('style')
+            tag.dataset.plugin = 'dsh-comfymcp-client'
+            tag.textContent = CSS
+            document.head.appendChild(tag)
+            return function () {
+              if (tag.parentNode !== null) tag.parentNode.removeChild(tag)
+            }
+          }, 'dsh-comfymcp-client: settings stylesheet')
+        }
+
+        slots.inject('settings.section', function () {
+          return slots.register(
+            { name: 'settings.section', id: 'comfymcp', order: 60, label: function () { return 'ComfyUI MCP' } },
+            function (props) {
+              return h(ComfymcpSettings, Object.assign({}, props, { ctx: ctx }))
+            },
+          )
+        })
+
+        slots.inject('tool.call.toolview', function () {
+          return slots.register(
+            { name: 'tool.call.toolview', key: 'comfymcp_run_workflow' },
+            function (props) { return h(RunCard, props) },
+          )
+        })
+
+        slots.inject('tool.call.toolview', function () {
+          return slots.register(
+            { name: 'tool.call.toolview', key: 'comfymcp_fetch_artifacts' },
+            function (props) { return h(RunCard, props) },
+          )
+        })
+      }
+
+      return { inject: inject, apply: apply }
+    },
+  })
 }
