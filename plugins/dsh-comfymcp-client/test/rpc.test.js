@@ -63,7 +63,7 @@ describe('registerConnectionSurface', () => {
       },
     }
     const disposers = registerConnectionSurface({ ctx, methods, bridge })
-    expect(disposers).toHaveLength(2)
+    expect(disposers).toHaveLength(1)
     expect(rpcHandlers[0].channel).toBe(RPC_CHANNEL)
     expect(fetchRoutes[0].path).toBe(ARTIFACT_ROUTE)
 
@@ -85,17 +85,71 @@ describe('registerConnectionSurface', () => {
     for (const dispose of disposers) await dispose()
   })
 
-  it('logs and skips when the connection service is absent (boundary)', () => {
+  it('retries until the webServer-backed channel mounts (boundary)', () => {
     const logs = []
-    const original = console.log
-    console.log = (message) => logs.push(String(message))
-    try {
-      const disposers = registerConnectionSurface({ ctx: { get: () => undefined }, methods: {}, bridge: fakeBridge() })
-      expect(disposers).toHaveLength(0)
-    } finally {
-      console.log = original
+    let attempts = 0
+    let disposed = false
+    const ctx = {
+      get(name) {
+        if (name !== 'connection') return undefined
+        attempts += 1
+        if (attempts < 3) throw new Error('cannot get property "webServer" without inject')
+        return {
+          rpc: { handle: () => () => {} },
+          fetch: { register: () => () => {} },
+        }
+      },
     }
-    expect(logs.some((entry) => entry.includes('connection RPC unavailable'))).toBe(true)
+    const disposers = registerConnectionSurface({
+      ctx,
+      methods: {},
+      bridge: fakeBridge(),
+      options: {
+        attempts: 5,
+        log: (line) => logs.push(line),
+        schedule: (fn) => { if (!disposed) fn(); return () => {} },
+      },
+    })
+    expect(disposers).toHaveLength(1)
+    expect(attempts).toBe(3)
+    expect(logs.some((entry) => entry.includes('panel channel /comfymcp ready'))).toBe(true)
+    disposers[0]()
+    disposed = true
+  })
+
+  it('gives up with a log after exhausting attempts (boundary)', () => {
+    const logs = []
+    let scheduled = 0
+    const disposers = registerConnectionSurface({
+      ctx: { get: () => { throw new Error('not registered') } },
+      methods: {},
+      bridge: fakeBridge(),
+      options: {
+        attempts: 3,
+        log: (line) => logs.push(line),
+        schedule: (fn) => { scheduled += 1; fn(); return () => {} },
+      },
+    })
+    expect(scheduled).toBe(2)
+    expect(logs.some((entry) => entry.includes('unavailable after 3 attempts'))).toBe(true)
+    disposers[0]()
+  })
+
+  it('stops retrying after disposal', () => {
+    const queued = []
+    const disposers = registerConnectionSurface({
+      ctx: { get: () => { throw new Error('gone') } },
+      methods: {},
+      bridge: fakeBridge(),
+      options: {
+        attempts: 10,
+        schedule: (fn) => { queued.push(fn); return () => {} },
+      },
+    })
+    expect(queued.length).toBe(1)
+    disposers[0]()
+    queued[0]() // post-disposal retry must be a no-op (disposed flag)
+    expect(queued.length).toBe(1)
   })
 })
 

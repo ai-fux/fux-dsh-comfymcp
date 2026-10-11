@@ -45,55 +45,100 @@ export function createRpcMethods({ bridge, persist }) {
 
 /**
  * Register the panel channel + artifact fetch route.
+ *
+ * `connection.rpc.handle` internally mounts an HTTP route on the owner context's
+ * `webServer` service, which in the web profile lands ASYNCHRONOUSLY after the
+ * include tree applies (dsh-web-app defers its own webServer reads until the
+ * loader settles for the same reason). Touching it too early raises the cordis
+ * property guard and would fail activation. Registration therefore retries on a
+ * timer until it succeeds; activation never fails because of this surface.
+ *
  * @param ctx Host context with the optional connection service
- * @returns disposers actually registered
+ * @param options { attempts, intervalMs, schedule, log } test/verbosity seams
+ * @returns disposers actually registered (always one: the retry disposer)
  */
-export function registerConnectionSurface({ ctx, methods, bridge }) {
-  const disposers = []
-  const connection = ctx.get('connection')
-  if (connection !== undefined && typeof connection?.rpc?.handle === 'function') {
-    disposers.push(
-      connection.rpc.handle(RPC_CHANNEL, async (endpoint, payload) => {
-        const method = methods[endpoint]
-        if (method === undefined) {
-          return { ok: false, error: { code: 'E_NO_METHOD', message: `unknown endpoint: ${endpoint}`, details: {} } }
-        }
-        try {
-          const value = await method(payload)
-          return { ok: true, value }
-        } catch (error) {
-          return {
-            ok: false,
-            error: { code: 'E_METHOD', message: error instanceof Error ? error.message : String(error), details: {} },
-          }
-        }
-      }),
-    )
-  } else {
-    console.log('[dsh-comfymcp-client] connection RPC unavailable; the settings page will show static hints only')
+export function registerConnectionSurface({ ctx, methods, bridge, options = {} }) {
+  const maxAttempts = options.attempts ?? 120
+  const intervalMs = options.intervalMs ?? 1000
+  const log = options.log ?? (() => {})
+  const schedule = options.schedule ?? ((fn) => setTimeout(fn, intervalMs))
+  const handler = async (endpoint, payload) => {
+    const method = methods[endpoint]
+    if (method === undefined) {
+      return { ok: false, error: { code: 'E_NO_METHOD', message: `unknown endpoint: ${endpoint}`, details: {} } }
+    }
+    try {
+      const value = await method(payload)
+      return { ok: true, value }
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: 'E_METHOD', message: error instanceof Error ? error.message : String(error), details: {} },
+      }
+    }
   }
-  if (connection !== undefined && typeof connection?.fetch?.register === 'function') {
-    disposers.push(
-      connection.fetch.register({
-        path: ARTIFACT_ROUTE,
-        methods: ['GET'],
-        requestBody: 'buffered',
-        fetch: async (request) => {
-          const url = new URL(request.url)
-          const outcome = bridge.readArtifactBytes(url.searchParams)
-          if (outcome.error !== undefined) {
-            return new Response(JSON.stringify({ error: outcome.error }), {
-              status: 404,
-              headers: { 'content-type': 'application/json' },
-            })
-          }
-          return new Response(new Uint8Array(outcome.bytes), {
-            status: 200,
-            headers: { 'content-type': outcome.contentType, 'cache-control': 'no-store' },
-          })
-        },
-      }),
-    )
+  let disposed = false
+  let attempts = 0
+  let timer = null
+  let registered = []
+  const disposeRegistered = () => {
+    for (const dispose of registered) {
+      try {
+        dispose()
+      } catch {
+        /* ignore */
+      }
+    }
+    registered = []
   }
-  return disposers
+  const tryOnce = () => {
+    if (disposed) return
+    attempts += 1
+    try {
+      const connection = ctx.get('connection')
+      if (connection === undefined || typeof connection?.rpc?.handle !== 'function') {
+        throw new Error('connection service unavailable')
+      }
+      registered.push(connection.rpc.handle(RPC_CHANNEL, handler))
+      if (typeof connection?.fetch?.register === 'function') {
+        registered.push(
+          connection.fetch.register({
+            path: ARTIFACT_ROUTE,
+            methods: ['GET'],
+            requestBody: 'buffered',
+            fetch: async (request) => {
+              const url = new URL(request.url)
+              const outcome = bridge.readArtifactBytes(url.searchParams)
+              if (outcome.error !== undefined) {
+                return new Response(JSON.stringify({ error: outcome.error }), {
+                  status: 404,
+                  headers: { 'content-type': 'application/json' },
+                })
+              }
+              return new Response(new Uint8Array(outcome.bytes), {
+                status: 200,
+                headers: { 'content-type': outcome.contentType, 'cache-control': 'no-store' },
+              })
+            },
+          }),
+        )
+      }
+      log(`panel channel ${RPC_CHANNEL} ready (attempts=${attempts})`)
+    } catch (error) {
+      disposeRegistered()
+      if (attempts < maxAttempts) {
+        timer = schedule(tryOnce, intervalMs)
+        return
+      }
+      log(`panel channel unavailable after ${attempts} attempts: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  tryOnce()
+  return [
+    () => {
+      disposed = true
+      if (timer !== null) clearTimeout(timer)
+      disposeRegistered()
+    },
+  ]
 }

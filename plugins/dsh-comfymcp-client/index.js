@@ -24,8 +24,8 @@ export const version = '0.1.0'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 
-/** 硬依赖：工具注册 + 面板通道（connection.rpc.handle 内部以本 ctx 挂 webServer 路由）。 */
-export const inject = ['tools', 'connection', 'webServer']
+/** 硬依赖：没有工具注册能力本插件没有意义。面板通道不做注入声明——见 rpc.js 的就绪重试。 */
+export const inject = ['tools']
 
 export function apply(ctx, config) {
   const overlayPath = persist.overlayPath()
@@ -73,7 +73,7 @@ export function apply(ctx, config) {
         writeOverlay: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
       },
     })
-    disposers.push(...registerConnectionSurface({ ctx, methods, bridge }))
+    disposers.push(...registerConnectionSurface({ ctx, methods, bridge, options: { log: (line) => console.log(`[dsh-comfymcp-client] ${line}`) } }))
 
     // 4. 自动连接（预热；失败不影响激活）
     if (effective.autoConnect) {
