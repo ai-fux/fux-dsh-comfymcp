@@ -1,0 +1,33 @@
+{
+  "name": "@fux-mcp/mcp-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP 宿主：以 FUX runtime 装载 @fux-mcp/comfy-client，并把其 capability 以 stdio MCP 工具暴露给 DSH 插件。",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "fux-comfymcp-host": "./bin/fux-comfymcp-host.mjs"
+  },
+  "scripts": {
+    "start": "node bin/fux-comfymcp-host.mjs",
+    "selftest": "node bin/fux-comfymcp-host.mjs --selftest",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fux-mcp/comfy-client": "workspace:*",
+    "@fux/core": "workspace:*",
+    "@fux/protocol": "workspace:*",
+    "@fux/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

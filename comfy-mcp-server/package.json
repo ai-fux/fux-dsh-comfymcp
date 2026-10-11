@@ -1,0 +1,27 @@
+{
+  "name": "@fux-mcp/comfy-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "comfy-mcp 参考服务端：MCP Streamable HTTP 入口 ⇄ stdio MCP 后端桥接，附成果物 URL 服务与内置 mock 后端。",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "comfy-mcp-server": "./bin/comfy-mcp-server.mjs"
+  },
+  "scripts": {
+    "start": "node bin/comfy-mcp-server.mjs",
+    "selftest": "node bin/comfy-mcp-server.mjs --selftest",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

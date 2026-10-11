@@ -1,0 +1,20 @@
+{
+  "name": "dsh-comfymcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "comfy-mcp 对接组合工程：通用客户端插件的 MCP 宿主、comfy-mcp 参考服务端（Streamable HTTP）与 dsh-comfymcp-client DSH 插件。",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present run test",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "comfy-mcp": "node comfy-mcp-server/bin/comfy-mcp-server.mjs",
+    "comfy-mcp:selftest": "node comfy-mcp-server/bin/comfy-mcp-server.mjs --selftest",
+    "mcp-host": "node mcp/bin/fux-comfymcp-host.mjs",
+    "mcp-host:selftest": "node mcp/bin/fux-comfymcp-host.mjs --selftest",
+    "verify:dsh-plugin": "node --check plugins/dsh-comfymcp-client/index.js && node --check plugins/dsh-comfymcp-client/client.js && node --check plugins/dsh-comfymcp-client/lib/bridge.js && node --check plugins/dsh-comfymcp-client/lib/forms.js && node --check plugins/dsh-comfymcp-client/lib/catalog.js && node --check plugins/dsh-comfymcp-client/lib/rpc.js && node --check plugins/dsh-comfymcp-client/lib/config.js && node --check plugins/dsh-comfymcp-client/lib/persist.js && node --check plugins/dsh-comfymcp-client/lib/mcp-stdio.js && node --check plugins/dsh-comfymcp-client/lib/skills.js && echo dsh-plugin syntax OK"
+  }
+}

@@ -1,0 +1,132 @@
+/**
+ * 配置解析：优先级 env > 行配置 > 默认。纯函数、可测试，不依赖 DSH 运行时。
+ */
+
+/** Local defaults mirroring the bundle patch row. */
+export const DEFAULTS = Object.freeze({
+  endpoint: 'http://127.0.0.1:18800/mcp',
+  hostCommand: 'node',
+  hostEntry: '',
+  workflowDirs: [],
+  saveSubdir: 'dsh-generated',
+  artifactsDir: '',
+  autoUnloadModel: true,
+  autoConnect: true,
+  requestTimeoutMs: 30000,
+  callTimeoutMs: 300000,
+})
+
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect'])
+const LIST_KEYS = new Set(['workflowDirs'])
+
+function isBlank(value) {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim().length === 0)
+}
+
+function coerceNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return undefined
+}
+
+function coerceBoolean(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'on'].includes(text)) return true
+    if (['0', 'false', 'no', 'off'].includes(text)) return false
+  }
+  return undefined
+}
+
+/** Split a path list: `;` always separates; `:` only when not a Windows drive prefix. */
+export function splitPathList(value) {
+  const text = String(value ?? '').trim()
+  if (text.length === 0) return []
+  const separator = text.includes(';') || /^[A-Za-z]:[\\/]/.test(text) ? ';' : ':'
+  return text
+    .split(separator)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
+function coerceFor(key, value) {
+  if (value === undefined || value === null) return undefined
+  if (NUMBER_KEYS.has(key)) return coerceNumber(value)
+  if (BOOLEAN_KEYS.has(key)) return coerceBoolean(value)
+  if (LIST_KEYS.has(key)) {
+    if (Array.isArray(value)) {
+      const list = value.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0)
+      return list.length > 0 ? list : undefined
+    }
+    if (typeof value === 'string') {
+      const list = splitPathList(value)
+      return list.length > 0 ? list : undefined
+    }
+    return undefined
+  }
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function envNamesFor(key) {
+  const screaming = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()
+  const names = [`DSH_COMFYMCP_${screaming}`, `COMFY_MCP_${screaming}`]
+  if (key === 'endpoint') names.push('COMFY_MCP_ENDPOINT')
+  if (key === 'artifactsDir') names.push('COMFY_MCP_ARTIFACTS_DIR')
+  return names
+}
+
+/**
+ * Resolve the effective configuration.
+ * @param row partial config from the Loader row (already schema-validated when declared)
+ * @param env environment record; pass {} for isolation in tests
+ * @param resolvePath path resolver injected by the Host half (node:path.resolve)
+ */
+export function resolveConfig(row = {}, env = {}, resolvePath = (p) => p) {
+  const out = { ...DEFAULTS }
+  for (const key of Object.keys(DEFAULTS)) {
+    // 优先级：环境变量 > 行配置 > 默认
+    let resolved
+    for (const name of envNamesFor(key)) {
+      const value = env[name]
+      if (!isBlank(value)) {
+        const coerced = coerceFor(key, value)
+        if (coerced !== undefined) {
+          resolved = coerced
+          break
+        }
+      }
+    }
+    if (resolved === undefined) {
+      resolved = coerceFor(key, row[key])
+    }
+    if (resolved !== undefined) {
+      out[key] = resolved
+    }
+  }
+  if (typeof out.artifactsDir === 'string' && out.artifactsDir.length > 0) {
+    out.artifactsDir = resolvePath(out.artifactsDir)
+  }
+  out.workflowDirs = [...out.workflowDirs]
+  return out
+}
+
+/** Conventional workspace locations of the MCP host entry, most specific first. */
+export function candidateHostEntries(pluginDir) {
+  const entries = []
+  if (pluginDir) {
+    const normalized = pluginDir.replaceAll('\\', '/')
+    const marker = '/node_modules/'
+    const cut = normalized.lastIndexOf(marker)
+    if (cut > 0) {
+      const profileRoot = normalized.slice(0, cut)
+      entries.push(`${profileRoot}/projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs`)
+    }
+  }
+  entries.push('projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
+  return entries
+}

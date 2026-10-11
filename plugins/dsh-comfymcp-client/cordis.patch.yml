@@ -1,0 +1,17 @@
+- insert:
+    - id: dsh-comfymcp-client
+      # 裸包名按 Node 解析链从 dsh 安装可见（包已 link 进部署 node_modules）。
+      # 长驻进程内模块记录/生成快照按进程冻结，改动后需重启 DSH 才重载。
+      name: dsh-comfymcp-client
+      config:
+        endpoint: http://127.0.0.1:18800/mcp
+        hostCommand: node
+        hostEntry: F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp\mcp\bin\fux-comfymcp-host.mjs
+        workflowDirs:
+          - F:\Comfy\ComfyUI\user\default\workflows
+        saveSubdir: dsh-generated
+        artifactsDir: ''
+        autoUnloadModel: true
+        autoConnect: true
+        requestTimeoutMs: 30000
+        callTimeoutMs: 300000
