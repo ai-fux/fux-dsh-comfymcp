@@ -60,29 +60,34 @@ export class MockBackend implements McpBackend {
           queue: { running: 0, pending: 0 },
         })
       case 'node_search':
+        // 与真实后端一致：行键为驼峰 classType
         return text({
           query: payload['query'] ?? '',
           total: 2,
           nodes: [
-            { class_type: 'UnloadAllModels', category: 'Unload Model', output: ['*'] },
-            { class_type: 'UnloadModel', category: 'Unload Model', output: ['*'] },
+            { classType: 'UnloadAllModels', displayName: 'Unload All Models', category: 'Unload Model', outputNode: false },
+            { classType: 'UnloadModel', displayName: 'Unload Model', category: 'Unload Model', outputNode: false },
           ],
         })
-      case 'node_info':
-        return text({
-          classes: {
-            KSampler: {
-              input: {
-                required: {
-                  seed: ['INT', { min: 0, max: 2 ** 32 }],
-                  steps: ['INT', { min: 1, max: 100 }],
-                  cfg: ['FLOAT', { min: 0, max: 20 }],
-                },
-              },
-              output: ['MODEL', 'LATENT'],
-            },
-          },
-        })
+      case 'node_info': {
+        // 与真实后端一致：入参 classTypes 数组，返回 nodes{Cls:{inputs:[...]}}
+        const requested = Array.isArray(payload['classTypes']) ? (payload['classTypes'] as unknown[]).map((entry) => String(entry)) : []
+        const nodes: Record<string, unknown> = {}
+        for (const classType of requested) {
+          if (classType !== 'KSampler') continue
+          nodes[classType] = {
+            classType,
+            displayName: classType,
+            category: 'model/sampling',
+            inputs: [
+              { name: 'seed', group: 'required', type: 'INT', required: true, default: 0, min: 0, max: 2 ** 32 },
+              { name: 'steps', group: 'required', type: 'INT', required: true, default: 20, min: 1, max: 100 },
+              { name: 'cfg', group: 'required', type: 'FLOAT', required: true, default: 8, min: 0, max: 20 },
+            ],
+          }
+        }
+        return text({ missing: requested.filter((name) => nodes[name] === undefined), nodes })
+      }
       case 'list_models':
         return text({ types: { checkpoints: ['mock.safetensors'], total: 1 } })
       case 'list_workflows':

@@ -12,7 +12,7 @@
  */
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { deriveFields, buildQuestions, applyAnswers, integrateUnloadNode, firstPromptText, firstSeed } from './forms.js'
+import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, integrateUnloadNode, firstPromptText, firstSeed } from './forms.js'
 import { safeFileStem } from './bridge.js'
 
 const REMOTE_TOOL_LIST = [
@@ -148,8 +148,16 @@ export function createTools({ define, bridge, askUser }) {
         }
         let nodeInfos = {}
         try {
-          const answer = await bridge.callRemote('node_info', {}, 60000)
-          nodeInfos = answer?.structuredContent?.classes ?? {}
+          // 真实后端契约：node_info { classTypes: [...] }（复数数组）；空图时不调用
+          const classTypes = [
+            ...new Set(
+              Object.values(graph ?? {})
+                .map((node) => String(node?.class_type ?? ''))
+                .filter((name) => name.length > 0),
+            ),
+          ]
+          const answer = await bridge.callRemote('node_info', classTypes.length > 0 ? { classTypes } : {}, 60000)
+          nodeInfos = normalizeNodeInfos(answer?.structuredContent ?? {})
         } catch (error) {
           notes.push(`node_info 不可用（${error instanceof Error ? error.message : String(error)}），按图内现值推导`)
         }

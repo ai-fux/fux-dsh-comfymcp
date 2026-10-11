@@ -7,9 +7,38 @@ import {
   firstSeed,
   FormError,
   integrateUnloadNode,
+  normalizeNodeInfos,
   randomizeSeeds,
   resolveAnswer,
 } from '../lib/forms.js'
+
+describe('normalizeNodeInfos', () => {
+  it('converts the real backend inputs-array shape into the API shape', () => {
+    const normalized = normalizeNodeInfos({
+      nodes: {
+        KSampler: {
+          classType: 'KSampler',
+          inputs: [
+            { name: 'seed', group: 'required', type: 'INT', required: true, default: 0, min: 0, max: 100 },
+            { name: 'cfg', group: 'required', type: 'FLOAT', required: true, default: 8 },
+            { name: 'model', group: 'required', type: 'MODEL', required: true },
+            { name: 'image', group: 'optional', type: 'IMAGE', required: false },
+          ],
+        },
+      },
+    })
+    const required = normalized['KSampler'].input.required
+    expect(required['seed']).toEqual(['INT', { default: 0, min: 0, max: 100 }])
+    expect(required['cfg']).toEqual(['FLOAT', { default: 8 }])
+    expect(required['model']).toEqual(['MODEL', {}])
+    expect(required['image']).toBeUndefined()
+  })
+
+  it('passes the legacy classes shape through untouched', () => {
+    const legacy = { classes: { KSampler: { input: { required: { seed: ['INT', { min: 1 }] } } } } }
+    expect(normalizeNodeInfos(legacy)).toEqual(legacy.classes)
+  })
+})
 
 const SAMPLE_GRAPH = {
   '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a girl in the rain', clip: ['5', 1] } },

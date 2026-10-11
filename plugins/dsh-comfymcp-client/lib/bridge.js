@@ -247,7 +247,11 @@ export class ComfymcpBridge {
       )
       const data = answer?.structuredContent?.data ?? {}
       const nodes = Array.isArray(data.nodes) ? data.nodes : []
-      const hit = nodes.some((node) => String(node?.class_type ?? '') === 'UnloadAllModels')
+      // 真实后端行是驼峰 classType，mock/惯例是蛇形 class_type——两者都认
+      const hit = nodes.some((node) => {
+        const name = node !== null && typeof node === 'object' ? (node.class_type ?? node.classType) : undefined
+        return String(name ?? '') === 'UnloadAllModels'
+      })
       this.unloadProbe = {
         at,
         available: hit,

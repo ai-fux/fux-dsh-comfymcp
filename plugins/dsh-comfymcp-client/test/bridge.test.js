@@ -97,6 +97,28 @@ describe('ComfymcpBridge.embeddedServer', () => {
     expect(started).toBe(0)
     expect(bridge.config.endpoint).toBe('http://127.0.0.1:18800/mcp')
   })
+
+  it('detects the unload node in both camelCase and snake_case rows', async () => {
+    const makeProbeBridge = (rows) =>
+      makeBridge({ autoConnect: false }, {
+        clientFactory: () => ({
+          serverInfo: { name: 'x', version: '1' },
+          initialize: async () => {},
+          close: async () => {},
+          status: () => ({ running: true }),
+          callTool: async (tool) => {
+            if (tool === 'connection_status') return { structuredContent: { ok: true } }
+            return { structuredContent: { data: { nodes: rows } } }
+          },
+        }),
+      })
+    const camel = await makeProbeBridge([{ classType: 'UnloadAllModels' }]).probeUnload(true)
+    expect(camel.available).toBe(true)
+    const snake = await makeProbeBridge([{ class_type: 'UnloadAllModels' }]).probeUnload(true)
+    expect(snake.available).toBe(true)
+    const miss = await makeProbeBridge([{ classType: 'KSampler' }]).probeUnload(true)
+    expect(miss.available).toBe(false)
+  })
 })
 
 describe('ComfymcpBridge.readArtifactBytes', () => {

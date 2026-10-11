@@ -148,6 +148,20 @@ describe('comfy-mcp server (mock backend, end to end)', () => {
     expect(buffer.byteLength).toBe(Number(artifacts[0]!['bytes']))
   })
 
+  it('serves the real node contract: node_search rows use classType and node_info takes classTypes', async () => {
+    const { api } = await start()
+    await api.initialize()
+    const search = await api.request('tools/call', { name: 'node_search', arguments: { query: 'UnloadAllModels' } })
+    const searchData = search.body!.result!['structuredContent'] as Record<string, unknown>
+    const rows = searchData['nodes'] as Array<Record<string, unknown>>
+    expect(rows.some((row) => row['classType'] === 'UnloadAllModels')).toBe(true)
+    const info = await api.request('tools/call', { name: 'node_info', arguments: { classTypes: ['KSampler'] } })
+    const nodes = (info.body!.result!['structuredContent'] as Record<string, unknown>)['nodes'] as Record<string, Record<string, unknown>>
+    expect(nodes['KSampler'] !== undefined).toBe(true)
+    const missing = (info.body!.result!['structuredContent'] as Record<string, unknown>)['missing'] as string[]
+    expect(missing).toEqual([])
+  })
+
   it('answers unknown methods with a JSON-RPC error and ping with an empty result', async () => {
     const { api } = await start()
     await api.initialize()

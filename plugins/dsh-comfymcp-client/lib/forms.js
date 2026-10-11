@@ -57,6 +57,41 @@ function choicesOf(decl) {
 }
 
 /**
+ * 归一化 node_info 快照为 deriveFields 消费的 API 形状。
+ * 兼容两种来源：
+ * - API 形状 `{classes: {Cls: {input:{required:{f:[type,opts]}}}}}`（mock / 既有约定）
+ * - 真实后端形状 `{nodes: {Cls: {inputs: [{name, group, type, required, default, min, max}]}}}`
+ * @param structured node_info 的 structuredContent
+ */
+export function normalizeNodeInfos(structured = {}) {
+  const out = {}
+  const classes = structured?.classes
+  if (classes !== null && typeof classes === 'object') {
+    for (const [name, decl] of Object.entries(classes)) out[name] = decl
+  }
+  const nodes = structured?.nodes
+  if (nodes !== null && typeof nodes === 'object') {
+    for (const [name, decl] of Object.entries(nodes)) {
+      if (out[name] !== undefined) continue
+      const required = {}
+      const inputs = Array.isArray(decl?.inputs) ? decl.inputs : []
+      for (const input of inputs) {
+        if (input === null || typeof input !== 'object' || typeof input.name !== 'string') continue
+        const isRequired = input.group === 'required' || (input.group === undefined && input.required !== false)
+        if (!isRequired) continue
+        const opts = {}
+        if (input.default !== undefined) opts.default = input.default
+        if (input.min !== undefined) opts.min = input.min
+        if (input.max !== undefined) opts.max = input.max
+        required[input.name] = [String(input.type ?? 'ANY'), opts]
+      }
+      out[name] = { input: { required } }
+    }
+  }
+  return out
+}
+
+/**
  * 从图 + 节点声明推导表单字段。
  * @param graph API-format graph（node id → {class_type, inputs}）
  * @param nodeInfos 可选的 node_info 快照（class_type → {input:{required:{...}}}）
