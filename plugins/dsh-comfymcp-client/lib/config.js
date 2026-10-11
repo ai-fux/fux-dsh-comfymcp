@@ -1,6 +1,7 @@
 /**
  * 配置解析：优先级 env > 行配置 > 默认。纯函数、可测试，不依赖 DSH 运行时。
  */
+import { join } from 'node:path'
 
 /** Local defaults mirroring the bundle patch row. */
 export const DEFAULTS = Object.freeze({
@@ -29,11 +30,47 @@ export const DEFAULTS = Object.freeze({
   storageAccessKey: '',
   storageSecret: '',
   storagePrefix: '',
+  homeDir: '',
+  dataDir: '',
 })
 
 const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])
 const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
 const LIST_KEYS = new Set(['workflowDirs'])
+
+/**
+ * 插件自有主目录缺省值：DSH 内置数据目录下的 comfymcp/（persist.overlayPath 同源）。
+ * 其下三个职能子目录：workflows/ 工作流、artifacts/ 生成的数据、data/ 结构化数据。
+ */
+export function defaultHomeDir(env = {}) {
+  const home = typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim().length > 0
+    ? env.DSH_HOME.trim()
+    : join(process.cwd(), 'data', '.dsh')
+  return join(home, 'comfymcp')
+}
+
+/**
+ * 归一主目录与派生路径（仅在对应配置缺省时填充，显式配置永远优先）：
+ *   workflowDirs 空 → [<home>/workflows]
+ *   artifactsDir 空 → <home>/artifacts
+ *   dataDir      空 → <home>/data
+ */
+export function applyHomeDefaults(config, env = {}, resolvePath = (p) => p) {
+  const home = typeof config.homeDir === 'string' && config.homeDir.trim().length > 0
+    ? resolvePath(config.homeDir.trim())
+    : defaultHomeDir(env)
+  config.homeDir = home
+  if (!Array.isArray(config.workflowDirs) || config.workflowDirs.length === 0) {
+    config.workflowDirs = [join(home, 'workflows')]
+  }
+  if (typeof config.artifactsDir !== 'string' || config.artifactsDir.trim().length === 0) {
+    config.artifactsDir = join(home, 'artifacts')
+  }
+  if (typeof config.dataDir !== 'string' || config.dataDir.trim().length === 0) {
+    config.dataDir = join(home, 'data')
+  }
+  return config
+}
 
 function isBlank(value) {
   return value === undefined || value === null || (typeof value === 'string' && value.trim().length === 0)

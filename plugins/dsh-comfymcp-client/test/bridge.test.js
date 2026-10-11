@@ -52,6 +52,18 @@ describe('ComfymcpBridge.runs', () => {
     expect(run.subdir).toBe('dsh-generated')
     expect(typeof run.id).toBe('string')
   })
+
+  it('persists structured run records to dataDir and restores them in a new bridge', async () => {
+    const dataDir = join(workdir, 'data')
+    const first = makeBridge({ dataDir })
+    first.recordRun({ id: 'run-1', name: 'demo', state: 'completed', prompt: '夕阳西下' })
+    const { existsSync, readFileSync } = await import('node:fs')
+    expect(existsSync(join(dataDir, 'runs.json'))).toBe(true)
+    expect(readFileSync(join(dataDir, 'runs.json'), 'utf8')).toContain('夕阳西下')
+    const second = makeBridge({ dataDir })
+    expect(second.getRun('run-1')?.name).toBe('demo')
+    expect(second.listRuns(5).map((run) => run.id)).toEqual(['run-1'])
+  })
 })
 
 describe('ComfymcpBridge.embeddedServer', () => {

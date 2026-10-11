@@ -14,7 +14,7 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineTool } from './lib/define.js'
 import { ComfymcpBridge } from './lib/bridge.js'
-import { resolveConfig } from './lib/config.js'
+import { applyHomeDefaults, resolveConfig } from './lib/config.js'
 import { createTools } from './lib/catalog.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
@@ -33,6 +33,11 @@ export function apply(ctx, config) {
   const overlayPath = persist.overlayPath()
   const overlay = persist.readOverlay(overlayPath)
   const effective = resolveConfig({ ...(config ?? {}), ...overlay }, process.env, resolvePath)
+  // 插件自有主目录：缺省 DSH 内置数据目录下 comfymcp/，其下派生 workflows/artifacts/data
+  applyHomeDefaults(effective, process.env, resolvePath)
+  console.log(
+    `[dsh-comfymcp-client] 主目录 ${effective.homeDir}（workflows=${effective.workflowDirs[0]} | artifacts=${effective.artifactsDir} | data=${effective.dataDir}）`,
+  )
   const bridge = new ComfymcpBridge(effective, {
     // 插件自身目录：内置 comfy-mcp-server（vendor/）的定位基准
     pluginDir: dirname(fileURLToPath(import.meta.url)),

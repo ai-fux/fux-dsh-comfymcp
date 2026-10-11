@@ -7,10 +7,10 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import { McpStdioClient } from './mcp-stdio.js'
-import { candidateHostEntries, resolveConfig, resolveServerEntry } from './config.js'
+import { applyHomeDefaults, candidateHostEntries, resolveConfig, resolveServerEntry } from './config.js'
 const PROBE_TTL_MS = 60000
 const MAX_RUNS = 50
 const PROXY_MAX_BYTES = 64 * 1024 * 1024
@@ -53,6 +53,7 @@ export class ComfymcpBridge {
     this.pluginDir = typeof options.pluginDir === 'string' ? options.pluginDir : ''
     this.runs = new Map()
     this.runOrder = []
+    this.loadPersistedRuns()
     this.unloadProbe = { at: 0, available: false, reason: 'not-probed' }
   }
 
@@ -80,6 +81,10 @@ export class ComfymcpBridge {
       if (key in overlay) {
         this.config[key] = overlay[key]
       }
+    }
+    // 主目录/派生路径变化 → 重新派生缺省子目录
+    if (['homeDir', 'workflowDirs', 'artifactsDir', 'dataDir'].some((key) => key in (patch ?? {}))) {
+      applyHomeDefaults(this.config, process.env, resolve)
     }
     // 配置变了：下次探测/调用按新配置重连（旧客户端保留到失败为止）
     this.unloadProbe = { at: 0, available: false, reason: 'config-changed' }
@@ -335,7 +340,40 @@ export class ComfymcpBridge {
       const drop = this.runOrder.shift()
       if (drop !== undefined) this.runs.delete(drop)
     }
+    this.persistRuns()
     return record
+  }
+
+  /** 结构化数据：运行记录落盘 <dataDir>/runs.json（尽力而为，失败仅记日志）。 */
+  persistRuns() {
+    const dataDir = this.config?.dataDir
+    if (typeof dataDir !== 'string' || dataDir.length === 0) return
+    try {
+      mkdirSync(dataDir, { recursive: true })
+      const ordered = this.runOrder.slice().reverse().map((id) => this.runs.get(id)).filter(Boolean)
+      writeFileSync(join(dataDir, 'runs.json'), `${JSON.stringify(ordered, null, 2)}\n`, 'utf8')
+    } catch (error) {
+      this.log(`runs.json 写入失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** 启动时恢复上次进程的结构化运行记录（存在才读，损坏忽略）。 */
+  loadPersistedRuns() {
+    const dataDir = this.config?.dataDir
+    if (typeof dataDir !== 'string' || dataDir.length === 0) return
+    try {
+      const file = join(dataDir, 'runs.json')
+      if (!existsSync(file)) return
+      const parsed = JSON.parse(readFileSync(file, 'utf8'))
+      if (!Array.isArray(parsed)) return
+      for (const record of parsed.slice(0, MAX_RUNS)) {
+        if (record === null || typeof record !== 'object' || typeof record.id !== 'string') continue
+        this.runs.set(record.id, record)
+        this.runOrder.push(record.id)
+      }
+    } catch (error) {
+      this.log(`runs.json 读取失败（忽略）: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   getRun(id) {

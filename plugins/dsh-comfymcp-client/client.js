@@ -311,6 +311,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var initial = react.useState({
           endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
           storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
+          homeDir: '', dataDir: '',
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -354,6 +355,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 storageAccessKey: text(config.storageAccessKey),
                 storageSecret: text(config.storageSecret),
                 storagePrefix: text(config.storagePrefix),
+                homeDir: text(config.homeDir),
+                dataDir: text(config.dataDir),
               }
               setDraft(next)
               setSaved(next)
@@ -373,7 +376,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
         function isDirty() {
           return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
-            'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix'].some(function (key) {
+            'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
+            'homeDir', 'dataDir'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -420,6 +424,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             storageAccessKey: draft.storageAccessKey,
             storageSecret: draft.storageSecret,
             storagePrefix: draft.storagePrefix,
+            homeDir: draft.homeDir,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -441,6 +446,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 storageAccessKey: text(applied.storageAccessKey),
                 storageSecret: text(applied.storageSecret),
                 storagePrefix: text(applied.storagePrefix),
+                homeDir: text(applied.homeDir),
+                dataDir: text(applied.dataDir),
               }
               setDraft(next)
               setSaved(next)
@@ -532,6 +539,19 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.saveSubdir, placeholder: 'dsh-generated', onChange: function (value) { edit('saveSubdir', value) } })),
             h(Field, { label: '产物下载目录', hint: '留空使用 DSH 数据目录' },
               h(TextInput, { value: draft.artifactsDir, mono: true, placeholder: '', onChange: function (value) { edit('artifactsDir', value) } })),
+          ),
+
+          h(SettingsSection, {
+            title: '目录布局',
+            description: '插件自有主目录：缺省在 DSH 内置数据目录下 comfymcp/，其下派生 workflows（工作流）、artifacts（生成的数据）、data（结构化数据）。留空即用缺省。',
+          },
+            h(Field, { label: '插件主目录（可选）', hint: '修改后保存即按新主目录重派生子目录（显式配置过的工作流/产物目录不受影响）' },
+              h(TextInput, { value: draft.homeDir, mono: true, placeholder: text(draft.dataDir).length > 0 ? draft.homeDir : '', onChange: function (value) { edit('homeDir', value) } })),
+            h('span', { className: 'dshmcp-hint' },
+              '当前：主目录 ' + (text(draft.homeDir).length > 0 ? draft.homeDir : '（DSH 内置目录）')
+              + ' ｜ 工作流 ' + (text(draft.workflowDirs).length > 0 ? draft.workflowDirs.split(';')[0] : '（主目录/workflows）')
+              + ' ｜ 产物 ' + (text(draft.artifactsDir).length > 0 ? draft.artifactsDir : '（主目录/artifacts）')
+              + ' ｜ 结构化数据 ' + (text(draft.dataDir).length > 0 ? draft.dataDir : '（主目录/data）')),
           ),
 
           (function () {
