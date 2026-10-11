@@ -46,6 +46,17 @@ ComfyUI（:8000，用户自备，.venv Python 3.12）
 
 以下命令均在项目根 `F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp` 执行。
 
+### 3.0 两种部署形态（先选一个）
+
+| 形态 | 说明 | 适合 |
+| --- | --- | --- |
+| **内嵌（默认，推荐单机）** | comfy-mcp 服务端由 DSH 插件**自动拉起**：随机空闲端口、随 DSH 启停、无需任何手动操作；ComfyUI 可在本机或局域网任意主机（后端仅走 HTTP） | 本机开发/单人使用 |
+| **外置** | comfy-mcp 服务端按 3.2 单独启动；设置页/行配置关闭内嵌开关，endpoint 指向该服务 | 多消费者共享、独立生命周期、部署在服务器主机 |
+
+内嵌模式的默认配置已写入行配置（`embeddedServer: true` + `serverEntry` + stdio 后端指向
+兄弟项目 `fux-comfyui-mcp.mjs`）；ComfyUI 原版服务即可，无需在 ComfyUI 内装任何 MCP 组件
+（可选 `comfyui-unload-model` 仅用于运行后释放显存）。
+
 ### 3.1 安装仓内依赖并自检
 
 ```powershell
@@ -55,7 +66,7 @@ node comfy-mcp-server/bin/comfy-mcp-server.mjs --selftest
 node mcp/bin/fux-comfymcp-host.mjs --selftest
 ```
 
-### 3.2 启动 comfy-mcp 服务端（二选一）
+### 3.2 启动 comfy-mcp 服务端（仅外置形态需要）
 
 **离线联调（mock 后端，出 PNG）**：
 
@@ -122,7 +133,8 @@ plugin_manager install_bundle <项目>\plugins\dsh-comfymcp-client
 | `COMFY_MCP_BACKEND` | `mock` | `mock` \| `stdio` |
 | `COMFY_MCP_BACKEND_CMD` / `_ARGS` | — | stdio 后端启动命令（见 3.2） |
 | `DSH_COMFYUI_URL` | `http://127.0.0.1:8000` | 兄弟后端用的 ComfyUI 地址（其 env 文件管理） |
-| 设置页可改 | endpoint / workflowDirs / saveSubdir / artifactsDir / hostEntry / autoUnloadModel | 保存进覆盖文件，即时生效 |
+| 设置页可改 | endpoint / workflowDirs / saveSubdir / artifactsDir / hostEntry / autoUnloadModel / embeddedServer | 保存进覆盖文件，即时生效 |
+| `embeddedServer` / `serverEntry` / `embeddedBackend` / `embeddedBackendCommand` / `embeddedBackendArgs` | 行配置见 bundle patch | 内嵌服务端：开关 / 服务入口 / `mock`\|`stdio` / 后端命令 / 后端参数；env 别名 `DSH_COMFYMCP_SERVER_ENTRY` |
 
 完整示例见 [`config/comfymcp.env`](../config/comfymcp.env)。
 

@@ -14,10 +14,15 @@ export const DEFAULTS = Object.freeze({
   autoConnect: true,
   requestTimeoutMs: 30000,
   callTimeoutMs: 300000,
+  embeddedServer: false,
+  serverEntry: '',
+  embeddedBackend: 'mock',
+  embeddedBackendCommand: 'node',
+  embeddedBackendArgs: '',
 })
 
 const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs'])
-const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
 function isBlank(value) {
@@ -129,4 +134,22 @@ export function candidateHostEntries(pluginDir) {
   }
   entries.push('projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
   return entries
+}
+
+/**
+ * Resolve the comfy-mcp-server entry for embedded mode: explicit config/env wins,
+ * then derive from the host entry's sibling layout (…/mcp/bin → …/comfy-mcp-server/bin).
+ */
+export function resolveServerEntry(env = {}, serverEntry, hostEntry) {
+  for (const name of ['DSH_COMFYMCP_SERVER_ENTRY', 'COMFY_MCP_SERVER_ENTRY']) {
+    const value = env[name]
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  }
+  if (typeof serverEntry === 'string' && serverEntry.trim().length > 0) return serverEntry.trim()
+  if (typeof hostEntry === 'string' && hostEntry.trim().length > 0) {
+    const normalized = hostEntry.trim().replaceAll('\\', '/')
+    const cut = normalized.lastIndexOf('/mcp/bin/')
+    if (cut > 0) return `${normalized.slice(0, cut)}/comfy-mcp-server/bin/comfy-mcp-server.mjs`
+  }
+  return ''
 }

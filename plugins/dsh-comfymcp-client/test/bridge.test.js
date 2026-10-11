@@ -54,6 +54,51 @@ describe('ComfymcpBridge.runs', () => {
   })
 })
 
+describe('ComfymcpBridge.embeddedServer', () => {
+  it('starts once, rewrites the endpoint, and kills the child on close', async () => {
+    let started = 0
+    let killed = 0
+    const bridge = makeBridge({ embeddedServer: true, endpoint: 'http://127.0.0.1:18800/mcp' }, {
+      embeddedSpawner: async () => {
+        started += 1
+        return { url: 'http://127.0.0.1:41234/mcp', kill: () => { killed += 1 } }
+      },
+      clientFactory: () => ({ serverInfo: null, initialize: async () => {}, close: async () => {}, status: () => ({}) }),
+    })
+    expect(bridge.config.endpoint).toBe('http://127.0.0.1:18800/mcp')
+    await bridge.ensureReady()
+    await bridge.ensureReady()
+    expect(started).toBe(1)
+    expect(bridge.config.endpoint).toBe('http://127.0.0.1:41234/mcp')
+    expect(bridge.publicConfig().embeddedServer).toBe(true)
+    expect(bridge.publicConfig().embeddedUrl).toBe('http://127.0.0.1:41234/mcp')
+    await bridge.close()
+    expect(killed).toBe(1)
+    expect(bridge.embedded).toBeNull()
+  })
+
+  it('propagates a failed embedded start as a thrown error (boundary)', async () => {
+    const bridge = makeBridge({ embeddedServer: true }, {
+      embeddedSpawner: async () => {
+        throw new Error('内嵌服务端入口不存在：C:\\nope.mjs')
+      },
+    })
+    await expect(bridge.ensureReady()).rejects.toThrow(/入口不存在/)
+    expect(bridge.embedded).toBeNull()
+  })
+
+  it('skips embedding when disabled', async () => {
+    let started = 0
+    const bridge = makeBridge({ embeddedServer: false }, {
+      embeddedSpawner: async () => { started += 1; return { url: 'http://x/mcp', kill: () => {} } },
+      clientFactory: () => ({ serverInfo: { name: 'x', version: '1' }, close: async () => {}, status: () => ({}) }),
+    })
+    await bridge.ensureReady()
+    expect(started).toBe(0)
+    expect(bridge.config.endpoint).toBe('http://127.0.0.1:18800/mcp')
+  })
+})
+
 describe('ComfymcpBridge.readArtifactBytes', () => {
   it('serves files inside the artifacts dir and refuses outside paths', async () => {
     const bridge = makeBridge()

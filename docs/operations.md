@@ -46,11 +46,15 @@
 
 ### 3.1 服务启停（PowerShell）
 
+**内嵌模式（默认）**：comfy-mcp 服务端随 DSH 插件自动拉起/回收（随机端口），无需手动启停；
+首次使用时日志出现 `embedded comfy-mcp server at http://127.0.0.1:<port>/mcp`。
+
+**外置模式**（设置页关闭内嵌开关后）：
+
 ```powershell
-# 启动（mock）
 $env:COMFY_MCP_BACKEND='mock'; $env:COMFY_MCP_SERVER_PORT='18800'
 node comfy-mcp-server\bin\comfy-mcp-server.mjs
-# 停止：Ctrl+C 或结束对应 node 进程；DSH 插件会在下次调用时按新状态重连
+# 停止：Ctrl-C；DSH 插件在下次调用时按新状态重连
 ```
 
 ### 3.2 插件代码热迭代
@@ -75,7 +79,8 @@ Host 半区（工具/面板通道）受模块快照冻结约束，**必须重启
 | 启动告警 `1 entry did not activate` | 模块快照冻结（改码后未重启）或激活期异常 | 看堆栈行号是否旧代码 → 重启 DSH；仍复现则按堆栈定位 |
 | 启动有 `cannot get property "webServer"` | 面板通道在 webServer 落位前注册 | 已内置就绪重试；出现即说明运行的是旧代码，重启装载新版 |
 | 设置页显示「connection RPC 不可用」 | 面板通道未挂上（服务端未启动/旧代码） | 确认启动日志有 `panel channel /comfymcp ready`；没有则按上两行处理 |
-| `comfymcp_status` ok:false | comfy-mcp 服务端没起 / 端点错 | 起 18800 服务端；设置页核对 endpoint 后「测试连接」 |
+| `comfymcp_status` ok:false | comfy-mcp 服务端没起 / 端点错 | 内嵌模式：看日志有无 `embedded comfy-mcp server at <url>`；外置模式：起 18800 服务端后核对 endpoint |
+| 内嵌启动失败 `内嵌服务端…未报告监听地址/入口不存在` | serverEntry 路径不对或服务自身崩了 | 核对行配置 `serverEntry`；手动 `node comfy-mcp-server\bin\comfy-mcp-server.mjs --selftest` 验证 |
 | 卸载开关置灰 | 未连接，或服务端无 UnloadAllModels | 接通后自动可用；真实模式按部署文档 §5 验证 object_info |
 | 运行报 ComfyUI 相关错误 | ComfyUI 未运行/显存不足/图不合法 | 查 :8000 存活；看 ComfyUI 控制台输出；开自动卸载释放显存 |
 | 产物卡图片裂图 / 404 | 产物不在 containment 目录内 | 核对「产物下载目录」与运行输出目录一致 |

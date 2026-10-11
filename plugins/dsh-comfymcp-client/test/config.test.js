@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULTS, resolveConfig, splitPathList, candidateHostEntries } from '../lib/config.js'
+import { DEFAULTS, resolveConfig, splitPathList, candidateHostEntries, resolveServerEntry } from '../lib/config.js'
 
 describe('resolveConfig', () => {
   it('falls back to defaults with an empty row and env', () => {
@@ -51,5 +51,20 @@ describe('candidateHostEntries', () => {
   it('derives the workspace path from a profile-installed plugin dir', () => {
     const entries = candidateHostEntries('C:\\profile\\node_modules\\dsh-comfymcp-client')
     expect(entries[0]).toBe('C:/profile/projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
+  })
+})
+
+describe('embedded server config', () => {
+  it('defaults embeddedServer off and coerces the boolean from env or row', () => {
+    expect(resolveConfig({}, {}).embeddedServer).toBe(false)
+    expect(resolveConfig({ embeddedServer: 'on' }, {}).embeddedServer).toBe(true)
+    expect(resolveConfig({}, { DSH_COMFYMCP_EMBEDDED_SERVER: '1' }).embeddedServer).toBe(true)
+  })
+
+  it('resolves the server entry: env beats config beats hostEntry derivation', () => {
+    expect(resolveServerEntry({ DSH_COMFYMCP_SERVER_ENTRY: 'E:\\s.mjs' }, 'C:\\c.mjs', 'C:\\h\\mcp\\bin\\host.mjs')).toBe('E:\\s.mjs')
+    expect(resolveServerEntry({}, 'C:\\c.mjs', 'C:\\h\\mcp\\bin\\host.mjs')).toBe('C:\\c.mjs')
+    expect(resolveServerEntry({}, '', 'C:\\proj\\mcp\\bin\\fux-comfymcp-host.mjs')).toBe('C:/proj/comfy-mcp-server/bin/comfy-mcp-server.mjs')
+    expect(resolveServerEntry({}, '', '')).toBe('')
   })
 })

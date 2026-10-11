@@ -42,7 +42,22 @@ export function writeOverlay(path, patch) {
   }
 }
 
-export const OVERLAY_KEYS = ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'autoUnloadModel', 'autoConnect', 'hostEntry', 'requestTimeoutMs', 'callTimeoutMs']
+export const OVERLAY_KEYS = [
+  'endpoint',
+  'workflowDirs',
+  'saveSubdir',
+  'artifactsDir',
+  'autoUnloadModel',
+  'autoConnect',
+  'hostEntry',
+  'requestTimeoutMs',
+  'callTimeoutMs',
+  'embeddedServer',
+  'serverEntry',
+  'embeddedBackend',
+  'embeddedBackendCommand',
+  'embeddedBackendArgs',
+]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */
 export function sanitizeOverlayPatch(payload) {

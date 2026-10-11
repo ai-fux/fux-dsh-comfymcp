@@ -232,7 +232,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       function ComfymcpSettings(props) {
         var ctx = props.ctx
         var initial = react.useState({
-          endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true,
+          endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false,
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -265,6 +265,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 artifactsDir: text(config.artifactsDir),
                 hostEntry: text(config.hostEntry),
                 autoUnloadModel: config.autoUnloadModel === true,
+                embeddedServer: config.embeddedServer === true,
               }
               setDraft(next)
               setSaved(next)
@@ -283,7 +284,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         }, [refresh])
 
         function isDirty() {
-          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel'].some(function (key) {
+          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -320,6 +321,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             artifactsDir: draft.artifactsDir,
             hostEntry: draft.hostEntry,
             autoUnloadModel: draft.autoUnloadModel === true,
+            embeddedServer: draft.embeddedServer === true,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -331,10 +333,11 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 artifactsDir: text(applied.artifactsDir),
                 hostEntry: text(applied.hostEntry),
                 autoUnloadModel: applied.autoUnloadModel === true,
+                embeddedServer: applied.embeddedServer === true,
               }
               setDraft(next)
               setSaved(next)
-              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '已保存（覆盖层即时生效；卸载开关按新配置重新判定）' }) })
+              setUi(function (previous) { return Object.assign({}, previous, { saving: false, note: '已保存（覆盖层即时生效；内嵌服务端在下次运行/探测时按新开关拉起）' }) })
               return rpc(ctx, 'status', {})
             })
             .then(function (value) { if (value) setProbe(value) })
@@ -405,11 +408,33 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           ),
 
           h(SettingsSection, {
-            title: 'MCP 宿主与模型卸载',
-            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY；卸载开关在服务端无 UnloadAllModels 插件时自动置灰。',
+            title: 'MCP 宿主与 comfy-mcp 服务端',
+            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内嵌模式由插件自动拉起 comfy-mcp 服务（随机端口，随 DSH 生命周期）；关闭后使用下方端点连接外置服务。',
           },
             h(Field, { label: 'MCP 宿主入口（可选）' },
               h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
+            h(SwitchRow, {
+              label: '内嵌 comfy-mcp 服务端（推荐单机使用）',
+              checked: draft.embeddedServer === true,
+              disabled: false,
+              onChange: function (value) { edit('embeddedServer', value) },
+            }),
+            h('span', { className: 'dshmcp-hint' },
+              draft.embeddedServer === true
+                ? '开启：端点由内嵌服务自动分配并接管（当前生效端点见「连接」分区）；ComfyUI 可在本机或局域网任意主机'
+                : '关闭：连接下方端点指向的外置 comfy-mcp 服务'),
+            h(Field, { label: 'comfy-mcp 服务端点（外置模式）' },
+              h(TextInput, {
+                value: draft.endpoint, mono: true, placeholder: 'http://127.0.0.1:18800/mcp',
+                disabled: draft.embeddedServer === true,
+                onChange: function (value) { edit('endpoint', value) },
+              })),
+          ),
+
+          h(SettingsSection, {
+            title: '模型卸载',
+            description: '卸载开关在服务端无 UnloadAllModels 插件时自动置灰。',
+          },
             h(SwitchRow, {
               label: '运行后自动卸载模型（释放显存）',
               checked: draft.autoUnloadModel === true,

@@ -6,13 +6,15 @@
  * - 运行历史保存在内存（MVP）：面板与产物卡读取；进程重启即清空，可重跑。
  */
 import { createHash, randomUUID } from 'node:crypto'
+import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import { McpStdioClient } from './mcp-stdio.js'
-import { candidateHostEntries, resolveConfig } from './config.js'
+import { candidateHostEntries, resolveConfig, resolveServerEntry } from './config.js'
 const PROBE_TTL_MS = 60000
 const MAX_RUNS = 50
 const PROXY_MAX_BYTES = 64 * 1024 * 1024
+const EMBEDDED_START_TIMEOUT_MS = 30000
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'])
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv'])
@@ -33,6 +35,8 @@ export class ComfymcpBridge {
     this.config = config
     this.log = options.log ?? (() => {})
     this.now = options.now ?? (() => Date.now())
+    this.spawn = options.spawn ?? nodeSpawn
+    this.embeddedSpawner = options.embeddedSpawner ?? null
     this.clientFactory =
       options.clientFactory ??
       ((cfg) =>
@@ -41,9 +45,11 @@ export class ComfymcpBridge {
           args: this.hostArgs(cfg),
           requestTimeoutMs: cfg.requestTimeoutMs,
           callTimeoutMs: cfg.callTimeoutMs,
+          env: { ...process.env, COMFY_MCP_ENDPOINT: cfg.endpoint },
           log: (line) => this.log(line),
         }))
     this.client = null
+    this.embedded = null
     this.runs = new Map()
     this.runOrder = []
     this.unloadProbe = { at: 0, available: false, reason: 'not-probed' }
@@ -90,8 +96,88 @@ export class ComfymcpBridge {
     return this.client
   }
 
+  /**
+   * 内嵌 comfy-mcp 服务端：port 0 随机端口拉起，从 stdout 读回 `listening on <url>`
+   * 并改写本桥 endpoint（随后 spawn 的 MCP 宿主经 env 拿到同一地址）。幂等；失败杀进程并抛。
+   */
+  async startEmbeddedServer() {
+    if (this.embedded !== null) return this.embedded
+    if (typeof this.embeddedSpawner === 'function') {
+      this.embedded = await this.embeddedSpawner(this.config)
+      this.config.endpoint = this.embedded.url
+      this.log(`embedded comfy-mcp server at ${this.embedded.url} (injected spawner)`)
+      return this.embedded
+    }
+    const entry = resolveServerEntry(process.env, this.config.serverEntry, this.config.hostEntry)
+    if (entry === '') {
+      throw new Error('内嵌服务端未配置 serverEntry（或无法从 hostEntry 推导 comfy-mcp-server 路径）')
+    }
+    if (!existsSync(entry)) {
+      throw new Error(`内嵌服务端入口不存在：${entry}`)
+    }
+    const child = this.spawn(process.env['COMFY_MCP_SERVER_NODE'] ?? 'node', [entry], {
+      cwd: undefined,
+      env: {
+        ...process.env,
+        COMFY_MCP_SERVER_PORT: '0',
+        COMFY_MCP_SERVER_HOST: '127.0.0.1',
+        COMFY_MCP_BACKEND: this.config.embeddedBackend === 'stdio' ? 'stdio' : 'mock',
+        ...(this.config.embeddedBackendCommand ? { COMFY_MCP_BACKEND_CMD: this.config.embeddedBackendCommand } : {}),
+        ...(this.config.embeddedBackendArgs ? { COMFY_MCP_BACKEND_ARGS: this.config.embeddedBackendArgs } : {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    const state = { url: '', child, kill }
+    function kill() {
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+    }
+    const started = new Promise((resolveListen, rejectListen) => {
+      const timer = setTimeout(() => {
+        rejectListen(new Error(`内嵌服务端 ${EMBEDDED_START_TIMEOUT_MS}ms 内未报告监听地址`))
+      }, EMBEDDED_START_TIMEOUT_MS)
+      let outputText = ''
+      const onOutput = (chunk) => {
+        outputText += chunk.toString()
+        const match = /listening on (\S+)/.exec(outputText)
+        if (match !== null) {
+          clearTimeout(timer)
+          resolveListen(match[1])
+        }
+      }
+      // 服务端把 "listening on <url>" 打到 stderr（comfy-mcp-server main.ts），两路都收
+      child.stdout?.on('data', onOutput)
+      child.stderr?.on('data', onOutput)
+      child.on('exit', (code) => {
+        clearTimeout(timer)
+        rejectListen(new Error(`内嵌服务端提前退出（code=${code ?? 'signal'}）`))
+      })
+      child.on('error', (error) => {
+        clearTimeout(timer)
+        rejectListen(error instanceof Error ? error : new Error(String(error)))
+      })
+    })
+    try {
+      state.url = await started
+    } catch (error) {
+      kill()
+      throw error
+    }
+    this.embedded = state
+    this.config.endpoint = state.url
+    this.log(`embedded comfy-mcp server at ${state.url} (backend: ${this.config.embeddedBackend})`)
+    return state
+  }
+
   /** Connected once per client lifetime; subsequent calls reuse the child. */
   async ensureReady() {
+    if (this.config.embeddedServer === true && this.embedded === null) {
+      await this.startEmbeddedServer()
+    }
     const client = this.clientOrNull()
     if (client.serverInfo === null) {
       await client.initialize()
@@ -273,6 +359,8 @@ export class ComfymcpBridge {
       workflowDirs: [...this.config.workflowDirs],
       artifactsDir: this.config.artifactsDir,
       autoUnloadModel: this.config.autoUnloadModel === true,
+      embeddedServer: this.config.embeddedServer === true,
+      embeddedUrl: this.embedded !== null ? this.embedded.url : '',
       hostEntryConfigured:
         (typeof this.config.hostEntry === 'string' && this.config.hostEntry.trim().length > 0) ||
         typeof process.env.DSH_COMFYMCP_HOST_ENTRY === 'string',
@@ -283,6 +371,14 @@ export class ComfymcpBridge {
     if (this.client !== null) {
       await this.client.close()
       this.client = null
+    }
+    if (this.embedded !== null) {
+      try {
+        this.embedded.kill()
+      } catch {
+        /* ignore */
+      }
+      this.embedded = null
     }
   }
 }
