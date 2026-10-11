@@ -22,6 +22,13 @@ export const DEFAULTS = Object.freeze({
   comfyuiUrl: 'http://127.0.0.1:8000',
   controlPort: 18801,
   controlToken: '',
+  storage: 'local',
+  storageEndpoint: '',
+  storageBucket: '',
+  storageRegion: 'cn-chengdu',
+  storageAccessKey: '',
+  storageSecret: '',
+  storagePrefix: '',
 })
 
 const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])

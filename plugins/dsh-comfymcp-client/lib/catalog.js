@@ -8,12 +8,38 @@
  *   comfymcp_push_form       结构化表单推送用户（ask-user-question）
  *   comfymcp_apply_form      表单答案回填 + 校验
  *   comfymcp_run_workflow    强制先保存 → （可选整合卸载节点）→ 运行 → 等待
- *   comfymcp_fetch_artifacts 成果物下载到本地
+ *   comfymcp_fetch_artifacts 成果物下载到本地（storage≠local 时同步推送到对象存储）
+ *   comfymcp_files           插件自有文件目录管理（本地/MinIO/OSS 统一接口）
+ *   comfymcp_workflow_pull   从远端模板库拉取工作流文件到本地工作流空间
  */
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, integrateUnloadNode, firstPromptText, firstSeed } from './forms.js'
 import { safeFileStem } from './bridge.js'
+import { resolveStorage } from './storage.js'
+
+/** 下载完成的本地产物 → 推送到受管存储（storage≠local 时）；失败仅附注，不影响运行结果。 */
+async function pushFilesToStorage(bridge, files) {
+  if (!Array.isArray(files) || files.length === 0) return null
+  if (String(bridge.config.storage ?? 'local').toLowerCase() === 'local') return null
+  try {
+    const storage = resolveStorage(bridge.config)
+    const date = new Date().toISOString().slice(0, 10)
+    const pushed = []
+    for (const file of files) {
+      if (typeof file?.path !== 'string' || file.path.length === 0) continue
+      const outcome = bridge.readArtifactBytes(new URLSearchParams({ path: file.path }))
+      if (outcome.error !== undefined) continue
+      const key = `artifacts/${date}/${file.filename ?? file.path.split(/[\\/]/).pop()}`
+      const result = await storage.put(key, outcome.bytes)
+      pushed.push({ key: result.key, size: result.size, url: storage.url(result.key) })
+    }
+    return { storage: storage.id, pushed }
+  } catch (error) {
+    return { storage: String(bridge.config.storage), error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 
 const REMOTE_TOOL_LIST = [
   'server_info',
@@ -370,6 +396,8 @@ export function createTools({ define, bridge, askUser }) {
               base.form.downloadError = error instanceof Error ? error.message : String(error)
             }
           }
+          // storage≠local 时把成果物同步到受管对象存储
+          base.form.pushed = await pushFilesToStorage(bridge, localFiles)
           const record = bridge.recordRun({
             ...base,
             state: typeof finalData.state === 'string' ? finalData.state : finalData.isError === true ? 'failed' : 'completed',
@@ -426,7 +454,70 @@ export function createTools({ define, bridge, askUser }) {
         const answer = await bridge.fetchArtifacts(Array.isArray(args.refs) ? args.refs : [])
         const data = answer?.structuredContent ?? {}
         const files = Array.isArray(data.files) ? data.files : []
-        return { ok: data.isError !== true, files }
+        const pushed = await pushFilesToStorage(bridge, files)
+        return { ok: data.isError !== true, files, ...(pushed !== null ? { pushed } : {}) }
+      },
+    }),
+  )
+
+  tools.push(
+    define({
+      name: 'comfymcp_files',
+      description:
+        'Manage the plugin-owned file space: list managed files (local artifacts dir, MinIO or Aliyun OSS depending on the storage setting) with key/size/kind and an access url. ' +
+        'Use it when the user asks what files/outputs exist, or to locate a previous artifact. Answers { ok, storage, files: [{key, filename, kind, size, modifiedAt, url}] }.',
+      parameters: {
+        prefix: { type: 'string', description: 'Optional key prefix filter, e.g. "artifacts/2026-10-11".' },
+        kind: { type: 'string', description: 'Optional kind filter: image | video | file.' },
+        limit: { type: 'number', description: 'Max entries (default 50, cap 200).' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+        presentationMeta: (_args, value) => value,
+      },
+      async execute(args) {
+        const storage = resolveStorage(bridge.config)
+        const prefix = typeof args.prefix === 'string' ? args.prefix : ''
+        let files = await storage.list(prefix)
+        const kind = typeof args.kind === 'string' && args.kind.length > 0 ? args.kind.toLowerCase() : ''
+        if (kind.length > 0) files = files.filter((entry) => entry.kind === kind)
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(args.limit, 200) : 50
+        files = files.slice(0, limit)
+        for (const entry of files) entry.url = storage.url(entry.key)
+        return { ok: true, storage: storage.id, files }
+      },
+    }),
+  )
+
+  tools.push(
+    define({
+      name: 'comfymcp_workflow_pull',
+      description:
+        'Pull a workflow file from the remote template library (comfymcp_discover remote entries) into the local workflow workspace, making it editable/inspectable offline. ' +
+        'Answers { ok, path, name, format }.',
+      parameters: {
+        workflowId: { type: 'string', required: true, description: 'Remote workflow id as returned by comfymcp_discover (remote[].id).' },
+        name: { type: 'string', description: 'Target file name override (default derived from the remote name).' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+      },
+      async execute(args) {
+        const workflowId = typeof args.workflowId === 'string' ? args.workflowId.trim() : ''
+        if (workflowId.length === 0) return { ok: false, error: '需要 workflowId（来自 comfymcp_discover 的 remote[].id）' }
+        const answer = await bridge.callRemote('get_workflow', { id: workflowId }, 60000)
+        const data = answer?.structuredContent ?? {}
+        const graph = data.graph
+        if (graph === undefined || graph === null) return { ok: false, error: `模板 ${workflowId} 没有可用的 graph` }
+        const dir = bridge.config.workflowDirs[0]
+        if (typeof dir !== 'string' || dir.length === 0) return { ok: false, error: '未配置工作流目录' }
+        const name = safeFileStem(typeof args.name === 'string' && args.name.trim().length > 0 ? args.name : workflowId)
+        mkdirSync(dir, { recursive: true })
+        const target = join(dir, `${name}.json`)
+        writeFileSync(target, `${JSON.stringify(graph, null, 2)}\n`, 'utf8')
+        return { ok: true, path: target, name: `${name}.json`, format: typeof data.format === 'string' ? data.format : 'api' }
       },
     }),
   )

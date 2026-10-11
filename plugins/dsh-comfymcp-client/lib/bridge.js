@@ -270,8 +270,9 @@ export class ComfymcpBridge {
         30000,
       )
       const data = answer?.structuredContent?.data ?? {}
-      const nodes = Array.isArray(data.nodes) ? data.nodes : []
-      // 真实后端行是驼峰 classType，mock/惯例是蛇形 class_type——两者都认
+      // 真实后端分页行键是 rows（驼峰行），mock/旧约定是 nodes——两者都认
+      const nodes = Array.isArray(data.rows) ? data.rows : Array.isArray(data.nodes) ? data.nodes : []
+      // 行键：真实后端驼峰 classType，mock/惯例蛇形 class_type——两者都认
       const hit = nodes.some((node) => {
         const name = node !== null && typeof node === 'object' ? (node.class_type ?? node.classType) : undefined
         return String(name ?? '') === 'UnloadAllModels'

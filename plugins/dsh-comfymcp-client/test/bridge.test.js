@@ -149,8 +149,8 @@ describe('ComfymcpBridge.embeddedServer', () => {
     expect(bridge.pluginDir).toBe('F:/deploy/profile/node_modules/dsh-comfymcp-client')
   })
 
-  it('detects the unload node in both camelCase and snake_case rows', async () => {
-    const makeProbeBridge = (rows) =>
+  it('detects the unload node in real rows/nodes shapes and both key casings', async () => {
+    const makeProbeBridge = (data) =>
       makeBridge({ autoConnect: false }, {
         clientFactory: () => ({
           serverInfo: { name: 'x', version: '1' },
@@ -159,15 +159,19 @@ describe('ComfymcpBridge.embeddedServer', () => {
           status: () => ({ running: true }),
           callTool: async (tool) => {
             if (tool === 'connection_status') return { structuredContent: { ok: true } }
-            return { structuredContent: { data: { nodes: rows } } }
+            return { structuredContent: { data } }
           },
         }),
       })
-    const camel = await makeProbeBridge([{ classType: 'UnloadAllModels' }]).probeUnload(true)
-    expect(camel.available).toBe(true)
-    const snake = await makeProbeBridge([{ class_type: 'UnloadAllModels' }]).probeUnload(true)
+    // 真实后端：宿主转发 data.rows + 驼峰 classType
+    const realRows = await makeProbeBridge({ rows: [{ classType: 'UnloadAllModels' }] }).probeUnload(true)
+    expect(realRows.available).toBe(true)
+    // mock：data.nodes + 蛇形 class_type
+    const snake = await makeProbeBridge({ nodes: [{ class_type: 'UnloadAllModels' }] }).probeUnload(true)
     expect(snake.available).toBe(true)
-    const miss = await makeProbeBridge([{ classType: 'KSampler' }]).probeUnload(true)
+    const camel = await makeProbeBridge({ nodes: [{ classType: 'UnloadAllModels' }] }).probeUnload(true)
+    expect(camel.available).toBe(true)
+    const miss = await makeProbeBridge({ rows: [{ classType: 'KSampler' }] }).probeUnload(true)
     expect(miss.available).toBe(false)
   })
 })

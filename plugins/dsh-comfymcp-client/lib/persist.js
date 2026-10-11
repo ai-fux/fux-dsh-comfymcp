@@ -59,6 +59,13 @@ export const OVERLAY_KEYS = [
   'embeddedBackendArgs',
   'comfyuiUrl',
   'controlToken',
+  'storage',
+  'storageEndpoint',
+  'storageBucket',
+  'storageRegion',
+  'storageAccessKey',
+  'storageSecret',
+  'storagePrefix',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

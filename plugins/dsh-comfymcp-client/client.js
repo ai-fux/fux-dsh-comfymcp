@@ -310,6 +310,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var ctx = props.ctx
         var initial = react.useState({
           endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
+          storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -346,6 +347,13 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 embeddedServer: config.embeddedServer === true,
                 comfyuiUrl: text(config.comfyuiUrl),
                 backendEntry: text(config.embeddedBackendArgs),
+                storage: text(config.storage) || 'local',
+                storageEndpoint: text(config.storageEndpoint),
+                storageBucket: text(config.storageBucket),
+                storageRegion: text(config.storageRegion),
+                storageAccessKey: text(config.storageAccessKey),
+                storageSecret: text(config.storageSecret),
+                storagePrefix: text(config.storagePrefix),
               }
               setDraft(next)
               setSaved(next)
@@ -364,7 +372,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         }, [refresh])
 
         function isDirty() {
-          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry'].some(function (key) {
+          return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
+            'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -404,6 +413,13 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             embeddedServer: draft.embeddedServer === true,
             comfyuiUrl: draft.comfyuiUrl,
             embeddedBackendArgs: draft.backendEntry,
+            storage: draft.storage,
+            storageEndpoint: draft.storageEndpoint,
+            storageBucket: draft.storageBucket,
+            storageRegion: draft.storageRegion,
+            storageAccessKey: draft.storageAccessKey,
+            storageSecret: draft.storageSecret,
+            storagePrefix: draft.storagePrefix,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -418,6 +434,13 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 embeddedServer: applied.embeddedServer === true,
                 comfyuiUrl: text(applied.comfyuiUrl),
                 backendEntry: text(applied.embeddedBackendArgs),
+                storage: text(applied.storage) || 'local',
+                storageEndpoint: text(applied.storageEndpoint),
+                storageBucket: text(applied.storageBucket),
+                storageRegion: text(applied.storageRegion),
+                storageAccessKey: text(applied.storageAccessKey),
+                storageSecret: text(applied.storageSecret),
+                storagePrefix: text(applied.storagePrefix),
               }
               setDraft(next)
               setSaved(next)
@@ -511,6 +534,42 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.artifactsDir, mono: true, placeholder: '', onChange: function (value) { edit('artifactsDir', value) } })),
           ),
 
+          (function () {
+            var storageKind = text(draft.storage).toLowerCase()
+            var remoteStorage = storageKind === 'minio' || storageKind === 'oss'
+            return h(SettingsSection, {
+              title: '文件存储',
+              description: '成果物与受管文件的存放位置：本地目录、MinIO（S3 兼容）或阿里云 OSS。非本地时运行产物在下载后会同步推送一份到对象存储。',
+            },
+              h(ModeSwitch, {
+                label: '存储类型',
+                value: storageKind,
+                options: [
+                  { value: 'local', label: '本地目录' },
+                  { value: 'minio', label: 'MinIO（S3）' },
+                  { value: 'oss', label: '阿里云 OSS' },
+                ],
+                onChange: function (value) { edit('storage', value) },
+              }),
+              storageKind === 'local'
+                ? h('span', { className: 'dshmcp-hint' }, '本地模式：文件管理即「产物下载目录」，聊天产物卡直接渲染本地文件。')
+                : h('div', { className: 'dshmcp-section' },
+                  h(Field, { label: '服务端点', hint: storageKind === 'minio' ? '例如 http://127.0.0.1:9000' : '例如 https://oss-cn-chengdu.aliyuncs.com' },
+                    h(TextInput, { value: draft.storageEndpoint, mono: true, onChange: function (value) { edit('storageEndpoint', value) } })),
+                  h(Field, { label: 'Bucket' },
+                    h(TextInput, { value: draft.storageBucket, mono: true, onChange: function (value) { edit('storageBucket', value) } })),
+                  h(Field, { label: 'Region', hint: storageKind === 'minio' ? '默认 us-east-1' : '默认 cn-chengdu' },
+                    h(TextInput, { value: draft.storageRegion, mono: true, onChange: function (value) { edit('storageRegion', value) } })),
+                  h(Field, { label: 'AccessKey' },
+                    h(TextInput, { value: draft.storageAccessKey, mono: true, onChange: function (value) { edit('storageAccessKey', value) } })),
+                  h(Field, { label: 'SecretKey' },
+                    h(TextInput, { value: draft.storageSecret, mono: true, onChange: function (value) { edit('storageSecret', value) } })),
+                  h(Field, { label: 'Key 前缀（可选）', hint: '受管 key 统一挂在该前缀下' },
+                    h(TextInput, { value: draft.storagePrefix, mono: true, onChange: function (value) { edit('storagePrefix', value) } })),
+                ),
+            )
+          })(),
+
           h(SettingsSection, {
             title: 'MCP 宿主',
             description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内置模式下宿主还会按需拉起 comfy-mcp 服务端。',
@@ -586,6 +645,54 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         return h('div', { className: 'dshmcp-section', style: { gap: 6 } },
           images.length > 0 ? h('div', { className: 'dshmcp-tiles' }, images) : null,
           files.length > 0 ? h('div', { className: 'dshmcp-row dshmcp-row-tight' }, files) : null,
+        )
+      }
+
+      /** comfymcp_files 的聊天渲染：图片瓦片 + 文件行（key 相对时走环回 /artifact）。 */
+      function managedFileSrc(entry) {
+        var url = text(entry && entry.url)
+        if (url.length === 0) return null
+        if (/^https?:\/\//i.test(url)) return url
+        if (CONTROL_BASE !== null) {
+          var joiner = url.indexOf('?') >= 0 ? '&' : '?'
+          if (CONTROL_TOKEN_SEEN.length > 0) url += joiner + 'token=' + encodeURIComponent(CONTROL_TOKEN_SEEN)
+          return CONTROL_BASE + (url.charAt(0) === '/' ? url : '/' + url)
+        }
+        return url
+      }
+
+      function FilesCard(props) {
+        var block = props.block
+        if (block === undefined || block === null || block.kind === undefined) return null
+        var meta = block.meta !== undefined && block.meta !== null && typeof block.meta === 'object' ? block.meta : {}
+        var files = Array.isArray(meta.files) ? meta.files : []
+        if (files.length === 0) return null
+        var images = []
+        var rows = []
+        files.forEach(function (entry, index) {
+          var src = managedFileSrc(entry)
+          var name = text(entry.filename) || text(entry.key) || ('file-' + index)
+          var size = typeof entry.size === 'number' ? (entry.size > 1048576 ? (entry.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(entry.size / 1024)) + ' KB') : ''
+          if (src !== null && entry.kind === 'image') {
+            images.push(h('a', { key: 'i' + index, href: src, target: '_blank', rel: 'noreferrer', className: 'dshmcp-tile' },
+              h('img', Object.assign({ src: src, alt: name }, IMG_ATTRS)),
+              h('span', { className: 'dshmcp-tile-kind' }, 'IMG'),
+            ))
+            return
+          }
+          rows.push(h('a', { key: 'f' + index, href: src || '#', target: '_blank', rel: 'noreferrer', className: 'dshmcp-fileline' },
+            h('span', null, entry.kind === 'video' ? '▶' : '📄'),
+            h('span', { className: 'dshmcp-mono', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name),
+            size.length > 0 ? h('span', { className: 'dshmcp-muted' }, size) : null,
+          ))
+        })
+        return h('div', { className: 'dshmcp-section', style: { gap: 6 } },
+          h('div', { className: 'dshmcp-card-head' },
+            h('span', { className: 'dshmcp-badge' }, '文件管理 · ' + text(meta.storage || 'local')),
+            h('span', { className: 'dshmcp-hint' }, files.length + ' 个文件'),
+          ),
+          images.length > 0 ? h('div', { className: 'dshmcp-tiles' }, images) : null,
+          rows.length > 0 ? h('div', { className: 'dshmcp-section', style: { gap: 4 } }, rows) : null,
         )
       }
 
@@ -678,6 +785,13 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           return slots.register(
             { name: 'tool.call.toolview', key: 'comfymcp_fetch_artifacts' },
             function (props) { return h(RunCard, props) },
+          )
+        })
+
+        slots.inject('tool.call.toolview', function () {
+          return slots.register(
+            { name: 'tool.call.toolview', key: 'comfymcp_files' },
+            function (props) { return h(FilesCard, props) },
           )
         })
       }

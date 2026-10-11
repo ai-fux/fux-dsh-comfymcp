@@ -55,7 +55,7 @@ const GRAPH = {
 }
 
 describe('createTools catalog', () => {
-  it('registers the seven comfymcp tools with unique names', () => {
+  it('registers the comfymcp tools with unique names', () => {
     const { define, definitions } = fakeDefine()
     createTools({ define, bridge: fakeBridge(), askUser: async () => ({ answers: [] }) })
     const names = definitions.map((entry) => entry.name)
@@ -67,6 +67,8 @@ describe('createTools catalog', () => {
       'comfymcp_apply_form',
       'comfymcp_run_workflow',
       'comfymcp_fetch_artifacts',
+      'comfymcp_files',
+      'comfymcp_workflow_pull',
       'comfymcp_call_remote',
     ])
     expect(new Set(names).size).toBe(names.length)
