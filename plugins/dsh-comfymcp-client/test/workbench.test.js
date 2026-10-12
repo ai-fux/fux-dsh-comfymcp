@@ -168,3 +168,55 @@ describe('workbench tags', () => {
     await expect(workbench.updateTags({ key: '', patch: {} })).rejects.toThrow(/key/)
   })
 })
+
+describe('workbench tabs / pull / refresh', () => {
+  it('groups mine vs library and dedupes by name with local priority', async () => {
+    const bridge = await makeBridge({
+      // 带「同名远端工作流」的 callRemote：非 library 条目 name=beach
+      callRemote: async (tool, args = {}) => {
+        if (tool === 'node_info') {
+          return { structuredContent: { ok: true, isError: false, tool, data: { nodes: { KSampler: { classType: 'KSampler', inputs: [{ name: 'seed', group: 'required', type: 'INT', required: true }] } }, missing: [] } } }
+        }
+        if (tool === 'list_workflows') {
+          return {
+            structuredContent: {
+              ok: true, isError: false, tool,
+              data: {
+                total: 2,
+                workflows: [
+                  { id: 'ws:beach', name: 'beach', source: 'workspace' },
+                  { id: 'library:demo.json', name: 'demo', source: 'library' },
+                ],
+              },
+            },
+          }
+        }
+        if (tool === 'get_workflow' && args.id === 'library:demo.json') {
+          return { structuredContent: { ok: true, isError: false, tool, data: { id: args.id, converted: true, graph: REMOTE_GRAPH } } }
+        }
+        return { structuredContent: { ok: true, isError: false, tool, data: {} } }
+      },
+    })
+    const workbench = makeWorkbench(bridge)
+    const groups = await workbench.listWorkflows()
+    const beaches = groups.mine.filter((page) => String(page.title ?? page.name).toLowerCase() === 'beach')
+    expect(beaches).toHaveLength(1) // 同名去重，本地优先
+    expect(beaches[0].origin).toBe('local')
+    expect(groups.mine.some((page) => page.name === 'library:demo.json')).toBe(false)
+    expect(groups.library).toEqual([expect.objectContaining({ name: 'library:demo.json', title: 'demo' })])
+  })
+
+  it('pulls a library workflow into my local dir and refresh re-parses', async () => {
+    const workbench = makeWorkbench(await makeBridge())
+    const pulled = await workbench.pullWorkflow({ id: 'library:demo.json' })
+    expect(pulled).toMatchObject({ ok: true, name: 'demo' })
+    const page = await workbench.pageWorkflow('demo', { token: '' }) // 拉取后本地可解析
+    expect(page.error).toBeUndefined()
+    expect(page.html).toContain('data-field="3:seed"')
+    const refreshed = await workbench.refreshWorkflow({ workflow: 'demo' })
+    expect(refreshed.ok).toBe(true)
+    expect(refreshed.sections).toBeGreaterThanOrEqual(2)
+    await expect(workbench.pullWorkflow({ id: 'missing:1.json' })).resolves.toMatchObject({ ok: false })
+    await expect(workbench.refreshWorkflow({ workflow: '' })).resolves.toMatchObject({ ok: false })
+  })
+})

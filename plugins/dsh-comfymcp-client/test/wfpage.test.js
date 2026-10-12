@@ -81,14 +81,26 @@ describe('renderPageHtml', () => {
 })
 
 describe('renderIndexHtml / renderArtifactsHtml', () => {
-  it('lists pages with tokenized links and library badges (boundary: empty)', () => {
-    const html = renderIndexHtml({ pages: [{ name: 'beach', title: 'beach', updatedAt: '2026-10-11' }, { name: 'library:x.json', title: 'x', source: 'library' }], token: 'tk' })
+  it('renders mine/library tabs with pull buttons and reload (boundary: empty)', () => {
+    const html = renderIndexHtml({
+      mine: [
+        { name: 'beach', title: 'beach', origin: 'local', updatedAt: '2026-10-11' },
+        { name: 'ws:gen-1', title: 'gen-1', origin: 'remote' },
+      ],
+      library: [{ name: 'library:x.json', title: 'x', origin: 'remote' }],
+      token: 'tk',
+    })
+    expect(html).toContain('data-tab="mine"')
+    expect(html).toContain('data-tab="library"')
+    expect(html).toContain('我的工作流（2）')
+    expect(html).toContain('模板库（1）')
     expect(html).toContain('/ui/wf/beach?token=tk')
-    expect(html).toContain('/ui/artifacts?token=tk')
-    expect(html).toContain('更新 2026-10-11')
-    expect(html).toContain('📚 模板库')
     expect(html).toContain('/ui/wf/library%3Ax.json')
-    expect(renderIndexHtml({ pages: [], token: '' })).toContain('还没有可编排的工作流')
+    expect(html).toContain('data-pull="ws:gen-1"')
+    expect(html).toContain('↻ 重新加载')
+    const empty = renderIndexHtml({ mine: [], library: [], token: '' })
+    expect(empty).toContain('还没有我的工作流')
+    expect(empty).toContain('模板库暂不可达')
   })
 
   it('renders runs with tags chips, dynamic fields and binding (boundary: empty)', () => {

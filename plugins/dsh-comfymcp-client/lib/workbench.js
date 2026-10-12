@@ -11,13 +11,14 @@
  * - 工作流来源：本地主目录 JSON 优先，缺省回落远端模板库（get_workflow，
  *   服务端已把 UI 格式转换为 API 图）。
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
 import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { normalizeNodeCatalog } from './nodecat.js'
+import { safeFileStem } from './bridge.js'
 
 const REMOTE_TTL_MS = 5 * 60 * 1000
 
@@ -115,7 +116,32 @@ function createRemoteSource(bridge) {
         return []
       }
     },
+    /** 丢弃解析缓存（工作流图 + 节点目录），供「重新解析」。 */
+    invalidate(name) {
+      if (typeof name === 'string' && name.length > 0) cache.delete(`wf:${name}`)
+      else {
+        cache.clear()
+      }
+    },
   }
+}
+
+/** Tab 内按名称去重（大小写不敏感；先到先得，本地优先由调用序保证）。 */
+function dedupeByName(pages) {
+  const seen = new Set()
+  const result = []
+  for (const page of pages) {
+    const key = String(page.title ?? page.name ?? '').trim().toLowerCase()
+    if (key.length === 0 || seen.has(key)) continue
+    seen.add(key)
+    result.push(page)
+  }
+  return result
+}
+
+/** library 判定：source 标注或 id 前缀，两者都认。 */
+function isLibraryEntry(workflow) {
+  return workflow?.source === 'library' || String(workflow?.id ?? '').startsWith('library:')
 }
 
 /** 把页面提交的 values（复合键 nodeId:field）应用回图。 */
@@ -162,21 +188,37 @@ export function createWorkbenchMethods({ bridge, config }) {
     return buildPageDescriptor({ name, title: name, graph: resolved.graph, nodeInfos: catalog })
   }
 
+  /** Tab 分组：我的工作流 = 本地主目录 + 远端非模板库条目（参与过 DSH 交互的）；模板库 = 远端 library。组内按名称去重。 */
+  function tabGroups(remoteWorkflows) {
+    const locals = scanWorkflows(config)
+    const remoteMine = remoteWorkflows
+      .filter((workflow) => !isLibraryEntry(workflow))
+      .map((workflow) => ({
+        name: String(workflow?.id ?? ''),
+        title: String(workflow?.name ?? workflow?.id ?? ''),
+        origin: 'remote',
+        updatedAt: String(workflow?.modifiedAt ?? ''),
+      }))
+      .filter((page) => page.name.length > 0)
+    const library = remoteWorkflows
+      .filter((workflow) => isLibraryEntry(workflow))
+      .map((workflow) => ({
+        name: String(workflow?.id ?? ''),
+        title: String(workflow?.name ?? workflow?.id ?? ''),
+        origin: 'remote',
+        updatedAt: String(workflow?.modifiedAt ?? ''),
+      }))
+      .filter((page) => page.name.length > 0)
+    return {
+      mine: dedupeByName([...locals.map((page) => ({ ...page, origin: 'local' })), ...remoteMine]),
+      library: dedupeByName(library),
+    }
+  }
+
   return {
     async pageIndex({ token = '' } = {}) {
-      const locals = scanWorkflows(config)
-      const remotes = []
-      for (const workflow of await remote.remoteList()) {
-        const name = String(workflow?.id ?? '')
-        if (name.length === 0 || locals.some((page) => page.name === name)) continue
-        remotes.push({
-          name,
-          title: String(workflow?.name ?? name),
-          source: 'library',
-          updatedAt: String(workflow?.modifiedAt ?? ''),
-        })
-      }
-      return { html: renderIndexHtml({ pages: [...locals, ...remotes], token }) }
+      const groups = tabGroups(await remote.remoteList())
+      return { html: renderIndexHtml({ mine: groups.mine, library: groups.library, token }) }
     },
 
     async pageWorkflow(name, { token = '' } = {}) {
@@ -190,11 +232,38 @@ export function createWorkbenchMethods({ bridge, config }) {
     },
 
     async listWorkflows() {
-      const locals = scanWorkflows(config)
-      const remotes = (await remote.remoteList())
-        .map((workflow) => ({ name: String(workflow?.id ?? ''), title: String(workflow?.name ?? ''), source: 'library' }))
-        .filter((workflow) => workflow.name.length > 0)
-      return { workflows: [...locals, ...remotes] }
+      return tabGroups(await remote.remoteList())
+    },
+
+    /** 手动从服务端拉取工作流到我的本地目录（同名覆盖；本地优先渲染）。 */
+    async pullWorkflow({ id } = {}) {
+      const workflowId = String(id ?? '').trim()
+      if (workflowId.length === 0) return { ok: false, reason: '缺少工作流 id' }
+      const graph = await remote.workflow(workflowId)
+      if (graph === null) return { ok: false, reason: `服务端没有工作流 ${workflowId}` }
+      const dirs = Array.isArray(config.workflowDirs) ? config.workflowDirs : []
+      if (dirs.length === 0) return { ok: false, reason: '未配置工作流目录' }
+      const baseName = String((await remote.remoteList()).find((workflow) => String(workflow?.id ?? '') === workflowId)?.name ?? workflowId.replace(/^library:/, ''))
+      const stem = safeFileStem(baseName.replace(/\.json$/i, '')) || `workflow-${Date.now()}`
+      const file = join(dirs[0], `${stem}.json`)
+      try {
+        writeFileSync(file, JSON.stringify(graph, null, 2), 'utf8')
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+      }
+      remote.invalidate(workflowId)
+      return { ok: true, name: stem, file }
+    },
+
+    /** 重新解析：丢弃缓存后重建描述符（返回统计，页面随后刷新）。 */
+    async refreshWorkflow({ workflow } = {}) {
+      const name = String(workflow ?? '').trim()
+      if (name.length === 0) return { ok: false, reason: '缺少工作流名' }
+      remote.invalidate(name)
+      const descriptor = await descriptorFor(name)
+      if (descriptor === null) return { ok: false, reason: `工作流 ${name} 不存在` }
+      const fields = descriptor.sections.reduce((sum, section) => sum + section.fields.length, 0)
+      return { ok: true, nodeCount: descriptor.nodeCount, sections: descriptor.sections.length, fields }
     },
 
     async getPage(name) {

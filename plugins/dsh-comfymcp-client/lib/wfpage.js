@@ -140,16 +140,24 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .muted{color:var(--muted);font-size:12px}.hidden{display:none}
 `
 
-function pageShell(title, body, extraScript = '') {
+function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
+  const styles = extraCss.length > 0 ? `${PAGE_CSS}${extraCss}` : PAGE_CSS
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<style>${PAGE_CSS}</style></head>
+<style>${styles}</style></head>
 <body><div class="wrap">${body}</div>
 <script>${extraScript}</script></body></html>
 `
 }
+
+/** Tab 样式（索引页专用，与 DSH 简约风一致）。 */
+const INDEX_CSS = `
+.tabs{display:flex;gap:8px;margin:12px 0}
+.tab{background:transparent;border:1px solid var(--line);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;color:var(--muted)}
+.tab.active{color:var(--fg);border-color:var(--fg);font-weight:600}
+`
 
 function fieldControlHtml(field, fieldId, dataKey) {
   const type = field.type
@@ -190,9 +198,10 @@ export function renderPageHtml(descriptor, options = {}) {
   const quickBar = quickCommands.length > 0
     ? `<div class="row" style="margin-bottom:10px">${quickCommands.map((command) => `<button type="button" data-quick="${escapeHtml(command.name)}">${escapeHtml(command.label ?? command.name)}</button>`).join('')}</div>`
     : ''
+  const refreshBtn = `<button type="button" class="mini" data-refresh="1" title="丢弃解析缓存，重新拉取工作流与节点元数据并重渲染">↻ 重新解析</button>`
   const body = `
 <div class="top"><div><h1>${escapeHtml(descriptor.title)}</h1>
-<div class="sub">工作流 ${escapeHtml(descriptor.workflow)} · ${descriptor.nodeCount} 节点 · ${sections.length} 组参数 · 生成于 ${escapeHtml(descriptor.generatedAt)}</div></div>
+<div class="sub">工作流 ${escapeHtml(descriptor.workflow)} · ${descriptor.nodeCount} 节点 · ${sections.length} 组参数 · 生成于 ${escapeHtml(descriptor.generatedAt)} · ${refreshBtn}</div></div>
 <a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>
 ${quickBar}
 <form id="run-form">
@@ -234,6 +243,12 @@ function collectValues() {
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
+  if (t.getAttribute && t.getAttribute('data-refresh')) {
+    t.disabled = true; t.textContent = '解析中…';
+    api('/api/refresh', { workflow: WORKFLOW }).then(function () { location.reload(); })
+      .catch(function (error) { t.disabled = false; t.textContent = '↻ 重新解析'; alert('重新解析失败：' + error.message); });
+    return;
+  }
   if (t.getAttribute && t.getAttribute('data-dice')) {
     var input = document.getElementById(t.getAttribute('data-dice'));
     input.value = String(Math.floor(1 + Math.random() * 4294967294));
@@ -263,19 +278,50 @@ document.getElementById('run-form').addEventListener('submit', function (event) 
 });
 `
 
-/** 渲染索引页（一个工作流一个页面入口；本地与远端模板库合并列表）。 */
-export function renderIndexHtml({ pages = [], token = '' }) {
-  const items = pages
-    .map((page) => `<a class="card" style="display:block" href="/ui/wf/${encodeURIComponent(page.name)}?token=${encodeURIComponent(token)}">
-<b>${escapeHtml(page.title ?? page.name)}</b>${page.source === 'library' ? ' <span class="chip">📚 模板库</span>' : ''}
-<div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></a>`)
-    .join('\n')
+const PAGE_INDEX_JS = `
+document.addEventListener('click', function (event) {
+  var el = event.target; if (!el.getAttribute) return;
+  var tab = el.getAttribute('data-tab');
+  if (tab) {
+    var buttons = document.querySelectorAll('[data-tab]');
+    for (var i = 0; i < buttons.length; i++) buttons[i].classList.toggle('active', buttons[i] === el);
+    var groups = document.querySelectorAll('[data-group]');
+    for (var j = 0; j < groups.length; j++) groups[j].style.display = groups[j].getAttribute('data-group') === tab ? '' : 'none';
+    return;
+  }
+  var pull = el.getAttribute('data-pull');
+  if (pull) {
+    el.disabled = true; el.textContent = '拉取中…';
+    fetch('/api/workflows/pull', { method: 'POST', headers: { 'x-dsh-comfymcp': '1', 'content-type': 'application/json', 'x-dsh-comfymcp-token': TOKEN }, body: JSON.stringify({ id: pull }) })
+      .then(function (res) { return res.json().then(function (data) { if (!res.ok || data.ok === false) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status)); return data.value !== undefined ? data.value : data }); })
+      .then(function (value) { alert('已拉取到我的工作流：' + (value && value.name ? value.name : pull)); location.reload(); })
+      .catch(function (error) { el.disabled = false; el.textContent = '⬇ 拉取'; alert('拉取失败：' + error.message); });
+  }
+});
+`
+
+/** 渲染索引页：分「我的工作流 / 模板库」两个 Tab，组内按名称去重；远端条目可手动拉取。 */
+export function renderIndexHtml({ mine = [], library = [], token = '' }) {
+  const enc = encodeURIComponent(token)
+  const pageLink = (page, extra = '') => `<a class="card" style="display:block" href="/ui/wf/${encodeURIComponent(page.name)}?token=${enc}">
+<b>${escapeHtml(page.title ?? page.name)}</b>${extra}
+<div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}${page.origin === 'remote' ? ' · 在服务端，可拉取到本地' : ''}</div></a>`
+  const pullButton = (page) => `<div class="card"><b>${escapeHtml(page.title ?? page.name)}</b> <button type="button" class="mini" data-pull="${escapeHtml(page.name)}">⬇ 拉取</button>
+<div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></div>`
+  const mineItems = mine.map((page) => (page.origin === 'remote' ? pullButton(page) : pageLink(page))).join('\n')
+  const libraryItems = library.map((page) => pageLink(page)).join('\n')
   const body = `
 <h1>ComfyUI 工作台</h1>
-<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 · <a href="/ui/artifacts?token=${encodeURIComponent(token)}">成果物 →</a></div>
-${items || '<div class="card">工作流目录还没有可编排的工作流（.json）。在聊天里让 AI 生成一个，或把 API 格式工作流文件放进主目录 workflows/。</div>'}
+<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 · <a href="/ui/artifacts?token=${enc}">成果物 →</a> ·
+<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+<div class="tabs">
+<button type="button" class="tab active" data-tab="mine">我的工作流（${mine.length}）</button>
+<button type="button" class="tab" data-tab="library">模板库（${library.length}）</button>
+</div>
+<div data-group="mine">${mineItems || '<div class="card">还没有我的工作流：在聊天里让 AI 生成并保存，或在「模板库」里拉取一份到本地。</div>'}</div>
+<div data-group="library" style="display:none">${libraryItems || '<div class="card">模板库暂不可达（服务端未连接或目录为空）。</div>'}</div>
 `
-  return pageShell('ComfyUI 工作台', body)
+  return pageShell('ComfyUI 工作台', body, { extraScript: `var TOKEN = ${JSON.stringify(token)};\n${PAGE_INDEX_JS}`, extraCss: INDEX_CSS })
 }
 
 const ARTIFACTS_JS = `

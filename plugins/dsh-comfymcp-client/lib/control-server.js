@@ -317,6 +317,34 @@ export function createControlServer(options = {}) {
       sendJson(response, 200, { ok: true, value: await methods.quickRun(body.payload ?? {}) }, allowedOrigin)
       return
     }
+    if (pathname === '/api/workflows/pull' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const pulled = await methods.pullWorkflow(body.payload ?? {})
+      if (pulled?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'pull_rejected', message: pulled?.reason ?? '拉取失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: pulled }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/refresh' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const refreshed = await methods.refreshWorkflow(body.payload ?? {})
+      if (refreshed?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'refresh_rejected', message: refreshed?.reason ?? '重新解析失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: refreshed }, allowedOrigin)
+      return
+    }
     if (pathname === '/api/artifacts' && request.method === 'GET') {
       sendJson(response, 200, { ok: true, value: await methods.listArtifacts() }, allowedOrigin)
       return
