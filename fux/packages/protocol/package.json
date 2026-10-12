@@ -1,0 +1,30 @@
+{
+  "name": "@fux/protocol",
+  "version": "0.0.35",
+  "type": "module",
+  "description": "The single source of truth for the FUX plugin protocol: manifests, capabilities, IPC envelopes and product definitions.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/mycode_hub/fux-os-base.git",
+    "directory": "packages/protocol"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
+  }
+}

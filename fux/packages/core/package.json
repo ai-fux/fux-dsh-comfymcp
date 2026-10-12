@@ -1,0 +1,30 @@
+{
+  "name": "@fux/core",
+  "version": "0.0.35",
+  "type": "module",
+  "description": "FUX control plane: plugin registry, dependency resolution, lifecycle, config, events and runtime graph composition.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/mycode_hub/fux-os-base.git",
+    "directory": "packages/core"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@fux/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
+  }
+}

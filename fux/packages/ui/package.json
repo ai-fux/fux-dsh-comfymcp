@@ -1,0 +1,27 @@
+{
+  "name": "@fux/ui",
+  "version": "0.0.35",
+  "type": "module",
+  "description": "FUX UI framework mechanism: a pluggable skeleton registry (registerSkeleton) with a built-in default, plus the Skeleton/Theme contracts under a unified shell (AR-04 / ER-01 / ER-02). Mechanism only — no rendering, tokens, or DOM live here.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/mycode_hub/fux-os-base.git",
+    "directory": "packages/ui"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
+  }
+}
