@@ -75,7 +75,7 @@ function fieldFor(nodeId, input, value) {
  * 构建页面描述符。
  * @param nodeInfos node_info 返回的 { Cls: { inputs: [{name,type,required,default,min,max,step}] } }
  */
-export function buildPageDescriptor({ name, title, graph, nodeInfos = {} }) {
+export function buildPageDescriptor({ name, title, graph, nodeInfos = {}, notes = [] }) {
   const sections = []
   for (const [nodeId, nodeRaw] of Object.entries(graph ?? {})) {
     const node = nodeRaw !== null && typeof nodeRaw === 'object' ? nodeRaw : {}
@@ -114,6 +114,7 @@ export function buildPageDescriptor({ name, title, graph, nodeInfos = {} }) {
     generatedAt: new Date().toISOString(),
     nodeCount: Object.keys(graph ?? {}).length,
     sections,
+    notes: Array.isArray(notes) ? notes.map((note) => String(note)) : [],
   }
 }
 
@@ -165,8 +166,14 @@ function fieldControlHtml(field, fieldId, dataKey) {
     return `<input type="checkbox" id="${fieldId}" data-field="${escapeHtml(dataKey)}" ${field.value === true ? 'checked' : ''}>`
   }
   if (type === 'choice') {
-    const options = (field.options ?? []).map((option) => `<option value="${escapeHtml(option)}" ${String(field.value) === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')
-    return `<select id="${fieldId}" data-field="${escapeHtml(dataKey)}">${options}</select>`
+    const options = Array.isArray(field.options) ? field.options.map((option) => String(option)) : []
+    const current = field.value === undefined || field.value === null ? '' : String(field.value)
+    // 当前值不在可选项里（如引用了本机缺失的素材）→ 保留并标注，避免静默丢值
+    const stale = current.length > 0 && !options.includes(current)
+      ? `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}（当前值·不可用）</option>`
+      : ''
+    const list = options.map((option) => `<option value="${escapeHtml(option)}" ${current === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')
+    return `<select id="${fieldId}" data-field="${escapeHtml(dataKey)}">${stale}${list}</select>`
   }
   if (type === 'text') {
     return `<textarea id="${fieldId}" data-field="${escapeHtml(dataKey)}">${escapeHtml(field.value)}</textarea>`
@@ -199,13 +206,21 @@ export function renderPageHtml(descriptor, options = {}) {
     ? `<div class="row" style="margin-bottom:10px">${quickCommands.map((command) => `<button type="button" data-quick="${escapeHtml(command.name)}">${escapeHtml(command.label ?? command.name)}</button>`).join('')}</div>`
     : ''
   const refreshBtn = `<button type="button" class="mini" data-refresh="1" title="丢弃解析缓存，重新拉取工作流与节点元数据并重渲染">↻ 重新解析</button>`
+  const notes = Array.isArray(descriptor.notes) ? descriptor.notes : []
+  const noteBar = notes.length > 0
+    ? `<div class="card" style="border-left:3px solid var(--accent)">${notes.map((note) => `<div class="muted">${escapeHtml(note)}</div>`).join('')}</div>`
+    : ''
+  const emptyHint = descriptor.nodeCount === 0
+    ? '未能解析出任何节点：该文件可能不是 ComfyUI 工作流，或为不支持的子图格式。请确认服务端可用后点「↻ 重新解析」。'
+    : '该工作流没有可编辑参数（参数全部来自上游链接，或节点元数据不可用）。'
   const body = `
 <div class="top"><div><h1>${escapeHtml(descriptor.title)}</h1>
 <div class="sub">工作流 ${escapeHtml(descriptor.workflow)} · ${descriptor.nodeCount} 节点 · ${sections.length} 组参数 · 生成于 ${escapeHtml(descriptor.generatedAt)} · ${refreshBtn}</div></div>
 <a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>
+${noteBar}
 ${quickBar}
 <form id="run-form">
-${sections || '<div class="card">该工作流没有可编辑参数（全部为链接字段）。</div>'}
+${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <button type="submit" class="primary" id="run-btn">▶ 执行工作流</button>
 </form>
 <div class="state" id="state"></div>

@@ -76,7 +76,10 @@ afterAll(async () => {
 })
 
 function makeWorkbench(bridge, config = {}) {
-  return createWorkbenchMethods({ bridge, config: { workflowDirs: [workflowDir], dataDir: join(workdir, 'data'), ...config } })
+  return createWorkbenchMethods({
+    bridge,
+    config: { workflowDirs: [workflowDir], homeDir: join(workdir, 'comfymcp-test-workflows'), dataDir: join(workdir, 'data'), ...config },
+  })
 }
 
 describe('workbench pages', () => {
@@ -206,10 +209,11 @@ describe('workbench tabs / pull / refresh', () => {
     expect(groups.library).toEqual([expect.objectContaining({ name: 'library:demo.json', title: 'demo' })])
   })
 
-  it('pulls a library workflow into my local dir and refresh re-parses', async () => {
+  it('pulls a library workflow into the plugin-owned dir and refresh re-parses', async () => {
     const workbench = makeWorkbench(await makeBridge())
     const pulled = await workbench.pullWorkflow({ id: 'library:demo.json' })
     expect(pulled).toMatchObject({ ok: true, name: 'demo' })
+    expect(pulled.file).toContain('comfymcp-test-workflows') // 落到插件自有目录，绝不写用户 ComfyUI 目录
     const page = await workbench.pageWorkflow('demo', { token: '' }) // 拉取后本地可解析
     expect(page.error).toBeUndefined()
     expect(page.html).toContain('data-field="3:seed"')
@@ -218,5 +222,68 @@ describe('workbench tabs / pull / refresh', () => {
     expect(refreshed.sections).toBeGreaterThanOrEqual(2)
     await expect(workbench.pullWorkflow({ id: 'missing:1.json' })).resolves.toMatchObject({ ok: false })
     await expect(workbench.refreshWorkflow({ workflow: '' })).resolves.toMatchObject({ ok: false })
+  })
+})
+
+describe('workbench UI-format adaptation', () => {
+  const UI_FILE = {
+    revision: 0,
+    nodes: [
+      { id: 4, type: 'CheckpointLoaderSimple', mode: 0, inputs: [], widgets_values: ['sd.safetensors'] },
+      {
+        id: 3,
+        type: 'KSampler',
+        mode: 0,
+        widgets_values: [7, 'randomize', 20, 8, 'euler'],
+        inputs: [
+          { name: 'model', type: 'MODEL', link: 11 },
+          { name: 'seed', type: 'INT', widget: { name: 'seed' }, link: null },
+          { name: 'steps', type: 'INT', widget: { name: 'steps' }, link: null },
+        ],
+      },
+    ],
+    links: [[11, 4, 0, 3, 0, 'MODEL']],
+  }
+
+  async function writeUiFile(name) {
+    await writeFile(join(workflowDir, `${name}.json`), JSON.stringify(UI_FILE), 'utf8')
+    return name
+  }
+
+  it('asks the server to convert UI-format local files (most reliable path)', async () => {
+    const name = await writeUiFile('ui_flow')
+    const bridge = await makeBridge({
+      callRemote: async (tool, args = {}) => {
+        if (tool === 'list_workflows') {
+          return { structuredContent: { ok: true, tool, data: { workflows: [{ id: `saved:${name}.json`, name, path: join(workflowDir, `${name}.json`), format: 'ui' }] } } }
+        }
+        if (tool === 'get_workflow' && args.id === `saved:${name}.json`) {
+          return { structuredContent: { ok: true, tool, data: { id: args.id, format: 'ui', converted: true, graph: REMOTE_GRAPH } } }
+        }
+        if (tool === 'node_info') {
+          return { structuredContent: { ok: true, tool, data: { nodes: { KSampler: { classType: 'KSampler', inputs: [{ name: 'seed', group: 'required', type: 'INT', required: true }] } }, missing: [] } } }
+        }
+        return { structuredContent: { ok: true, tool, data: {} } }
+      },
+    })
+    const workbench = makeWorkbench(bridge)
+    const page = await workbench.pageWorkflow(name, { token: '' })
+    expect(page.html).toContain('data-field="3:seed"') // 服务端转换后的图 → 表单字段
+    expect(page.html).toContain('已由服务端转换')
+  })
+
+  it('falls back to the local converter when the server is unreachable (boundary)', async () => {
+    const name = await writeUiFile('ui_offline')
+    const bridge = await makeBridge({
+      callRemote: async () => {
+        throw new Error('service down')
+      },
+    })
+    const workbench = makeWorkbench(bridge)
+    const page = await workbench.pageWorkflow(name, { token: '' })
+    expect(page.error).toBeUndefined()
+    expect(page.html).toContain('data-field="3:seed"') // 本地兜底转换仍出表单
+    expect(page.html).toContain('已本地转换')
+    expect(page.html).toContain('value="7"') // seed 值经隐藏控件修正后对齐
   })
 })

@@ -11,7 +11,7 @@
  * - 工作流来源：本地主目录 JSON 优先，缺省回落远端模板库（get_workflow，
  *   服务端已把 UI 格式转换为 API 图）。
  */
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
@@ -19,7 +19,7 @@ import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { normalizeNodeCatalog } from './nodecat.js'
 import { safeFileStem } from './bridge.js'
-
+import { apiGraphFromUi, hasSubgraphs, isUiWorkflow } from './wfgraph.js'
 const REMOTE_TTL_MS = 5 * 60 * 1000
 
 function isPlainStem(name) {
@@ -27,9 +27,27 @@ function isPlainStem(name) {
   return stem.length > 0 && !/[\\/]/.test(stem) && !stem.includes('..')
 }
 
+/** 目录列表归一：数组或分隔字符串（兼容未经 config.js 归一化的调用方）。 */
+function dirList(value) {
+  if (Array.isArray(value)) return value.filter((dir) => typeof dir === 'string' && dir.trim().length > 0)
+  if (typeof value === 'string') return value.split(/[,;\r\n]+/).map((dir) => dir.trim()).filter((dir) => dir.length > 0)
+  return []
+}
+
+/** 扫描目录：插件自有 workflows 目录优先，其次用户配置目录（拉取只写自有目录）。 */
+function scanDirs(config) {
+  const dirs = []
+  const managed = typeof config.homeDir === 'string' && config.homeDir.length > 0 ? join(config.homeDir, 'workflows') : ''
+  if (managed.length > 0) dirs.push(managed)
+  for (const dir of dirList(config.workflowDirs)) {
+    if (!dirs.includes(dir)) dirs.push(dir)
+  }
+  return dirs
+}
+
 function readLocalGraph(config, name) {
   if (!isPlainStem(name)) return null
-  for (const dir of Array.isArray(config.workflowDirs) ? config.workflowDirs : []) {
+  for (const dir of scanDirs(config)) {
     try {
       const file = join(dir, `${name}.json`)
       if (!existsSync(file)) continue
@@ -42,9 +60,19 @@ function readLocalGraph(config, name) {
   return null
 }
 
+/** 本地文件路径（首个命中），供服务端 id 匹配。 */
+function localFilePath(config, name) {
+  if (!isPlainStem(name)) return ''
+  for (const dir of scanDirs(config)) {
+    const file = join(dir, `${name}.json`)
+    if (existsSync(file)) return file
+  }
+  return ''
+}
+
 function scanWorkflows(config) {
   const pages = []
-  for (const dir of Array.isArray(config.workflowDirs) ? config.workflowDirs : []) {
+  for (const dir of scanDirs(config)) {
     let entries = []
     try {
       entries = readdirSync(dir, { withFileTypes: true })
@@ -171,13 +199,60 @@ export function createWorkbenchMethods({ bridge, config }) {
   const tagStore = createTagStore({ dataDir: config.dataDir })
   const remote = createRemoteSource(bridge)
 
-  /** 图来源：本地主目录优先，未命中回落远端模板库（UI 格式已由服务端转 API 图）。 */
+  /**
+   * 图来源与格式适配：
+   * 1) 本地文件是 API 格式 → 直接用；
+   * 2) 本地文件是 ComfyUI UI 格式 → 优先用服务端转换（同一目录服务端索引为 saved:*，
+   *    转换含子图与前端隐藏控件，最可靠）；服务端不可用时本地兜底转换；
+   * 3) 本地没有 → 远端 id（library:xxx）。
+   */
   async function resolveGraph(name) {
     const local = readLocalGraph(config, name)
-    if (local !== null) return { graph: local, origin: 'local' }
+    if (local !== null) {
+      if (!isUiWorkflow(local)) return { graph: local, origin: 'local', notes: [] }
+      // 含内联子图的 UI 文件服务端无法转换（E_CUI_CONVERT），直接走本地展平
+      if (hasSubgraphs(local) !== true) {
+        const serverId = await savedIdFor(name)
+        if (serverId !== null) {
+          const converted = await remote.workflow(serverId)
+          if (converted !== null) {
+            return { graph: converted, origin: 'converted-remote', notes: [`本地文件为 ComfyUI UI 格式，已由服务端转换为可执行图（${serverId}）`] }
+          }
+        }
+      }
+      const fallback = apiGraphFromUi(local)
+      if (fallback.graph !== null && Object.keys(fallback.graph).length > 0) {
+        const notes = [`本地文件为 ComfyUI UI 格式，已本地转换为可执行图${fallback.subgraphs > 0 ? `（展开 ${fallback.subgraphs} 个子图）` : ''}`]
+        if (fallback.skipped.length > 0) notes.push(`已跳过 ${fallback.skipped.length} 个非执行节点（笔记/旁路）`)
+        if (fallback.incomplete.length > 0) notes.push(`⚠ ${fallback.incomplete.length} 个节点的控件值未能命名（旧格式），可能沿用默认值`)
+        if (fallback.unsupported.length > 0) notes.push(`⚠ 含 ${fallback.unsupported.length} 个未能展开的子图节点；请确认服务端可用后点「重新解析」`)
+        return { graph: fallback.graph, origin: 'converted-local', notes }
+      }
+      return {
+        graph: {},
+        origin: 'ui-unconverted',
+        notes: [
+          fallback.unsupported.length > 0
+            ? `该工作流使用子图（${fallback.unsupported.length} 个），必须由服务端转换：请确认 comfy-mcp 服务端可用后点「重新解析」`
+            : '无法解析该工作流文件，请确认它是 ComfyUI 工作流（UI 或 API 格式）',
+        ],
+      }
+    }
     const remoteGraph = await remote.workflow(name)
-    if (remoteGraph !== null) return { graph: remoteGraph, origin: 'remote' }
+    if (remoteGraph !== null) return { graph: remoteGraph, origin: 'remote', notes: [] }
     return null
+  }
+
+  /** 为本地文件匹配服务端 id：优先路径一致，其次同名，最后 saved:<stem>.json。 */
+  async function savedIdFor(name) {
+    const file = localFilePath(config, name)
+    const list = await remote.remoteList()
+    const byPath = list.find((workflow) => file.length > 0 && String(workflow?.path ?? '').toLowerCase() === file.toLowerCase())
+    if (byPath !== undefined) return String(byPath.id)
+    const byName = list.find((workflow) => String(workflow?.name ?? '').toLowerCase() === name.toLowerCase())
+    if (byName !== undefined) return String(byName.id)
+    const guess = `saved:${name}.json`
+    return list.some((workflow) => String(workflow?.id ?? '') === guess) ? guess : null
   }
 
   async function descriptorFor(name) {
@@ -185,7 +260,7 @@ export function createWorkbenchMethods({ bridge, config }) {
     if (resolved === null) return null
     const classes = [...new Set(Object.values(resolved.graph).map((node) => node?.class_type).filter((cls) => typeof cls === 'string' && cls.length > 0))]
     const catalog = classes.length > 0 ? await remote.nodeCatalog(classes) : {}
-    return buildPageDescriptor({ name, title: name, graph: resolved.graph, nodeInfos: catalog })
+    return buildPageDescriptor({ name, title: name, graph: resolved.graph, nodeInfos: catalog, notes: resolved.notes })
   }
 
   /** Tab 分组：我的工作流 = 本地主目录 + 远端非模板库条目（参与过 DSH 交互的）；模板库 = 远端 library。组内按名称去重。 */
@@ -235,18 +310,24 @@ export function createWorkbenchMethods({ bridge, config }) {
       return tabGroups(await remote.remoteList())
     },
 
-    /** 手动从服务端拉取工作流到我的本地目录（同名覆盖；本地优先渲染）。 */
+    /**
+     * 手动从服务端拉取工作流，落到插件自有目录 <homeDir>/workflows（绝不写用户
+     * ComfyUI 目录，避免覆盖其 UI 格式原文件）；保存的是可执行 API 图。
+     */
     async pullWorkflow({ id } = {}) {
       const workflowId = String(id ?? '').trim()
       if (workflowId.length === 0) return { ok: false, reason: '缺少工作流 id' }
       const graph = await remote.workflow(workflowId)
-      if (graph === null) return { ok: false, reason: `服务端没有工作流 ${workflowId}` }
-      const dirs = Array.isArray(config.workflowDirs) ? config.workflowDirs : []
-      if (dirs.length === 0) return { ok: false, reason: '未配置工作流目录' }
-      const baseName = String((await remote.remoteList()).find((workflow) => String(workflow?.id ?? '') === workflowId)?.name ?? workflowId.replace(/^library:/, ''))
+      if (graph === null) {
+        return { ok: false, reason: `服务端无法提供 ${workflowId}（未索引或含内联子图）；若该工作流就在本地目录，直接打开即可，无需拉取` }
+      }
+      if (typeof config.homeDir !== 'string' || config.homeDir.length === 0) return { ok: false, reason: '未配置插件主目录（homeDir）' }
+      const targetDir = join(config.homeDir, 'workflows')
+      const baseName = String((await remote.remoteList()).find((workflow) => String(workflow?.id ?? '') === workflowId)?.name ?? workflowId.replace(/^(library|saved):/, ''))
       const stem = safeFileStem(baseName.replace(/\.json$/i, '')) || `workflow-${Date.now()}`
-      const file = join(dirs[0], `${stem}.json`)
+      const file = join(targetDir, `${stem}.json`)
       try {
+        mkdirSync(targetDir, { recursive: true })
         writeFileSync(file, JSON.stringify(graph, null, 2), 'utf8')
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) }
