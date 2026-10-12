@@ -69,6 +69,7 @@ export const OVERLAY_KEYS = [
   'homeDir',
   'quickCommands',
   'downloadDir',
+  'runTimeoutMin',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

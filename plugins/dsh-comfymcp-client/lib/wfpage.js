@@ -232,10 +232,12 @@ ${quickBar}
 ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <div class="actions">
 <button type="submit" class="primary" id="run-btn"><span class="spinner" id="run-spin" hidden></span><span id="run-label">▶ 执行工作流</span></button>
+<button type="button" class="mini" id="cancel-btn" hidden>■ 中断执行</button>
 <button type="button" class="mini" id="reload-btn" title="重新读取执行状态（刷新页面也不会丢）">↻ 刷新状态</button>
 </div>
 </form>
 <div class="state" id="state"></div>
+<div class="timing muted" id="timing"></div>
 <div class="progress" id="progress" hidden><div class="bar"><div class="fill" id="progress-fill"></div></div><div class="muted" id="progress-text"></div></div>
 <div class="results" id="results" hidden>
   <div class="head"><b>成果物 <span id="results-count">0</span></b><button type="button" class="mini" id="clear-btn">清空展示</button></div>
@@ -323,22 +325,48 @@ function renderFiles(files) {
   });
   document.getElementById('results').hidden = items.length === 0;
 }
+function fmtClock(ts) {
+  if (!ts) return '-';
+  var d = new Date(ts);
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+function showTiming(status) {
+  var el = document.getElementById('timing');
+  if (!status) { el.textContent = ''; return; }
+  var parts = [];
+  parts.push('开始 ' + fmtClock(status.startedAt));
+  if (status.state === 'running') {
+    parts.push('已用 ' + fmtElapsed(status.elapsedMs));
+    if (status.timeoutMs) parts.push('限时 ' + Math.round(status.timeoutMs / 60000) + ' 分钟');
+  } else if (status.finishedAt) {
+    parts.push('结束 ' + fmtClock(status.finishedAt));
+    parts.push('总用时 ' + fmtElapsed(status.durationMs || status.elapsedMs));
+  }
+  if (status.promptId) parts.push('任务 ' + String(status.promptId).slice(0, 8));
+  el.textContent = parts.join(' · ');
+}
 function applyStatus(status, quiet) {
   if (!status) {
     if (!quiet) { busy(false); showProgress(null); }
     return;
   }
+  showTiming(status);
+  var cancelBtn = document.getElementById('cancel-btn');
   if (status.state === 'running') {
     busy(true, (status.stage || '执行中') + '…');
     showProgress(status);
+    cancelBtn.hidden = false;
     state('⏳ ' + (status.stage || '执行中') + ' · 已用 ' + fmtElapsed(status.elapsedMs) + '（执行中，按钮已禁用）', false);
   } else {
     busy(false);
     showProgress(null);
+    cancelBtn.hidden = true;
     var files = status.files || [];
     renderFiles(files);
     if (status.state === 'failed') state('✗ ' + (status.error || '执行失败'), true);
-    else if (files.length > 0) state('✓ 完成 · ' + files.length + ' 个成果物 · 用时 ' + fmtElapsed(status.elapsedMs), false);
+    else if (status.state === 'aborted') state('■ ' + (status.error || '执行已中断'), true);
+    else if (files.length > 0) state('✓ 完成 · ' + files.length + ' 个成果物 · 用时 ' + fmtElapsed(status.durationMs || status.elapsedMs), false);
     else state('✓ 执行完成，但没有产生成果物', false);
   }
 }
@@ -372,6 +400,14 @@ document.addEventListener('click', function (event) {
     return;
   }
   if (t.id === 'reload-btn') { state('正在刷新状态…', false); api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (s) { applyStatus(s); }).catch(function (e) { state('✗ ' + e.message, true); }); return; }
+  if (t.id === 'cancel-btn') {
+    if (!confirm('确定中断当前执行？（同时请求取消队列中的任务）')) return;
+    t.disabled = true; t.textContent = '中断中…';
+    api('/api/run/cancel', { workflow: WORKFLOW }).then(function () { state('■ 已请求中断…', false); poll(); })
+      .catch(function (e) { alert('中断失败：' + e.message); })
+      .then(function () { t.disabled = false; t.textContent = '■ 中断执行'; });
+    return;
+  }
   if (t.id === 'clear-btn') {
     api('/api/runs/clear', { workflow: WORKFLOW }).then(function () { renderFiles([]); state('已清空展示（产物文件仍可在成果物页查看）', false); })
       .catch(function (e) { alert('清空失败：' + e.message); });
@@ -501,7 +537,10 @@ ${chips}${fields}${bind}
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button></div>`
         })
         .join('\n')
-      return `<div class="card"><h3>${escapeHtml(run.name ?? 'workflow')} · ${escapeHtml(run.state ?? '')} · 种子 ${escapeHtml(String(run.seed ?? '-'))}</h3>
+      const duration = typeof run.durationMs === 'number'
+        ? (run.durationMs < 60000 ? `${Math.round(run.durationMs / 1000)}s` : `${Math.round(run.durationMs / 60000)}m`)
+        : (run.finishedAt && run.startedAt ? `${Math.round((run.finishedAt - run.startedAt) / 1000)}s` : '-')
+      return `<div class="card"><h3>${escapeHtml(run.name ?? 'workflow')} · ${escapeHtml(run.state ?? '')} · 种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}</h3>
 <div class="muted" style="margin-bottom:6px">${escapeHtml(run.prompt ?? '')}</div>${files || '<div class="muted">（无成果物）</div>'}</div>`
     })
     .join('\n')

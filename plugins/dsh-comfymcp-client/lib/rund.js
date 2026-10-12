@@ -40,6 +40,7 @@ function summarize(record, active) {
     startedAt: record.startedAt ?? null,
     finishedAt: record.finishedAt ?? null,
     elapsedMs: (record.finishedAt ?? Date.now()) - (record.startedAt ?? Date.now()),
+    durationMs: record.durationMs ?? null,
     promptId: record.promptId ?? null,
     progress: null,
     files: Array.isArray(record.localFiles) ? record.localFiles : [],
@@ -51,6 +52,9 @@ function summarize(record, active) {
 
 export function createRunDaemon({ bridge, executeRun }) {
   const pollMs = Number(bridge.config?.progressPollMs) > 0 ? Number(bridge.config.progressPollMs) : POLL_MS
+  /** 单工作流最大运行时间（分钟 → ms；0 或负数表示不限制）。 */
+  const timeoutMin = Number(bridge.config?.runTimeoutMin)
+  const runTimeoutMs = Number.isFinite(timeoutMin) && timeoutMin > 0 ? timeoutMin * 60000 : 0
   const active = new Map() // workflow → 运行中状态
   const stateFile = typeof bridge.config?.dataDir === 'string' && bridge.config.dataDir.length > 0
     ? join(bridge.config.dataDir, 'ui-state.json')
@@ -76,7 +80,25 @@ export function createRunDaemon({ bridge, executeRun }) {
     }
   }
 
-  /** 某工作流最近一条已完成记录（按时间倒序）。 */
+  /**
+   * 启动自愈：进程重启后，历史里遗留的 running 记录不可能还在跑
+   * （否则页面会永远转圈）——统一标记为中断，并补齐耗时。
+   */
+  function reconcileInterrupted() {
+    const now = Date.now()
+    for (const run of bridge.listRuns(200)) {
+      if (run === null || typeof run !== 'object' || run.state !== 'running') continue
+      bridge.updateRun?.(run.id, {
+        state: 'failed',
+        finishedAt: now,
+        durationMs: now - (run.startedAt ?? now),
+        error: '执行被中断：插件进程曾重启（或上次运行异常终止），任务不再处于运行状态',
+      })
+    }
+  }
+  reconcileInterrupted()
+
+  /** 某工作流最近一条记录（按时间倒序）。 */
   function latestRecord(workflow) {
     const all = bridge.listRuns(60)
     const hit = all.find((run) => run.name === workflow || String(run.name).startsWith(`${workflow}-`))
@@ -128,6 +150,7 @@ export function createRunDaemon({ bridge, executeRun }) {
       if (active.has(key)) return { ok: false, reason: `${key} 正在执行中，请等待当前任务结束` }
       const runId = randomUUID()
       const startedAt = Date.now()
+      const budget = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : runTimeoutMs
       const state = {
         runId,
         workflow: key,
@@ -136,6 +159,10 @@ export function createRunDaemon({ bridge, executeRun }) {
         startedAt,
         finishedAt: null,
         elapsedMs: 0,
+        durationMs: null,
+        deadlineAt: budget > 0 ? startedAt + budget : null,
+        timeoutMs: budget > 0 ? budget : null,
+        aborted: false,
         promptId: null,
         progress: null,
         stepsTotal: stepsTotalOf(graph),
@@ -162,20 +189,75 @@ export function createRunDaemon({ bridge, executeRun }) {
         if (entry !== undefined) entry.elapsedMs = Date.now() - entry.startedAt
       }, 1000)
 
-      const finish = (result) => {
+      /** 中断（超时或手动）：取消远端队列任务并打断正在执行的任务，然后给出可读提示。 */
+      const abort = async (reason) => {
+        const entry = active.get(key)
+        if (entry === undefined || entry.state !== 'running') return { ok: false, reason: '当前没有运行中的任务' }
+        entry.aborted = true
+        entry.stage = '正在中断'
+        if (typeof promptId === 'string') {
+          try {
+            await bridge.callRemote('cancel_job', { promptId, clearPending: true, all: false }, 30000)
+          } catch {
+            /* 取消失败也要放行，避免继续转圈 */
+          }
+        }
+        try {
+          // 正在执行中的任务需要显式 interrupt（cancel_job 只负责队列条目）
+          await bridge.callRemote('queue_manage', { action: 'interrupt' }, 30000)
+        } catch {
+          /* 尽力而为 */
+        }
+        entry.state = 'aborted'
+        entry.finishedAt = Date.now()
+        entry.durationMs = entry.finishedAt - entry.startedAt
+        entry.elapsedMs = entry.durationMs
+        entry.error = reason
         clearInterval(tick)
         stopPolling()
+        bridge.updateRun?.(runId, {
+          state: 'aborted',
+          finishedAt: entry.finishedAt,
+          durationMs: entry.durationMs,
+          error: reason,
+          promptId: typeof promptId === 'string' ? promptId : null,
+        })
+        return { ok: true, state: 'aborted', reason }
+      }
+
+      // 供外部手动中断使用
+      state.abort = abort
+
+      // 超时定时器：到点直接中断并给出提示
+      const timeoutTimer = budget > 0
+        ? setTimeout(() => {
+            const limit = budget < 60000 ? `${Math.max(1, Math.round(budget / 1000))} 秒` : `${Math.round(budget / 60000)} 分钟`
+            void abort(`超过单工作流最大运行时间（${limit}），已中断执行；可在插件设置里调整「单工作流最大运行时间」`)
+          }, budget)
+        : null
+
+      const finish = (result) => {
+        clearInterval(tick)
+        if (timeoutTimer !== null) clearTimeout(timeoutTimer)
+        stopPolling()
         const entry = active.get(key)
+        if (entry !== undefined && entry.aborted === true) {
+          // 已被中断：保留中断状态与原因，不被后续返回覆盖
+          setTimeout(() => active.delete(key), 60000)
+          return
+        }
         if (entry !== undefined) {
           entry.state = result?.state ?? (result?.ok === true ? 'completed' : 'failed')
           entry.stage = entry.state === 'completed' ? '已完成' : '失败'
           entry.finishedAt = Date.now()
-          entry.elapsedMs = entry.finishedAt - entry.startedAt
+          entry.durationMs = entry.finishedAt - entry.startedAt
+          entry.elapsedMs = entry.durationMs
           entry.files = Array.isArray(result?.localFiles) ? result.localFiles : []
           entry.artifacts = Array.isArray(result?.artifacts) ? result.artifacts : []
           entry.error = result?.error ?? ''
           entry.saved = result?.saved ?? null
           entry.runId = result?.runId ?? entry.runId
+          bridge.updateRun?.(runId, { durationMs: entry.durationMs })
         }
         // 运行结束后保留最终状态 60s 供页面收尾轮询，然后回落到 runs.json 记录
         setTimeout(() => {
@@ -211,6 +293,15 @@ export function createRunDaemon({ bridge, executeRun }) {
       return { ok: true, runId, workflow: key, state: 'running' }
     },
 
+    /** 手动中断当前运行（取消远端队列任务并标记中断）。 */
+    async cancel(workflow) {
+      const key = String(workflow ?? '').trim()
+      if (key.length === 0) return { ok: false, reason: '缺少工作流标识' }
+      const entry = active.get(key)
+      if (entry === undefined || entry.state !== 'running') return { ok: false, reason: '当前没有运行中的任务' }
+      return entry.abort('已被手动中断；已同时请求取消队列任务并打断当前执行')
+    },
+
     /** 页面状态：优先运行中状态，否则回落到最近一条运行记录（清空后返回 null）。 */
     status(workflow) {
       const key = String(workflow ?? '').trim()
@@ -224,6 +315,17 @@ export function createRunDaemon({ bridge, executeRun }) {
       const clearedAt = cleared[key] ?? 0
       if (record.finishedAt !== null && record.finishedAt !== undefined && record.finishedAt <= clearedAt) {
         return { ok: true, value: null, clearedAt }
+      }
+      // 兜底自愈：进程内没有对应运行态，却读到 running 记录 → 视为中断，避免页面永久转圈
+      if (record.state === 'running') {
+        const now = Date.now()
+        const patched = bridge.updateRun?.(record.id, {
+          state: 'failed',
+          finishedAt: now,
+          durationMs: now - (record.startedAt ?? now),
+          error: '执行状态丢失：未在运行中的任务记录被标记为中断（可能因插件重启或运行异常退出）',
+        })
+        return { ok: true, value: summarize(patched ?? { ...record, state: 'failed' }, undefined) }
       }
       return { ok: true, value: summarize(record, undefined) }
     },

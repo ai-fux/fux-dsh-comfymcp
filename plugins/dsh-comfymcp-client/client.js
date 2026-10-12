@@ -359,6 +359,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 dataDir: text(config.dataDir),
                 quickCommands: text(config.quickCommands),
                 downloadDir: text(config.downloadDir),
+                runTimeoutMin: text(config.runTimeoutMin),
               }
               setDraft(next)
               setSaved(next)
@@ -379,7 +380,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         function isDirty() {
           return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
             'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
-            'homeDir', 'dataDir', 'quickCommands', 'downloadDir'].some(function (key) {
+            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -429,6 +430,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             homeDir: draft.homeDir,
             quickCommands: draft.quickCommands,
             downloadDir: draft.downloadDir,
+            runTimeoutMin: draft.runTimeoutMin,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -454,6 +456,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 dataDir: text(applied.dataDir),
                 quickCommands: text(applied.quickCommands),
                 downloadDir: text(applied.downloadDir),
+                runTimeoutMin: text(applied.runTimeoutMin),
               }
               setDraft(next)
               setSaved(next)
@@ -566,6 +569,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           },
             h(Field, { label: '成果物镜像目录（可选）', hint: '相对主目录解析；配置后每次运行产物额外复制一份到该子目录' },
               h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
+            h(Field, { label: '单工作流最大运行时间（分钟）', hint: '超过该时长自动中断执行并提示（0 或留空＝不限制）；页面也可手动「中断执行」' },
+              h(TextInput, { value: draft.runTimeoutMin, mono: true, placeholder: '30', onChange: function (value) { edit('runTimeoutMin', value) } })),
             h(Field, { label: '快捷指令（JSON 数组，可选）', hint: 'seed 策略：range(min/max)｜digits(length)｜timestamp(extraDigits)。留空用内置「抽卡」' },
               h('textarea', {
                 className: 'dshmcp-input dshmcp-mono',

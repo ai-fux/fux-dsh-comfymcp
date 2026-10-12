@@ -12,10 +12,13 @@ function makeBridge(overrides = {}) {
   runs = new Map()
   order = []
   return {
-    config: { dataDir: workdir, progressPollMs: 15, saveSubdir: 'gen' },
+    config: { dataDir: workdir, progressPollMs: 15, saveSubdir: 'gen', runTimeoutMin: 30 },
     callRemote: async (tool) => {
       if (tool === 'job_progress') {
         return { structuredContent: { ok: true, data: { progress: { state: 'running', node: '76:69', step: 5, total: 20, percent: 25 } } } }
+      }
+      if (tool === 'cancel_job') {
+        return { structuredContent: { ok: true, data: { cancelled: true } } }
       }
       return { structuredContent: { ok: true, data: {} } }
     },
@@ -114,5 +117,64 @@ describe('run daemon', () => {
     expect(daemon.history('beach')).toHaveLength(0)
     expect(daemon.status('beach').value).toBeNull()
     expect(daemon.clear('')).toMatchObject({ ok: false })
+  })
+})
+
+describe('run daemon timeout / cancel / self-heal', () => {
+  it('aborts the run when exceeding the per-workflow time limit', async () => {
+    const bridge = makeBridge()
+    const cancels = []
+    const originalCallRemote = bridge.callRemote
+    bridge.callRemote = async (tool, args) => {
+      if (tool === 'cancel_job') cancels.push(args)
+      return originalCallRemote(tool, args)
+    }
+    const daemon = createRunDaemon({
+      bridge,
+      // 永不结束的运行 + 20ms 限时
+      executeRun: (options) => new Promise((resolve) => setTimeout(() => resolve({ ok: false, state: 'failed', runId: options.runId, error: 'cancelled by user' }), 500)),
+    })
+    const started = daemon.start({ workflow: 'beach', graph: {}, timeoutMs: 30 })
+    expect(started.ok).toBe(true)
+    await tick(80)
+    const status = daemon.status('beach').value
+    expect(status.state).toBe('aborted')
+    expect(status.error).toContain('最大运行时间')
+    await tick(40) // 迟到的 executeRun 结果不得覆盖中断状态
+    expect(daemon.status('beach').value.state).toBe('aborted')
+    expect(bridge.getRun(started.runId).state).toBe('aborted')
+  })
+
+  it('supports manual cancel (boundary: nothing running)', async () => {
+    const bridge = makeBridge()
+    const daemon = createRunDaemon({ bridge, executeRun: () => new Promise(() => {}) })
+    await expect(daemon.cancel('beach')).resolves.toMatchObject({ ok: false })
+    const started = daemon.start({ workflow: 'beach', graph: {} })
+    expect(started.ok).toBe(true)
+    const cancelled = await daemon.cancel('beach')
+    expect(cancelled.ok).toBe(true)
+    expect(daemon.status('beach').value.state).toBe('aborted')
+    expect(daemon.isActive('beach')).toBe(false)
+  })
+
+  it('marks persisted running records as interrupted on startup (no endless spinner)', () => {
+    const bridge = makeBridge()
+    const stale = bridge.recordRun({ id: 'stale-1', name: 'beach', state: 'running', startedAt: Date.now() - 60000 })
+    createRunDaemon({ bridge, executeRun: () => new Promise(() => {}) })
+    const patched = bridge.getRun(stale.id)
+    expect(patched.state).toBe('failed')
+    expect(patched.error).toContain('中断')
+    expect(patched.durationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('self-heals a running record that has no live state (boundary)', async () => {
+    const bridge = makeBridge()
+    const daemon = createRunDaemon({ bridge, executeRun: () => new Promise(() => {}) })
+    // 模拟：记录在运行中，但守护里没有对应活动态（例如插件重启后遗留）
+    bridge.recordRun({ id: 'ghost-1', name: 'ghost', state: 'running', startedAt: Date.now() - 5000 })
+    const status = daemon.status('ghost')
+    expect(status.value.state).toBe('failed')
+    expect(status.value.error).toContain('中断')
+    expect(bridge.getRun('ghost-1').state).toBe('failed')
   })
 })

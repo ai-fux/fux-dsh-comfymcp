@@ -34,9 +34,10 @@ export const DEFAULTS = Object.freeze({
   dataDir: '',
   quickCommands: '',
   downloadDir: '',
+  runTimeoutMin: 30,
 })
 
-const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin'])
 const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
 const LIST_KEYS = new Set(['workflowDirs'])
 

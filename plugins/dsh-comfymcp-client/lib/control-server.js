@@ -319,6 +319,20 @@ export function createControlServer(options = {}) {
       sendJson(response, 200, { ok: true, value: status?.value ?? null }, allowedOrigin)
       return
     }
+    if (pathname === '/api/run/cancel' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const cancelled = await methods.cancelRun(body.payload ?? {})
+      if (cancelled?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'cancel_rejected', message: cancelled?.reason ?? '无法中断' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: cancelled }, allowedOrigin)
+      return
+    }
     if (pathname === '/api/run/history' && request.method === 'GET') {
       const workflow = String(url.searchParams.get('workflow') ?? '')
       const limit = Number(url.searchParams.get('limit') ?? '') || undefined

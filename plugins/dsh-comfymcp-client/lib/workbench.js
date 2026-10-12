@@ -358,17 +358,29 @@ export function createWorkbenchMethods({ bridge, config }) {
     },
 
     /** 页面「执行」：values（复合键）应用回图后异步启动（立即返回，由守护轮询进度）。 */
-    async runPage({ workflow, values, name } = {}) {
+    async runPage({ workflow, values, name, timeoutMs } = {}) {
       const resolved = await resolveGraph(workflow)
       if (resolved === null) return { ok: false, error: `工作流 ${workflow} 不存在` }
       applyValues(resolved.graph, values)
       const runName = typeof name === 'string' && name.trim().length > 0 ? name : isPlainStem(workflow) ? workflow : 'workflow'
-      return daemon.start({ workflow: runName, name: runName, graph: resolved.graph, values, subdir: config.saveSubdir })
+      return daemon.start({
+        workflow: runName,
+        name: runName,
+        graph: resolved.graph,
+        values,
+        subdir: config.saveSubdir,
+        ...(typeof timeoutMs === 'number' && timeoutMs > 0 ? { timeoutMs } : {}),
+      })
     },
 
     /** 页面状态：运行中状态或最近一次结果（刷新后恢复展示）。 */
     async runStatus({ workflow } = {}) {
       return daemon.status(workflow)
+    },
+
+    /** 手动中断当前运行（取消远端队列任务并标记中断）。 */
+    async cancelRun({ workflow } = {}) {
+      return daemon.cancel(workflow)
     },
 
     /** 最近运行历史（供页面展示成果物列表）。 */

@@ -29,8 +29,9 @@ const workbench = createWorkbenchMethods({ bridge, config })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 try {
-  console.log(`[1] 启动异步执行：${workflow}`)
-  const started = await workbench.runPage({ workflow, values: { '76:69:steps': undefined } })
+  const timeoutMs = Number(process.env.TIMEOUT_MS) > 0 ? Number(process.env.TIMEOUT_MS) : undefined
+  console.log(`[1] 启动异步执行：${workflow}${timeoutMs !== undefined ? `（限时 ${timeoutMs}ms）` : ''}`)
+  const started = await workbench.runPage({ workflow, ...(timeoutMs !== undefined ? { timeoutMs } : {}) })
   console.log('    启动结果 →', JSON.stringify(started))
   if (started.ok !== true) throw new Error(`启动失败：${started.reason ?? started.error}`)
 
