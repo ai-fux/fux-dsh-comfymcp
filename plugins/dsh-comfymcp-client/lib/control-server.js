@@ -206,6 +206,42 @@ export function createControlServer(options = {}) {
       return
     }
 
+    // 工作台静态页面（/ui）：导航请求带不了自定义头，走查询令牌或放宽跨站。
+    // 有令牌配置时令牌必须正确；未配置令牌时只放行非跨站导航（直开/同站），防任意网站嵌入探测。
+    if ((pathname === '/ui' || pathname.startsWith('/ui/')) && request.method === 'GET') {
+      const origin = request.headers.origin
+      const allowedOrigin = isLoopbackOrigin(origin) ? origin : undefined
+      if (origin !== undefined && allowedOrigin === undefined) {
+        sendJson(response, 403, { ok: false, error: { code: 'origin_forbidden', message: `origin "${origin}" is not allowed` } }, undefined)
+        return
+      }
+      const queryToken = url.searchParams.get('token') ?? ''
+      const fetchSite = String(request.headers['sec-fetch-site'] ?? 'none')
+      if (token.length > 0 && queryToken !== token) {
+        sendJson(response, 403, { ok: false, error: { code: 'token_invalid', message: 'page token is missing or wrong' } }, allowedOrigin)
+        return
+      }
+      if (token.length === 0 && fetchSite === 'cross-site') {
+        sendJson(response, 403, { ok: false, error: { code: 'cross_site_forbidden', message: 'cross-site page embeds require the control token' } }, allowedOrigin)
+        return
+      }
+      let outcome
+      if (pathname === '/ui/artifacts') {
+        outcome = methods.pageArtifacts !== undefined ? await methods.pageArtifacts({ token: queryToken }) : { error: 'artifacts page unavailable' }
+      } else if (pathname.startsWith('/ui/wf/')) {
+        const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
+        outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
+      } else {
+        outcome = methods.pageIndex !== undefined ? await methods.pageIndex({ token: queryToken }) : { error: 'index page unavailable' }
+      }
+      if (outcome === null || outcome === undefined || outcome.error !== undefined) {
+        sendJson(response, 404, { ok: false, error: { code: 'not_found', message: outcome?.error ?? 'page unavailable' } }, allowedOrigin)
+        return
+      }
+      sendBytes(response, 200, Buffer.from(outcome.html, 'utf8'), 'text/html; charset=utf-8')
+      return
+    }
+
     const guardResult = guard(request, response)
     if (guardResult.handled) return
     const allowedOrigin = guardResult.origin
@@ -236,6 +272,67 @@ export function createControlServer(options = {}) {
         return
       }
       sendJson(response, 200, { ok: true, value: await methods.configWrite(payload) }, allowedOrigin)
+      return
+    }
+
+    // 工作台页面 API（页面同源调用，走标准 guard：marker + 可选令牌头）
+    const jsonBody = async () => {
+      const contentType = String(request.headers['content-type'] ?? '')
+      if (!contentType.includes('application/json')) return { error: 'POST bodies must be application/json' }
+      try {
+        return { payload: JSON.parse((await readBody(request)) || '{}') }
+      } catch {
+        return { error: 'request body is not valid JSON' }
+      }
+    }
+    if (pathname === '/api/workflows' && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, value: await methods.listWorkflows() }, allowedOrigin)
+      return
+    }
+    if (pathname.startsWith('/api/wf/') && request.method === 'GET') {
+      const workflow = decodeURIComponent(pathname.slice('/api/wf/'.length))
+      const descriptor = await methods.getPage(workflow)
+      if (descriptor === null || descriptor === undefined) {
+        sendJson(response, 404, { ok: false, error: { code: 'not_found', message: `工作流 ${workflow} 没有页面描述符` } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: descriptor }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: await methods.runPage(body.payload ?? {}) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/quick' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: await methods.quickRun(body.payload ?? {}) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/artifacts' && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, value: await methods.listArtifacts() }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/tags' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      try {
+        const record = await methods.updateTags(body.payload ?? {})
+        sendJson(response, 200, { ok: true, value: record }, allowedOrigin)
+      } catch (error) {
+        sendJson(response, 400, { ok: false, error: { code: 'tag_rejected', message: error instanceof Error ? error.message : String(error) } }, allowedOrigin)
+      }
       return
     }
     sendJson(response, 404, { ok: false, error: { code: 'no_route', message: `no route for ${request.method} ${pathname}` } }, allowedOrigin)

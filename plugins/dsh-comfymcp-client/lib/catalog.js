@@ -14,31 +14,10 @@
  */
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, integrateUnloadNode, firstPromptText, firstSeed } from './forms.js'
+import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, firstPromptText, firstSeed } from './forms.js'
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
-
-/** 下载完成的本地产物 → 推送到受管存储（storage≠local 时）；失败仅附注，不影响运行结果。 */
-async function pushFilesToStorage(bridge, files) {
-  if (!Array.isArray(files) || files.length === 0) return null
-  if (String(bridge.config.storage ?? 'local').toLowerCase() === 'local') return null
-  try {
-    const storage = resolveStorage(bridge.config)
-    const date = new Date().toISOString().slice(0, 10)
-    const pushed = []
-    for (const file of files) {
-      if (typeof file?.path !== 'string' || file.path.length === 0) continue
-      const outcome = bridge.readArtifactBytes(new URLSearchParams({ path: file.path }))
-      if (outcome.error !== undefined) continue
-      const key = `artifacts/${date}/${file.filename ?? file.path.split(/[\\/]/).pop()}`
-      const result = await storage.put(key, outcome.bytes)
-      pushed.push({ key: result.key, size: result.size, url: storage.url(result.key) })
-    }
-    return { storage: storage.id, pushed }
-  } catch (error) {
-    return { storage: String(bridge.config.storage), error: error instanceof Error ? error.message : String(error) }
-  }
-}
+import { createRunExecutor, distributeArtifacts } from './runcore.js'
 
 
 const REMOTE_TOOL_LIST = [
@@ -72,6 +51,7 @@ function oneLine(value) {
  */
 export function createTools({ define, bridge, askUser }) {
   const tools = []
+  const executeRun = createRunExecutor({ bridge })
 
   tools.push(
     define({
@@ -319,119 +299,7 @@ export function createTools({ define, bridge, askUser }) {
         presentationMeta: (_args, value) => value,
       },
       async execute(args) {
-        const subdir = typeof args.subdir === 'string' && args.subdir.trim().length > 0 ? args.subdir.trim() : bridge.config.saveSubdir
-        const startedAt = Date.now()
-        const base = {
-          name: safeFileStem(args.name),
-          subdir,
-          savedName: null,
-          promptId: null,
-          seed: firstSeed(args.graph),
-          prompt: firstPromptText(args.graph),
-          form: null,
-          startedAt,
-        }
-        try {
-          const client = await bridge.ensureReady()
-          const unloadWant = args.autoUnload !== undefined ? args.autoUnload === true : bridge.config.autoUnloadModel === true
-          let unloadState = { requested: unloadWant, applied: false, reason: '' }
-          let graph = args.graph
-          if (unloadWant) {
-            const probe = await bridge.probeUnload()
-            if (probe.available) {
-              const integrated = integrateUnloadNode(graph, { enabled: true })
-              if (integrated.inserted) {
-                graph = integrated.graph
-                unloadState = { requested: true, applied: true, reason: `插入 ${integrated.nodeId} @ ${integrated.at}` }
-              } else {
-                unloadState = { requested: true, applied: false, reason: integrated.reason ?? 'integration failed' }
-              }
-            } else {
-              unloadState = { requested: true, applied: false, reason: `服务端不支持：${probe.reason}` }
-            }
-          }
-
-          const saveAnswer = await client.callTool('call_remote_tool', {
-            tool: 'save_workflow',
-            arguments: { name: base.name, subdir, graph },
-          })
-          const savedData = saveAnswer?.structuredContent ?? {}
-          if (savedData.isError === true) {
-            throw new Error(`save_workflow 失败：${oneLine(savedData)}`)
-          }
-          base.savedName = typeof savedData.id === 'string' ? savedData.id : base.name
-          base.form = { unload: unloadState, saved: { id: savedData.id ?? null, subdir } }
-
-          const runAnswer = await client.callTool('call_remote_tool', {
-            tool: 'run_workflow',
-            arguments: { graph, name: base.name, wait: args.wait !== false },
-          })
-          const runData = runAnswer?.structuredContent ?? {}
-          if (runData.isError === true) {
-            throw new Error(`run_workflow 失败：${oneLine(runData)}`)
-          }
-          base.promptId = typeof runData.promptId === 'string' ? runData.promptId : null
-          const waitBudget = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 120000
-          let finalData = runData
-          if (args.wait !== false && typeof base.promptId === 'string') {
-            try {
-              const waitAnswer = await client.callTool(
-                'call_remote_tool',
-                { tool: 'job_wait', arguments: { promptId: base.promptId, timeoutMs: waitBudget } },
-                waitBudget + 30000,
-              )
-              finalData = { ...runData, ...(waitAnswer?.structuredContent ?? {}) }
-            } catch (error) {
-              finalData = { ...runData, waitError: error instanceof Error ? error.message : String(error) }
-            }
-          }
-          const artifacts = Array.isArray(finalData.artifacts) ? finalData.artifacts : []
-          const localFiles = []
-          if (artifacts.length > 0) {
-            try {
-              const fetchAnswer = await client.callTool('fetch_artifacts', { refs: artifacts })
-              const files = fetchAnswer?.structuredContent?.files
-              if (Array.isArray(files)) localFiles.push(...files)
-            } catch (error) {
-              base.form.downloadError = error instanceof Error ? error.message : String(error)
-            }
-          }
-          // storage≠local 时把成果物同步到受管对象存储
-          base.form.pushed = await pushFilesToStorage(bridge, localFiles)
-          const record = bridge.recordRun({
-            ...base,
-            state: typeof finalData.state === 'string' ? finalData.state : finalData.isError === true ? 'failed' : 'completed',
-            artifacts,
-            localFiles,
-            finishedAt: Date.now(),
-            error: typeof finalData.error === 'string' ? finalData.error : '',
-          })
-          return {
-            ok: record.state !== 'failed',
-            runId: record.id,
-            promptId: record.promptId,
-            state: record.state,
-            artifacts,
-            localFiles,
-            saved: { id: base.savedName, subdir, name: base.name },
-            unload: unloadState,
-            ...(record.error.length > 0 ? { error: record.error } : {}),
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          const record = bridge.recordRun({ ...base, state: 'failed', error: message, finishedAt: Date.now() })
-          return {
-            ok: false,
-            runId: record.id,
-            promptId: record.promptId,
-            state: 'failed',
-            artifacts: [],
-            localFiles: [],
-            saved: base.savedName === null ? null : { id: base.savedName, subdir, name: base.name },
-            unload: base.form?.unload ?? { requested: false, applied: false, reason: 'not reached' },
-            error: message,
-          }
-        }
+        return executeRun(args)
       },
     }),
   )
@@ -454,8 +322,8 @@ export function createTools({ define, bridge, askUser }) {
         const answer = await bridge.fetchArtifacts(Array.isArray(args.refs) ? args.refs : [])
         const data = answer?.structuredContent ?? {}
         const files = Array.isArray(data.files) ? data.files : []
-        const pushed = await pushFilesToStorage(bridge, files)
-        return { ok: data.isError !== true, files, ...(pushed !== null ? { pushed } : {}) }
+        const distributed = await distributeArtifacts(bridge, files)
+        return { ok: data.isError !== true, files, ...(distributed !== null ? { distributed } : {}) }
       },
     }),
   )

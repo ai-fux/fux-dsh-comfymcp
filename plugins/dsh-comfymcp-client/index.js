@@ -19,6 +19,7 @@ import { createTools } from './lib/catalog.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
 import { createControlServer } from './lib/control-server.js'
+import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = 'dsh-comfymcp-client'
@@ -83,6 +84,9 @@ export function apply(ctx, config) {
         writeOverlay: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
       },
     })
+    // 工作台（/ui 静态页 + /api 页面 API）：工作流编排静态页、手动执行、成果物标签、快捷指令
+    const workbench = createWorkbenchMethods({ bridge, config: effective })
+    Object.assign(methods, workbench)
     const control = createControlServer({
       methods,
       port: effective.controlPort,

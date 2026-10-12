@@ -32,6 +32,8 @@ export const DEFAULTS = Object.freeze({
   storagePrefix: '',
   homeDir: '',
   dataDir: '',
+  quickCommands: '',
+  downloadDir: '',
 })
 
 const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])

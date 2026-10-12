@@ -67,6 +67,8 @@ export const OVERLAY_KEYS = [
   'storageSecret',
   'storagePrefix',
   'homeDir',
+  'quickCommands',
+  'downloadDir',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

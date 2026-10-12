@@ -311,7 +311,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var initial = react.useState({
           endpoint: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
           storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
-          homeDir: '', dataDir: '',
+          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '',
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -357,6 +357,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 storagePrefix: text(config.storagePrefix),
                 homeDir: text(config.homeDir),
                 dataDir: text(config.dataDir),
+                quickCommands: text(config.quickCommands),
+                downloadDir: text(config.downloadDir),
               }
               setDraft(next)
               setSaved(next)
@@ -377,7 +379,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         function isDirty() {
           return ['endpoint', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
             'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
-            'homeDir', 'dataDir'].some(function (key) {
+            'homeDir', 'dataDir', 'quickCommands', 'downloadDir'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -425,6 +427,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             storageSecret: draft.storageSecret,
             storagePrefix: draft.storagePrefix,
             homeDir: draft.homeDir,
+            quickCommands: draft.quickCommands,
+            downloadDir: draft.downloadDir,
           }
           rpc(ctx, 'configWrite', patch)
             .then(function (result) {
@@ -448,6 +452,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 storagePrefix: text(applied.storagePrefix),
                 homeDir: text(applied.homeDir),
                 dataDir: text(applied.dataDir),
+                quickCommands: text(applied.quickCommands),
+                downloadDir: text(applied.downloadDir),
               }
               setDraft(next)
               setSaved(next)
@@ -552,6 +558,34 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               + ' ｜ 工作流 ' + (text(draft.workflowDirs).length > 0 ? draft.workflowDirs.split(';')[0] : '（主目录/workflows）')
               + ' ｜ 产物 ' + (text(draft.artifactsDir).length > 0 ? draft.artifactsDir : '（主目录/artifacts）')
               + ' ｜ 结构化数据 ' + (text(draft.dataDir).length > 0 ? draft.dataDir : '（主目录/data）')),
+          ),
+
+          h(SettingsSection, {
+            title: '工作台与快捷指令',
+            description: '工作流/成果物静态页由环回控制端点提供（侧栏「ComfyUI 工作台」或浏览器直开）。快捷指令用于一键重跑，如抽卡：仅重滚种子，其余参数复用上次成功运行。',
+          },
+            h(Field, { label: '成果物镜像目录（可选）', hint: '相对主目录解析；配置后每次运行产物额外复制一份到该子目录' },
+              h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
+            h(Field, { label: '快捷指令（JSON 数组，可选）', hint: 'seed 策略：range(min/max)｜digits(length)｜timestamp(extraDigits)。留空用内置「抽卡」' },
+              h('textarea', {
+                className: 'dshmcp-input dshmcp-mono',
+                rows: 4,
+                value: draft.quickCommands,
+                placeholder: '[{"name":"抽卡","label":"🎲 抽卡","seed":{"mode":"range","min":1,"max":4294967295}}]',
+                onChange: function (event) { edit('quickCommands', event.target.value) },
+              })),
+            (function () {
+              var href = CONTROL_BASE !== null
+                ? workbenchUrl('/ui')
+                : null
+              return h('div', { className: 'dshmcp-row' },
+                h('button', {
+                  className: 'dshmcp-btn dshmcp-btn-sm',
+                  onClick: function () { probeControlBase().then(function () { window.open(workbenchUrl('/ui'), '_blank', 'noreferrer') }) },
+                }, '打开工作台 ↗'),
+                href !== null ? h('span', { className: 'dshmcp-hint' }, CONTROL_BASE + '/ui') : null,
+              )
+            })(),
           ),
 
           (function () {
@@ -765,6 +799,72 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         )
       }
 
+      // ─── 工作台（main 中央面板）：工作流静态页 + 成果物 Tab ─────────────
+      // 页面本体由宿主半区生成（lib/wfpage.js → 控制端点 /ui），这里 iframe 嵌入；
+      // 也可在浏览器直接打开控制端点 URL。令牌从 configRead 捕获（CONTROL_TOKEN_SEEN）。
+      function workbenchUrl(page) {
+        if (CONTROL_BASE === null) return null
+        var url = CONTROL_BASE + page
+        if (CONTROL_TOKEN_SEEN.length > 0) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(CONTROL_TOKEN_SEEN)
+        return url
+      }
+
+      function WorkbenchPage(props) {
+        var tabState = react.useState('wf')
+        var tab = tabState[0]
+        var setTab = tabState[1]
+        var readyState = react.useState(CONTROL_BASE !== null)
+        var ready = readyState[0]
+        var setReady = readyState[1]
+        var baseState = react.useState(CONTROL_BASE)
+        var base = baseState[0]
+        var setBase = baseState[1]
+
+        react.useEffect(function () {
+          if (ready) return undefined
+          var cancelled = false
+          probeControlBase().then(function (detected) {
+            if (!cancelled && detected !== null) {
+              setBase(detected)
+              setReady(true)
+            }
+          })
+          return function () { cancelled = true }
+        }, [ready])
+
+        var href = ready && base !== null ? workbenchUrl(tab === 'artifacts' ? '/ui/artifacts' : '/ui') : null
+        return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: T.base } },
+          h('div', { className: 'dshmcp-row', style: { padding: '10px 14px', borderBottom: '1px solid ' + T.border, gap: 10 } },
+            h('span', { style: { color: T.text, fontWeight: 600, fontSize: 13 } }, 'ComfyUI 工作台'),
+            h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'wf' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('wf') } }, '工作流'),
+            h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'artifacts' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('artifacts') } }, '成果物'),
+            h('span', { className: 'dshmcp-spacer' }),
+            href !== null ? h('a', { href: href, target: '_blank', rel: 'noreferrer', className: 'dshmcp-hint' }, '在新窗口打开 ↗') : null,
+          ),
+          href !== null
+            ? h('iframe', {
+                src: href,
+                title: 'comfymcp workbench',
+                style: { flex: '1 1 auto', border: '0', width: '100%', height: '100%', background: T.surface },
+              })
+            : h('div', { style: { padding: 24, color: T.textSecondary } },
+                h('div', null, '工作台页面由插件宿主半区的环回控制端点提供，当前未检测到（127.0.0.1:18801-18810）。'),
+                h('div', { style: { marginTop: 8 } },
+                  h('button', { className: 'dshmcp-btn', onClick: function () { setReady(false); probeControlBase().then(function (detected) { if (detected !== null) { setBase(detected); setReady(true) } }) } }, '重新检测'),
+                ),
+              ),
+        )
+      }
+
+      function WorkbenchIcon() {
+        return h('svg', { viewBox: '0 0 20 20', width: 18, height: 18, 'aria-hidden': true },
+          h('rect', { x: 2, y: 2, width: 6, height: 5, rx: 1.4, fill: 'currentColor', opacity: 0.9 }),
+          h('rect', { x: 12, y: 6, width: 6, height: 5, rx: 1.4, fill: 'currentColor', opacity: 0.55 }),
+          h('rect', { x: 5, y: 13, width: 6, height: 5, rx: 1.4, fill: 'currentColor', opacity: 0.55 }),
+          h('path', { d: 'M8 4.5h2.5a1 1 0 0 1 1 1V8.5M15 11v1.5a1 1 0 0 1-1 1H11', stroke: 'currentColor', strokeWidth: 1.3, fill: 'none', strokeLinecap: 'round' }),
+        )
+      }
+
       // ─── 挂载 ────────────────────────────────────────────────────────────
       var inject = ['slots', 'connection']
 
@@ -812,6 +912,21 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           return slots.register(
             { name: 'tool.call.toolview', key: 'comfymcp_files' },
             function (props) { return h(FilesCard, props) },
+          )
+        })
+
+        // 工作台：侧栏面板图标 → main 中央面板（iframe 嵌入控制端点静态页）
+        slots.inject('sidebar.panellist', function () {
+          return slots.register(
+            { name: 'sidebar.panellist', id: 'comfymcp', order: 30, label: function () { return 'ComfyUI 工作台' } },
+            function () { return h(WorkbenchIcon) },
+          )
+        })
+
+        slots.inject('main', function () {
+          return slots.register(
+            { name: 'main', key: 'comfymcp' },
+            function (props) { return h(WorkbenchPage, props) },
           )
         })
       }
