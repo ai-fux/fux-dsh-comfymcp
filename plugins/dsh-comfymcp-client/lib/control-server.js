@@ -305,7 +305,39 @@ export function createControlServer(options = {}) {
         sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
         return
       }
-      sendJson(response, 200, { ok: true, value: await methods.runPage(body.payload ?? {}) }, allowedOrigin)
+      const started = await methods.runPage(body.payload ?? {})
+      if (started?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'run_rejected', message: started?.reason ?? started?.error ?? '无法启动执行' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: started }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run/status' && request.method === 'GET') {
+      const workflow = String(url.searchParams.get('workflow') ?? '')
+      const status = await methods.runStatus({ workflow })
+      sendJson(response, 200, { ok: true, value: status?.value ?? null }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run/history' && request.method === 'GET') {
+      const workflow = String(url.searchParams.get('workflow') ?? '')
+      const limit = Number(url.searchParams.get('limit') ?? '') || undefined
+      const history = await methods.runHistory({ workflow, limit })
+      sendJson(response, 200, { ok: true, value: history?.value ?? [] }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/runs/clear' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const cleared = await methods.clearRuns(body.payload ?? {})
+      if (cleared?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'clear_rejected', message: cleared?.reason ?? '清空失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: cleared }, allowedOrigin)
       return
     }
     if (pathname === '/api/quick' && request.method === 'POST') {
@@ -314,7 +346,12 @@ export function createControlServer(options = {}) {
         sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
         return
       }
-      sendJson(response, 200, { ok: true, value: await methods.quickRun(body.payload ?? {}) }, allowedOrigin)
+      const started = await methods.quickRun(body.payload ?? {})
+      if (started?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'quick_rejected', message: started?.reason ?? '快捷指令无法启动' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: started }, allowedOrigin)
       return
     }
     if (pathname === '/api/workflows/pull' && request.method === 'POST') {

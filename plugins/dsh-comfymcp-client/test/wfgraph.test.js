@@ -138,7 +138,10 @@ describe('wfgraph format adaptation', () => {
     // promoted 输入：外节点 widget 值 → 内部节点输入
     expect(graph['128:127'].inputs.text).toBe('花园里的小猫')
     expect(graph['128:269'].inputs.steps).toEqual(['9', 0]) // 外节点 steps 走链路
-    expect(graph['128:348'].inputs['values']).toEqual({ a: ['128:66', 0], b: 640 }) // 含点号虚拟输入折叠为对象；b 取 promoted width
+    // 自动增长组输入：扁平点号键（ComfyUI 要）＋ 同名父对象镜像（MCP 校验器要），双写才两端都过
+    expect(graph['128:348'].inputs['values.a']).toEqual(['128:66', 0])
+    expect(graph['128:348'].inputs['values.b']).toBe(640)
+    expect(graph['128:348'].inputs.values).toEqual({ a: ['128:66', 0], b: 640 })
     // 内部 widget：隐藏控件位剔除后对齐
     expect(graph['128:269'].inputs.seed).toBe(7)
     expect(graph['128:348'].inputs.expression).toBe('floor(a * b) + 1')

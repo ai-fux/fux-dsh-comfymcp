@@ -139,6 +139,15 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .file{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);flex-wrap:wrap}
 .file:first-of-type{border-top:0}.file .name{flex:1;min-width:200px;word-break:break-all;font-size:13px}
 .muted{color:var(--muted);font-size:12px}.hidden{display:none}
+.actions{display:flex;gap:8px;align-items:center;margin-top:12px}
+.spinner{display:inline-block;width:12px;height:12px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.progress{margin-top:12px}.bar{height:8px;border-radius:99px;background:var(--accent-weak);overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--accent);transition:width .4s ease}
+.bar .fill.indeterminate{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%{margin-left:0;width:25%}50%{margin-left:65%;width:35%}100%{margin-left:0;width:25%}}
+.results{margin-top:16px}.results .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.files{margin-top:8px}.tiles a{display:inline-block}
 `
 
 function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
@@ -221,10 +230,18 @@ ${noteBar}
 ${quickBar}
 <form id="run-form">
 ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
-<button type="submit" class="primary" id="run-btn">▶ 执行工作流</button>
+<div class="actions">
+<button type="submit" class="primary" id="run-btn"><span class="spinner" id="run-spin" hidden></span><span id="run-label">▶ 执行工作流</span></button>
+<button type="button" class="mini" id="reload-btn" title="重新读取执行状态（刷新页面也不会丢）">↻ 刷新状态</button>
+</div>
 </form>
 <div class="state" id="state"></div>
-<div class="tiles" id="tiles"></div>
+<div class="progress" id="progress" hidden><div class="bar"><div class="fill" id="progress-fill"></div></div><div class="muted" id="progress-text"></div></div>
+<div class="results" id="results" hidden>
+  <div class="head"><b>成果物 <span id="results-count">0</span></b><button type="button" class="mini" id="clear-btn">清空展示</button></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="files" id="files"></div>
+</div>
 <script>
 var API_CFG = ${JSON.stringify(apiCfg)};
 var WORKFLOW = ${JSON.stringify(descriptor.workflow)};
@@ -242,12 +259,94 @@ function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body)
   }).then(function (res) { return res.json().then(function (data) { if (!res.ok || data.ok === false) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status)); return data.value !== undefined ? data.value : data }) });
 }
+function artifactUrl(file) {
+  return '/artifact?path=' + encodeURIComponent(file.path || '') + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
+}
 function state(text, isError) {
   var el = document.getElementById('state');
-  el.style.display = 'block';
+  el.style.display = text ? 'block' : 'none';
   el.style.background = isError ? 'rgba(192,57,43,.12)' : '';
   el.style.color = isError ? 'var(--err)' : '';
-  el.textContent = text;
+  el.textContent = text || '';
+}
+function fmtElapsed(ms) {
+  var s = Math.max(0, Math.round((ms || 0) / 1000));
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm' + (s % 60) + 's';
+}
+function busy(on, label) {
+  var btn = document.getElementById('run-btn');
+  var spin = document.getElementById('run-spin');
+  var text = document.getElementById('run-label');
+  btn.disabled = !!on;
+  btn.style.opacity = on ? '.65' : '';
+  spin.hidden = !on;
+  text.textContent = on ? (label || '执行中…') : '▶ 执行工作流';
+}
+function showProgress(status) {
+  var wrap = document.getElementById('progress');
+  if (!status || status.state !== 'running') { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  var progress = status.progress || {};
+  var fill = document.getElementById('progress-fill');
+  var percent = typeof progress.percent === 'number' ? progress.percent
+    : (progress.step !== null && progress.step !== undefined && progress.total ? Math.round((progress.step / progress.total) * 100) : null);
+  if (percent === null || percent === undefined) { fill.classList.add('indeterminate'); fill.style.width = '35%'; }
+  else { fill.classList.remove('indeterminate'); fill.style.width = Math.max(2, Math.min(100, percent)) + '%'; }
+  var stepText = (progress.step !== null && progress.step !== undefined && progress.total) ? (' · ' + progress.step + '/' + progress.total) : '';
+  var nodeText = progress.node ? (' · 节点 ' + progress.node) : '';
+  document.getElementById('progress-text').textContent =
+    (status.stage || '执行中') + stepText + nodeText + ' · 已用 ' + fmtElapsed(status.elapsedMs) + (status.promptId ? ' · ' + String(status.promptId).slice(0, 8) : '');
+}
+function renderFiles(files) {
+  var tiles = document.getElementById('tiles');
+  var list = document.getElementById('files');
+  tiles.innerHTML = ''; list.innerHTML = '';
+  var items = files || [];
+  document.getElementById('results-count').textContent = String(items.length);
+  items.forEach(function (file) {
+    if (file.kind === 'image') {
+      var a = document.createElement('a');
+      a.href = artifactUrl(file); a.target = '_blank'; a.rel = 'noreferrer';
+      var img = document.createElement('img');
+      img.src = artifactUrl(file); img.alt = file.filename || ''; img.title = file.filename || '';
+      a.appendChild(img); tiles.appendChild(a);
+    } else {
+      var row = document.createElement('div');
+      row.className = 'file';
+      var link = document.createElement('a');
+      link.href = artifactUrl(file); link.target = '_blank'; link.rel = 'noreferrer';
+      link.textContent = (file.kind === 'video' ? '▶ ' : '📄 ') + (file.filename || file.path || '');
+      row.appendChild(link);
+      if (file.bytes) { var meta = document.createElement('span'); meta.className = 'muted'; meta.textContent = ' ' + Math.round(file.bytes / 1024) + ' KB'; row.appendChild(meta); }
+      list.appendChild(row);
+    }
+  });
+  document.getElementById('results').hidden = items.length === 0;
+}
+function applyStatus(status, quiet) {
+  if (!status) {
+    if (!quiet) { busy(false); showProgress(null); }
+    return;
+  }
+  if (status.state === 'running') {
+    busy(true, (status.stage || '执行中') + '…');
+    showProgress(status);
+    state('⏳ ' + (status.stage || '执行中') + ' · 已用 ' + fmtElapsed(status.elapsedMs) + '（执行中，按钮已禁用）', false);
+  } else {
+    busy(false);
+    showProgress(null);
+    var files = status.files || [];
+    renderFiles(files);
+    if (status.state === 'failed') state('✗ ' + (status.error || '执行失败'), true);
+    else if (files.length > 0) state('✓ 完成 · ' + files.length + ' 个成果物 · 用时 ' + fmtElapsed(status.elapsedMs), false);
+    else state('✓ 执行完成，但没有产生成果物', false);
+  }
+}
+function poll() {
+  return api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (status) {
+    applyStatus(status);
+    if (status && status.state === 'running') setTimeout(poll, 2000);
+  }).catch(function (error) { state('✗ 状态查询失败：' + error.message, true); busy(false); });
 }
 function collectValues() {
   var values = {};
@@ -255,6 +354,14 @@ function collectValues() {
     values[el.getAttribute('data-field')] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? null : Number(el.value)) : el.value);
   });
   return values;
+}
+function start(makeCall, label) {
+  busy(true, label);
+  state('⏳ 正在提交…', false);
+  makeCall().then(function (started) {
+    state('⏳ 已提交（' + (started && started.runId ? String(started.runId).slice(0, 8) : '') + '），正在执行…', false);
+    poll();
+  }).catch(function (error) { state('✗ ' + error.message, true); busy(false); });
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
@@ -264,33 +371,28 @@ document.addEventListener('click', function (event) {
       .catch(function (error) { t.disabled = false; t.textContent = '↻ 重新解析'; alert('重新解析失败：' + error.message); });
     return;
   }
+  if (t.id === 'reload-btn') { state('正在刷新状态…', false); api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (s) { applyStatus(s); }).catch(function (e) { state('✗ ' + e.message, true); }); return; }
+  if (t.id === 'clear-btn') {
+    api('/api/runs/clear', { workflow: WORKFLOW }).then(function () { renderFiles([]); state('已清空展示（产物文件仍可在成果物页查看）', false); })
+      .catch(function (e) { alert('清空失败：' + e.message); });
+    return;
+  }
   if (t.getAttribute && t.getAttribute('data-dice')) {
     var input = document.getElementById(t.getAttribute('data-dice'));
     input.value = String(Math.floor(1 + Math.random() * 4294967294));
   }
   var quick = t.getAttribute && t.getAttribute('data-quick');
-  if (quick) { run(function () { return api('/api/quick', { workflow: WORKFLOW, command: quick }); }); }
+  if (quick) { start(function () { return api('/api/quick', { workflow: WORKFLOW, command: quick }); }, '执行中…'); }
 });
-function run(makeCall) {
-  var btn = document.getElementById('run-btn');
-  btn.disabled = true; state('已提交，正在执行工作流（含排队与等待）…');
-  makeCall().then(function (result) {
-    var files = result.localFiles || [];
-    var tiles = document.getElementById('tiles'); tiles.innerHTML = '';
-    files.forEach(function (file) {
-      if (file.kind !== 'image') return;
-      var img = document.createElement('img');
-      img.src = '/artifact?path=' + encodeURIComponent(file.path) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
-      img.alt = file.filename || ''; img.title = (file.filename || '') + ' · 种子 ' + (result.seed ?? '');
-      tiles.appendChild(img);
-    });
-    state('✓ 完成（种子 ' + (result.seed ?? '-') + '，' + files.length + ' 个成果物）', false);
-  }).catch(function (error) { state('✗ ' + error.message, true); }).finally(function () { btn.disabled = false; });
-}
 document.getElementById('run-form').addEventListener('submit', function (event) {
   event.preventDefault();
-  run(function () { return api('/api/run', { workflow: WORKFLOW, values: collectValues(), name: WORKFLOW + '-' + Date.now() }); });
+  start(function () { return api('/api/run', { workflow: WORKFLOW, values: collectValues() }); }, '执行中…');
 });
+// 页面加载即恢复：执行中的进度，或上次完成的成果物（刷新不丢）
+api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (status) {
+  applyStatus(status, true);
+  if (status && status.state === 'running') poll();
+}).catch(function () { /* 首次加载静默 */ });
 `
 
 const PAGE_INDEX_JS = `

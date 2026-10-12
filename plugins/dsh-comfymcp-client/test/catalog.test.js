@@ -141,14 +141,23 @@ describe('createTools catalog', () => {
         ensureReady: async () => ({
           callTool: async (name, args) => {
             calls.push({ name, args })
-            if (name === 'fetch_artifacts') {
-              return { structuredContent: { files: [{ path: join(workdir, 'x.png'), filename: 'x.png', kind: 'image', bytes: 3 }] } }
-            }
-            if (args.tool === 'save_workflow') return { structuredContent: { ok: true, id: 'saved-1' } }
+            if (args.tool === 'save_workflow') return { structuredContent: { ok: true, data: { ok: true, id: 'saved-1' } } }
             if (args.tool === 'run_workflow') {
-              return { structuredContent: { promptId: 'p-1', state: 'completed', artifacts: [{ id: 'a1', url: '/artifacts/a1', filename: 'x.png', kind: 'image', bytes: 3 }] } }
+              return { structuredContent: { ok: true, data: { promptId: 'p-1', taskId: 'comfyui:1' } } }
             }
-            if (args.tool === 'job_wait') return { structuredContent: { state: 'completed' } }
+            if (args.tool === 'job_wait') return { structuredContent: { ok: true, data: { state: 'completed', outputs: [{ filename: 'x.png', subfolder: '', type: 'output' }] } } }
+            // 成果物走 fetch_outputs 落盘（服务端写 outDir 并返回本地路径 + refs）
+            if (args.tool === 'fetch_outputs') {
+              return {
+                structuredContent: {
+                  ok: true,
+                  data: {
+                    files: [{ path: join(workdir, 'x.png'), filename: 'x.png', bytes: 3 }],
+                    artifacts: [{ id: 'a1', url: '/artifacts/a1', filename: 'x.png', kind: 'image', bytes: 3 }],
+                  },
+                },
+              }
+            }
             return { structuredContent: {} }
           },
         }),

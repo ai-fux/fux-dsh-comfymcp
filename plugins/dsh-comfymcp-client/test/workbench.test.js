@@ -18,12 +18,26 @@ const REMOTE_GRAPH = {
 }
 
 async function makeBridge(overrides = {}) {
-  return {
+  const runs = new Map()
+  const order = []
+  const bridge = {
     config: { saveSubdir: 'gen', autoUnloadModel: false },
-    listRuns: () => [],
+    listRuns: (limit = 20) => order.slice(-limit).reverse().map((id) => runs.get(id)).filter(Boolean),
+    getRun: (id) => runs.get(id) ?? null,
     recordRun(run) {
-      this.lastRecord = { ...run, id: 'run-1' }
-      return this.lastRecord
+      const id = run.id ?? `run-${order.length + 1}`
+      const record = { ...run, id, state: run.state ?? 'failed' }
+      runs.set(id, record)
+      if (!order.includes(id)) order.push(id)
+      this.lastRecord = record
+      return record
+    },
+    updateRun(id, patch) {
+      const current = runs.get(id)
+      if (current === undefined) return null
+      const next = { ...current, ...patch, id }
+      runs.set(id, next)
+      return next
     },
     // 宿主转发包装实证形状：structuredContent = { ok, isError, tool, data, ... }
     callRemote: async (tool, args = {}) => {
@@ -61,6 +75,19 @@ async function makeBridge(overrides = {}) {
       throw new Error('no backend in test')
     },
     ...overrides,
+  }
+  return bridge
+}
+
+/** 等待异步运行结束（守护把结果写进运行记录，状态需轮询获取）。 */
+async function waitForFinish(workbench, workflow, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const status = await workbench.runStatus({ workflow })
+    const value = status?.value ?? null
+    if (value !== null && value.state !== 'running') return value
+    if (Date.now() > deadline) return value
+    await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
 
@@ -117,10 +144,12 @@ describe('workbench pages', () => {
     // 官方 COMBO+options → 下拉，含当前值
     expect(page.html).toContain('data-field="3:sampler_name"')
     expect(page.html).toContain('<option value="euler" selected>')
-    // 远端图执行：复合键应用后走共享运行核心（桩无后端，但记录已生成）
-    const result = await workbench.runPage({ workflow: 'library:demo.json', values: { '3:seed': 3 } })
-    expect(result.error).toContain('no backend')
-    expect(result.runId).toBe('run-1')
+    // 远端图执行：复合键应用后异步启动（桩无后端，状态轮询到失败）
+    const started = await workbench.runPage({ workflow: 'library:demo.json', values: { '3:seed': 3 } })
+    expect(started.ok).toBe(true)
+    const finished = await waitForFinish(workbench, 'library:demo.json')
+    expect(finished.state).toBe('failed')
+    expect(finished.error).toContain('no backend')
   })
 })
 
@@ -128,28 +157,49 @@ describe('workbench runPage / quickRun', () => {
   it('applies composite-key values onto the graph before executing', async () => {
     const bridge = await makeBridge()
     const workbench = makeWorkbench(bridge)
-    const result = await workbench.runPage({ workflow: 'beach', values: { '3:seed': 777, '6:text': '海边' }, name: 'beach-01' })
-    expect(result.ok).toBe(false) // 测试桩无后端，但图已应用并入记录
-    expect(result.error).toContain('no backend')
-    expect(bridge.lastRecord.form.graph['3'].inputs.seed).toBe(777)
-    expect(bridge.lastRecord.form.graph['6'].inputs.text).toBe('海边')
-    expect(bridge.lastRecord.form.values['3:seed']).toBe(777)
-    expect(bridge.lastRecord.name).toBe('beach-01')
+    const started = await workbench.runPage({ workflow: 'beach', values: { '3:seed': 777, '6:text': '海边' }, name: 'beach-01' })
+    expect(started.ok).toBe(true)
+    expect(typeof started.runId).toBe('string')
+    const finished = await waitForFinish(workbench, 'beach-01')
+    expect(finished.state).toBe('failed') // 测试桩无后端
+    expect(finished.error).toContain('no backend')
+    const record = bridge.getRun(started.runId)
+    expect(record.form.graph['3'].inputs.seed).toBe(777)
+    expect(record.form.graph['6'].inputs.text).toBe('海边')
+    expect(record.form.values['3:seed']).toBe(777)
+    expect(record.name).toBe('beach-01')
+  })
+
+  it('refuses a second run for the same workflow while one is active (boundary)', async () => {
+    const bridge = await makeBridge({
+      ensureReady: () => new Promise(() => {}), // 永不返回：保持运行中
+    })
+    const workbench = makeWorkbench(bridge)
+    const first = await workbench.runPage({ workflow: 'beach', values: {}, name: 'beach-01' })
+    expect(first.ok).toBe(true)
+    const second = await workbench.runPage({ workflow: 'beach', values: {}, name: 'beach-01' })
+    expect(second).toMatchObject({ ok: false })
+    expect(second.reason).toContain('正在执行中')
+    const status = await workbench.runStatus({ workflow: 'beach-01' })
+    expect(status.value.state).toBe('running')
   })
 
   it('quickRun reruns the last completed run with only the seed rolled', async () => {
     const appliedGraph = { '3': { class_type: 'KSampler', inputs: { seed: 42, steps: 20 } }, '6': { class_type: 'CLIPTextEncode', inputs: { text: '旧词' } } }
     const bridge = await makeBridge({
       listRuns: () => [
-        { id: 'r0', name: 'beach-01', state: 'completed', form: { values: { '3:seed': 42, '6:text': '旧词' }, graph: appliedGraph } },
+        { id: 'r0', name: 'beach-01', state: 'completed', finishedAt: Date.now(), form: { values: { '3:seed': 42, '6:text': '旧词' }, graph: appliedGraph } },
       ],
     })
     const workbench = makeWorkbench(bridge, { quickCommands: JSON.stringify([{ name: '抽卡', seed: { mode: 'range', min: 9, max: 9 } }]) })
-    const result = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
-    expect(result.ok).toBe(false) // 无后端；但记录已生成
-    expect(bridge.lastRecord.name).toBe('beach-01-reroll')
-    expect(bridge.lastRecord.form.graph['3'].inputs.seed).toBe(9)
-    expect(bridge.lastRecord.form.graph['6'].inputs.text).toBe('旧词')
+    const started = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
+    expect(started.ok).toBe(true)
+    const finished = await waitForFinish(workbench, 'beach-01-reroll')
+    expect(finished.state).toBe('failed') // 无后端；但图已按种子策略重滚
+    const record = bridge.getRun(started.runId)
+    expect(record.name).toBe('beach-01-reroll')
+    expect(record.form.graph['3'].inputs.seed).toBe(9)
+    expect(record.form.graph['6'].inputs.text).toBe('旧词')
   })
 
   it('quickRun without prior completed run explains itself (boundary)', async () => {

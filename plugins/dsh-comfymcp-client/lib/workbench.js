@@ -17,6 +17,7 @@ import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHt
 import { createTagStore } from './tags.js'
 import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
+import { createRunDaemon } from './rund.js'
 import { normalizeNodeCatalog } from './nodecat.js'
 import { safeFileStem } from './bridge.js'
 import { apiGraphFromUi, hasSubgraphs, isUiWorkflow } from './wfgraph.js'
@@ -172,12 +173,16 @@ function isLibraryEntry(workflow) {
   return workflow?.source === 'library' || String(workflow?.id ?? '').startsWith('library:')
 }
 
-/** 把页面提交的 values（复合键 nodeId:field）应用回图。 */
+/**
+ * 把页面提交的 values（复合键 `nodeId:field`）应用回图。
+ * 注意：展平后的子图节点 id 自身含冒号（如 `128:127`），故按**最后一个冒号**切分；
+ * 自动增长组输入名也含点号（`values.a`），整段作为字段名保留。
+ */
 function applyValues(graph, values) {
   let applied = 0
   if (values === null || typeof values !== 'object') return applied
   for (const [key, value] of Object.entries(values)) {
-    const separator = key.indexOf(':')
+    const separator = key.lastIndexOf(':')
     if (separator <= 0) continue
     const node = graph[key.slice(0, separator)]
     const field = key.slice(separator + 1)
@@ -196,6 +201,7 @@ function applyValues(graph, values) {
  */
 export function createWorkbenchMethods({ bridge, config }) {
   const executeRun = createRunExecutor({ bridge })
+  const daemon = createRunDaemon({ bridge, executeRun })
   const tagStore = createTagStore({ dataDir: config.dataDir })
   const remote = createRemoteSource(bridge)
 
@@ -351,19 +357,31 @@ export function createWorkbenchMethods({ bridge, config }) {
       return descriptorFor(name)
     },
 
-    /** 页面「执行」：values（复合键）应用回图后走共享运行核心。 */
+    /** 页面「执行」：values（复合键）应用回图后异步启动（立即返回，由守护轮询进度）。 */
     async runPage({ workflow, values, name } = {}) {
       const resolved = await resolveGraph(workflow)
       if (resolved === null) return { ok: false, error: `工作流 ${workflow} 不存在` }
       applyValues(resolved.graph, values)
-      return executeRun({
-        name: typeof name === 'string' && name.trim().length > 0 ? name : isPlainStem(workflow) ? workflow : 'workflow',
-        graph: resolved.graph,
-        values,
-      })
+      const runName = typeof name === 'string' && name.trim().length > 0 ? name : isPlainStem(workflow) ? workflow : 'workflow'
+      return daemon.start({ workflow: runName, name: runName, graph: resolved.graph, values, subdir: config.saveSubdir })
     },
 
-    /** 快捷指令（如抽卡）：复用上次成功运行的参数，仅重滚种子。 */
+    /** 页面状态：运行中状态或最近一次结果（刷新后恢复展示）。 */
+    async runStatus({ workflow } = {}) {
+      return daemon.status(workflow)
+    },
+
+    /** 最近运行历史（供页面展示成果物列表）。 */
+    async runHistory({ workflow, limit } = {}) {
+      return { ok: true, value: daemon.history(workflow, typeof limit === 'number' && limit > 0 ? limit : 5) }
+    },
+
+    /** 清空展示区域（产物文件保留）。 */
+    async clearRuns({ workflow } = {}) {
+      return daemon.clear(workflow)
+    },
+
+    /** 快捷指令（如抽卡）：复用上次成功运行的参数，仅重滚种子；同样异步执行。 */
     async quickRun({ workflow, command } = {}) {
       const commands = parseQuickCommands(config.quickCommands)
       const entry = commands.find((item) => item.name === command) ?? commands[0]
@@ -373,7 +391,7 @@ export function createWorkbenchMethods({ bridge, config }) {
         .find((run) => run.state === 'completed' && run.form?.graph !== undefined && (workflow === undefined || workflow === null || run.name === workflow || String(run.name).startsWith(String(workflow))))
       const rerun = buildQuickRerun(lastRun ?? null, entry)
       if (rerun.ok !== true) return { ok: false, reason: rerun.reason }
-      return executeRun({ name: rerun.name, graph: rerun.graph, values: rerun.values })
+      return daemon.start({ workflow: rerun.name, name: rerun.name, graph: rerun.graph, values: rerun.values, subdir: config.saveSubdir })
     },
 
     async listArtifacts() {

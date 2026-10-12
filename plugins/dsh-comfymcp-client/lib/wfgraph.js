@@ -43,13 +43,17 @@ function linkMapOf(links) {
   return map
 }
 
-/** 写入 API 输入：含点号的虚拟输入（如 values.a）折叠为父级对象（values:{a:...}）。 */
+/**
+ * 写入 API 输入：自动增长组（COMFY_AUTOGROW_V3，如 ComfyMathExpression 的 values）需要
+ * 「扁平点号键 + 同名父对象镜像」双写 —— 两端的实测契约不同（2026-10 实测）：
+ *   ComfyUI /prompt：`values.a` 才生效；只给 `values:{a:…}` → required_input_missing: values.a
+ *   comfy-mcp 校验层：必须存在名为 `values` 的输入，否则 missing_input: requires input "values"
+ * 双写后两端都通过（ComfyUI 对额外的 values 键宽容）。
+ */
 function setInput(inputs, name, value) {
+  inputs[name] = value
   const dot = name.indexOf('.')
-  if (dot <= 0) {
-    inputs[name] = value
-    return
-  }
+  if (dot <= 0) return
   const parent = name.slice(0, dot)
   const leaf = name.slice(dot + 1)
   if (inputs[parent] === null || typeof inputs[parent] !== 'object' || Array.isArray(inputs[parent])) inputs[parent] = {}

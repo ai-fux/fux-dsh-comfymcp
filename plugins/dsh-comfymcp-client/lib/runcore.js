@@ -1,7 +1,7 @@
 /**
  * 运行核心：comfymcp_run_workflow 工具与控制端点 /api/run、/api/quick 共用的
  * 同一条执行链——（可选整合卸载节点）→ save_workflow → run_workflow →
- * job_wait → fetch_artifacts → 产物分发（对象存储推送 + downloadDir 镜像）。
+ * job_wait → fetch_outputs（落盘）→ 产物分发（对象存储推送 + downloadDir 镜像）。
  */
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
@@ -10,7 +10,28 @@ import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 
 function oneLine(value) {
-  return String(value ?? '').replaceAll(/\s+/g, ' ').slice(0, 400)
+  const text = value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
+  return text.replaceAll(/\s+/g, ' ').slice(0, 600)
+}
+
+/** 解宿主转发包装：structuredContent = {ok,isError,tool,data,...} → 内层 data。 */
+function unwrapTool(answer) {
+  const structured = answer?.structuredContent
+  if (structured !== null && typeof structured === 'object' && 'data' in structured) return structured.data ?? {}
+  return structured ?? {}
+}
+
+function isToolError(answer, data) {
+  return answer?.structuredContent?.isError === true || data?.isError === true || (typeof data?.error === 'string' && data.error.length > 0)
+}
+
+/** 按扩展名推断成果物类型。 */
+function inferKind(filename) {
+  const ext = String(filename ?? '').toLowerCase().split('.').pop() ?? ''
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(ext)) return 'image'
+  if (['mp4', 'webm', 'mov', 'mkv', 'gif'].includes(ext)) return 'video'
+  if (['txt', 'json', 'csv', 'log'].includes(ext)) return 'text'
+  return 'file'
 }
 
 /**
@@ -73,6 +94,13 @@ export function createRunExecutor({ bridge }) {
   return async function executeRun(options = {}) {
     const subdir = typeof options.subdir === 'string' && options.subdir.trim().length > 0 ? options.subdir.trim() : bridge.config.saveSubdir
     const startedAt = Date.now()
+    const stage = (name) => {
+      try {
+        options.onStage?.(name)
+      } catch {
+        /* 回调失败不影响运行 */
+      }
+    }
     const base = {
       name: safeFileStem(options.name),
       subdir,
@@ -84,6 +112,7 @@ export function createRunExecutor({ bridge }) {
       startedAt,
     }
     try {
+      stage('连接服务端')
       const client = await bridge.ensureReady()
       const unloadWant = options.autoUnload !== undefined ? options.autoUnload === true : bridge.config.autoUnloadModel === true
       let unloadState = { requested: unloadWant, applied: false, reason: '' }
@@ -105,47 +134,69 @@ export function createRunExecutor({ bridge }) {
         base.form.graph = graph
       }
 
+      // 服务端签名：save_workflow(name*, graph*, overwrite)
+      stage('保存工作流')
       const saveAnswer = await client.callTool('call_remote_tool', {
         tool: 'save_workflow',
-        arguments: { name: base.name, subdir, graph },
+        arguments: { name: base.name, graph, overwrite: true },
       })
-      const savedData = saveAnswer?.structuredContent ?? {}
-      if (savedData.isError === true) {
+      const savedData = unwrapTool(saveAnswer)
+      if (isToolError(saveAnswer, savedData)) {
         throw new Error(`save_workflow 失败：${oneLine(savedData)}`)
       }
       base.savedName = typeof savedData.id === 'string' ? savedData.id : base.name
       base.form.saved = { id: savedData.id ?? null, subdir }
 
+      // 服务端签名：run_workflow(graph, id, front, priority) —— 不接 name/wait
+      stage('提交任务')
       const runAnswer = await client.callTool('call_remote_tool', {
         tool: 'run_workflow',
-        arguments: { graph, name: base.name, wait: options.wait !== false },
+        arguments: { graph },
       })
-      const runData = runAnswer?.structuredContent ?? {}
-      if (runData.isError === true) {
+      const runData = unwrapTool(runAnswer)
+      if (isToolError(runAnswer, runData)) {
         throw new Error(`run_workflow 失败：${oneLine(runData)}`)
       }
       base.promptId = typeof runData.promptId === 'string' ? runData.promptId : null
-      const waitBudget = typeof options.timeoutMs === 'number' && options.timeoutMs > 0 ? options.timeoutMs : 120000
+      try {
+        options.onPromptId?.(base.promptId, base.savedName)
+      } catch {
+        /* 回调失败不影响运行 */
+      }
+      const waitBudget = typeof options.timeoutMs === 'number' && options.timeoutMs > 0 ? options.timeoutMs : 900000
       let finalData = runData
       if (options.wait !== false && typeof base.promptId === 'string') {
+        stage('生成中')
         try {
           const waitAnswer = await client.callTool(
             'call_remote_tool',
             { tool: 'job_wait', arguments: { promptId: base.promptId, timeoutMs: waitBudget } },
             waitBudget + 30000,
           )
-          finalData = { ...runData, ...(waitAnswer?.structuredContent ?? {}) }
+          finalData = { ...runData, ...unwrapTool(waitAnswer) }
         } catch (error) {
           finalData = { ...runData, waitError: error instanceof Error ? error.message : String(error) }
         }
       }
-      const artifacts = Array.isArray(finalData.artifacts) ? finalData.artifacts : []
+      // 成果物：fetch_outputs 把产物落到本地（outDir），并给出 artifacts 引用
+      stage('取回成果物')
+      let artifacts = Array.isArray(finalData.artifacts) ? finalData.artifacts : []
       const localFiles = []
-      if (artifacts.length > 0) {
+      const outDir = typeof options.outDir === 'string' && options.outDir.length > 0 ? options.outDir : bridge.config.artifactsDir
+      if (typeof base.promptId === 'string') {
         try {
-          const fetchAnswer = await client.callTool('fetch_artifacts', { refs: artifacts })
-          const files = fetchAnswer?.structuredContent?.files
-          if (Array.isArray(files)) localFiles.push(...files)
+          const fetchAnswer = await client.callTool('call_remote_tool', {
+            tool: 'fetch_outputs',
+            arguments: { promptId: base.promptId, ...(typeof outDir === 'string' && outDir.length > 0 ? { outDir } : {}) },
+          })
+          const fetched = unwrapTool(fetchAnswer)
+          if (Array.isArray(fetched.files)) {
+            for (const file of fetched.files) {
+              if (file === null || typeof file !== 'object' || typeof file.path !== 'string') continue
+              localFiles.push({ ...file, kind: file.kind ?? inferKind(file.filename ?? file.path) })
+            }
+          }
+          if (Array.isArray(fetched.artifacts) && fetched.artifacts.length > 0) artifacts = fetched.artifacts
         } catch (error) {
           base.downloadError = error instanceof Error ? error.message : String(error)
         }
@@ -154,6 +205,7 @@ export function createRunExecutor({ bridge }) {
       base.distributed = await distributeArtifacts(bridge, localFiles)
       const record = bridge.recordRun({
         ...base,
+        id: options.runId,
         state: typeof finalData.state === 'string' ? finalData.state : finalData.isError === true ? 'failed' : 'completed',
         artifacts,
         localFiles,
@@ -175,7 +227,7 @@ export function createRunExecutor({ bridge }) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const record = bridge.recordRun({ ...base, state: 'failed', error: message, finishedAt: Date.now() })
+      const record = bridge.recordRun({ ...base, id: options.runId, state: 'failed', error: message, finishedAt: Date.now() })
       return {
         ok: false,
         runId: record.id,

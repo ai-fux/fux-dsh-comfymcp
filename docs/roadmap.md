@@ -35,7 +35,10 @@
 | 节点元数据 | `{nodes:{Cls:{inputs:[{name,group,type,required,default,min,max,step,options}]}},missing:[]}`；枚举为 `type:"COMBO"+options` | `lib/nodecat.js` 统一四种形状（含官方 object_info 裸形状、rows 分页、数组枚举旧约定） |
 | 工作流来源 | 本地目录文件 + 远端 `library:*`（模板库）/`saved:*`（本地同目录被服务端索引）/工作区条目 | 本地优先；拉取写插件自有 `<home>/workflows`（绝不写用户 ComfyUI 目录） |
 | 本地文件格式 | ComfyUI 前端 **UI 格式**（`nodes[]/links[]/widgets_values`），且大量使用**内联子图** | `lib/wfgraph.js`：服务端转换优先（无子图时）→ 本地展平兜底 |
-| 子图展平 | 定义含虚拟边界 `inputNode(-10)/outputNode(-20)`；`def.inputs[i].linkIds` 指内部链路，槽位序 = 外节点输入序；外节点 `outputs[s].links` 需重映射到内部产出节点 | `apiGraphFromUi`：内部节点前缀 `<外节点id>:`，promoted 输入取值（外链→外部引用／widget→外节点同名值），输出链路重映射；含点号虚拟输入（`values.a`）折叠为 `values:{a:...}` |
-| 校验 | `validate_workflow` 逐字段校验 | 实机 6 个本地工作流：5 个展平后校验通过；1 个为工作流自身引用了本机缺失素材（表单以「当前值·不可用」呈现，不静默丢值） |
+| 子图展平 | 定义含虚拟边界 `inputNode(-10)/outputNode(-20)`；`def.inputs[i].linkIds` 指内部链路，槽位序 = 外节点输入序；外节点 `outputs[s].links` 需重映射到内部产出节点 | `apiGraphFromUi`：内部节点前缀 `<外节点id>:`，promoted 输入取值（外链→外部引用／widget→外节点同名值），输出链路重映射 |
+| 自动增长组输入（`COMFY_AUTOGROW_V3`） | 两端契约不同：ComfyUI `/prompt` 只认扁平点号键 `values.a`（给嵌套对象 → `required_input_missing: values.a`）；comfy-mcp 校验层却要求存在名为 `values` 的输入（只给 `values.a` → `missing_input: requires input "values"`） | **双写**：既写 `values.a`，也镜像父对象 `values:{a:…}`，两端同时通过 |
+| 运行工具契约 | `save_workflow(name*, graph*, overwrite)`／`run_workflow(graph, id, front, priority)`（**无** name/wait）／`job_wait(promptId*, timeoutMs)`／`fetch_outputs(promptId, files, outDir, inline, maxBytes)`（`outDir` 直接落盘并返回 `files[].path` + `artifacts[]`）；`job_progress(promptId)` 供进度 | `lib/runcore.js` 按实测 schema 调用；`lib/rund.js` 轮询进度、维护运行状态与清空标记 |
+| 复合键 | 展平后节点 id 自身含冒号（`128:127`），字段名也可能含点号（`values.a`） | 页面 values 键 `nodeId:field` 按**最后一个冒号**切分 |
+| 校验 | `validate_workflow`（服务端逐字段）+ ComfyUI `/prompt`（真实执行校验） | 实机 6 个本地工作流展平后全部通过；1 个为工作流自身引用了本机缺失素材（表单以「当前值·不可用」呈现，不静默丢值） |
 
 先前草案（并入后续版本候选）：运行历史面板增强、内嵌服务自动重启、对象存储直传、多 ComfyUI 实例、表单记忆、国际化。

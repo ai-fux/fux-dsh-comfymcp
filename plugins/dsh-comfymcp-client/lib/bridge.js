@@ -335,13 +335,23 @@ export class ComfymcpBridge {
       error: run.error ?? '',
     }
     this.runs.set(id, record)
-    this.runOrder.push(id)
+    if (!this.runOrder.includes(id)) this.runOrder.push(id)
     while (this.runOrder.length > MAX_RUNS) {
       const drop = this.runOrder.shift()
       if (drop !== undefined) this.runs.delete(drop)
     }
     this.persistRuns()
     return record
+  }
+
+  /** 更新一条运行记录（运行中 → 完成/失败），保持顺序并落盘。 */
+  updateRun(id, patch = {}) {
+    const current = this.runs.get(id)
+    if (current === undefined) return null
+    const next = { ...current, ...patch, id }
+    this.runs.set(id, next)
+    this.persistRuns()
+    return next
   }
 
   /** 结构化数据：运行记录落盘 <dataDir>/runs.json（尽力而为，失败仅记日志）。 */
