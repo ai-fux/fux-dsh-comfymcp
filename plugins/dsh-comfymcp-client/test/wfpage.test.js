@@ -81,11 +81,13 @@ describe('renderPageHtml', () => {
 })
 
 describe('renderIndexHtml / renderArtifactsHtml', () => {
-  it('lists pages with tokenized links (boundary: empty)', () => {
-    const html = renderIndexHtml({ pages: [{ name: 'beach', title: 'beach', nodeCount: 5, updatedAt: '2026-10-11' }], token: 'tk' })
+  it('lists pages with tokenized links and library badges (boundary: empty)', () => {
+    const html = renderIndexHtml({ pages: [{ name: 'beach', title: 'beach', updatedAt: '2026-10-11' }, { name: 'library:x.json', title: 'x', source: 'library' }], token: 'tk' })
     expect(html).toContain('/ui/wf/beach?token=tk')
     expect(html).toContain('/ui/artifacts?token=tk')
-    expect(html).toContain('5 节点')
+    expect(html).toContain('更新 2026-10-11')
+    expect(html).toContain('📚 模板库')
+    expect(html).toContain('/ui/wf/library%3Ax.json')
     expect(renderIndexHtml({ pages: [], token: '' })).toContain('还没有可编排的工作流')
   })
 

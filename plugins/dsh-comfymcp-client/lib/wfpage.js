@@ -7,6 +7,7 @@
  * 由宿主半区复用与模型工具完全相同的运行核心（runcore）执行。
  */
 import { DEFAULT_QUICK_COMMANDS } from './quick.js'
+import { resolveNodeInfo } from './nodecat.js'
 
 /** 控件类型的链接型（非控件）类别：接线字段不渲染。 */
 const LINK_TYPES = /^(MODEL|CLIP|CLIP_VISION|VAE|CONDITIONING|LATENT|IMAGE|MASK|AUDIO|VIDEO|CONTROL_NET|UPSCALE_MODEL|STYLE_MODEL|SIGMAS|NOISE|GUIDER|SAMPLER|BASIC_SCHEDULER|SAMPLER_CUSTOM)$/i
@@ -32,8 +33,14 @@ function fieldFor(nodeId, input, value) {
   if (name.length === 0) return null
   const rawType = input.type
   const upper = Array.isArray(rawType) ? '' : String(rawType ?? '').toUpperCase()
-  if (Array.isArray(rawType)) {
-    return { field: name, label: name, type: 'choice', options: rawType.map((entry) => String(entry)), value: String(value ?? ''), required: input.required === true }
+  // 枚举：官方 COMBO+options（内嵌链路实证）与旧约定数组类型都认
+  const comboOptions = Array.isArray(rawType)
+    ? rawType.map((entry) => String(entry))
+    : upper === 'COMBO' && Array.isArray(input.options)
+      ? input.options.map((entry) => String(entry))
+      : null
+  if (comboOptions !== null) {
+    return { field: name, label: name, type: 'choice', options: comboOptions, value: String(value ?? ''), required: input.required === true }
   }
   if (LINK_TYPES.test(upper)) return null
   if (upper === 'INT' || upper === 'FLOAT' || /seed/i.test(name)) {
@@ -74,7 +81,7 @@ export function buildPageDescriptor({ name, title, graph, nodeInfos = {} }) {
     const node = nodeRaw !== null && typeof nodeRaw === 'object' ? nodeRaw : {}
     const classType = String(node.class_type ?? 'Unknown')
     const values = node.inputs !== null && typeof node.inputs === 'object' ? node.inputs : {}
-    const info = nodeInfos[classType] ?? nodeInfos[String(node.class_type ?? '')] ?? null
+    const info = resolveNodeInfo(nodeInfos, classType)
     const declared = Array.isArray(info?.inputs) ? info.inputs : []
     const fields = []
     const seen = new Set()
@@ -256,12 +263,12 @@ document.getElementById('run-form').addEventListener('submit', function (event) 
 });
 `
 
-/** 渲染索引页（一个工作流一个页面入口）。 */
+/** 渲染索引页（一个工作流一个页面入口；本地与远端模板库合并列表）。 */
 export function renderIndexHtml({ pages = [], token = '' }) {
   const items = pages
     .map((page) => `<a class="card" style="display:block" href="/ui/wf/${encodeURIComponent(page.name)}?token=${encodeURIComponent(token)}">
-<b>${escapeHtml(page.title ?? page.name)}</b>
-<div class="muted">${page.nodeCount ?? '?'} 节点 · 更新 ${escapeHtml(page.updatedAt ?? '')}</div></a>`)
+<b>${escapeHtml(page.title ?? page.name)}</b>${page.source === 'library' ? ' <span class="chip">📚 模板库</span>' : ''}
+<div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></a>`)
     .join('\n')
   const body = `
 <h1>ComfyUI 工作台</h1>

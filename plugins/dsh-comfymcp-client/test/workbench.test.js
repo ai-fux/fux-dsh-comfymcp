@@ -12,6 +12,11 @@ const GRAPH = {
   '6': { class_type: 'CLIPTextEncode', inputs: { text: '夕阳西下' } },
 }
 
+const REMOTE_GRAPH = {
+  '3': { class_type: 'KSampler', inputs: { seed: 1, steps: 25, sampler_name: 'euler' } },
+  '6': { class_type: 'CLIPTextEncode', inputs: { text: 'library 提示词' } },
+}
+
 async function makeBridge(overrides = {}) {
   return {
     config: { saveSubdir: 'gen', autoUnloadModel: false },
@@ -20,9 +25,38 @@ async function makeBridge(overrides = {}) {
       this.lastRecord = { ...run, id: 'run-1' }
       return this.lastRecord
     },
-    callRemote: async () => ({
-      structuredContent: { nodes: { KSampler: { inputs: [{ name: 'seed', type: 'INT', required: true }] } } },
-    }),
+    // 宿主转发包装实证形状：structuredContent = { ok, isError, tool, data, ... }
+    callRemote: async (tool, args = {}) => {
+      if (tool === 'node_info') {
+        return {
+          structuredContent: {
+            ok: true,
+            isError: false,
+            tool,
+            data: {
+              nodes: {
+                KSampler: {
+                  classType: 'KSampler',
+                  inputs: [
+                    { name: 'seed', group: 'required', type: 'INT', required: true, min: 0 },
+                    { name: 'sampler_name', group: 'required', type: 'COMBO', required: true, options: ['euler', 'heun'] },
+                  ],
+                },
+              },
+              missing: [],
+            },
+          },
+        }
+      }
+      if (tool === 'get_workflow') {
+        if (args.id !== 'library:demo.json') return { structuredContent: { ok: false, isError: true, tool, data: { error: 'not found' } } }
+        return { structuredContent: { ok: true, isError: false, tool, data: { id: args.id, format: 'ui', converted: true, graph: REMOTE_GRAPH } } }
+      }
+      if (tool === 'list_workflows') {
+        return { structuredContent: { ok: true, isError: false, tool, data: { total: 1, workflows: [{ id: 'library:demo.json', name: 'demo', source: 'library' }] } } }
+      }
+      return { structuredContent: { ok: true, isError: false, tool, data: {} } }
+    },
     ensureReady: async () => {
       throw new Error('no backend in test')
     },
@@ -67,6 +101,23 @@ describe('workbench pages', () => {
     const workbench = makeWorkbench(await makeBridge())
     expect(await workbench.getPage('../secret')).toBeNull()
     expect(await workbench.getPage('a\\b')).toBeNull()
+  })
+
+  it('falls back to the remote template library and adapts COMBO fields (official shape)', async () => {
+    const workbench = makeWorkbench(await makeBridge())
+    const index = await workbench.pageIndex({ token: '' })
+    expect(index.html).toContain('/ui/wf/library%3Ademo.json')
+    expect(index.html).toContain('模板库')
+    const page = await workbench.pageWorkflow('library:demo.json', { token: '' })
+    expect(page.error).toBeUndefined()
+    expect(page.html).toContain('data-field="3:seed"')
+    // 官方 COMBO+options → 下拉，含当前值
+    expect(page.html).toContain('data-field="3:sampler_name"')
+    expect(page.html).toContain('<option value="euler" selected>')
+    // 远端图执行：复合键应用后走共享运行核心（桩无后端，但记录已生成）
+    const result = await workbench.runPage({ workflow: 'library:demo.json', values: { '3:seed': 3 } })
+    expect(result.error).toContain('no backend')
+    expect(result.runId).toBe('run-1')
   })
 })
 
