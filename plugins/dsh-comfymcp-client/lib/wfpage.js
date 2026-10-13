@@ -416,6 +416,8 @@ function collectValues() {
 }
 function start(makeCall, label) {
   busy(true, label);
+  renderFiles([]);       // 新一轮开始：先清掉上一轮成果，避免误读为新结果
+  showProgress(null);
   state('⏳ 正在提交…', false);
   makeCall().then(function (started) {
     state('⏳ 已提交（' + (started && started.runId ? String(started.runId).slice(0, 8) : '') + '），正在执行…', false);

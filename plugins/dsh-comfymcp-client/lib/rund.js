@@ -162,11 +162,19 @@ export function createRunDaemon({ bridge, executeRun }) {
   }
 
   return {
-    /** 启动一次异步运行；同一工作流已有运行中任务时拒绝。 */
+    /**
+     * 启动一次异步运行。
+     * 仅当同一工作流**仍在执行中**时拒绝；上一次已结束的残留态（页面收尾展示期）直接让位，
+     * 否则「跑一次 → 改种子 → 再跑」会被误判为并发而失败。
+     */
     start({ workflow, graph, values = null, name, timeoutMs, subdir } = {}) {
       const key = String(workflow ?? name ?? '').trim()
       if (key.length === 0) return { ok: false, reason: '缺少工作流标识' }
-      if (active.has(key)) return { ok: false, reason: `${key} 正在执行中，请等待当前任务结束` }
+      const existing = active.get(key)
+      if (existing !== undefined) {
+        if (existing.state === 'running') return { ok: false, reason: `${key} 正在执行中，请等待当前任务结束` }
+        active.delete(key)
+      }
       const runId = randomUUID()
       const startedAt = Date.now()
       const budget = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : runTimeoutMs

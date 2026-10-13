@@ -88,6 +88,30 @@ describe('run daemon', () => {
     expect(daemon.isActive('beach')).toBe(false)
   })
 
+  it('allows a re-run right after the previous one finished (seed change)', async () => {
+    const bridge = makeBridge()
+    const daemon = createRunDaemon({
+      bridge,
+      executeRun: async (options) => {
+        // 与 runcore 一致：完成记录保留 form（图/取值），供抽卡与复核
+        const existing = bridge.getRun(options.runId) ?? {}
+        bridge.recordRun({ ...existing, id: options.runId, name: options.name, state: 'completed', finishedAt: Date.now(), localFiles: [], artifacts: [] })
+        return { ok: true, state: 'completed', runId: options.runId, localFiles: [], artifacts: [] }
+      },
+    })
+    const first = daemon.start({ workflow: 'beach', graph: { '3': { class_type: 'KSampler', inputs: { seed: 1 } } } })
+    expect(first.ok).toBe(true)
+    await tick(30)
+    expect(daemon.status('beach').value.state).toBe('completed')
+    // 关键：上一次的收尾展示态不得挡住新的一次运行（残留在 active 里）
+    const second = daemon.start({ workflow: 'beach', graph: { '3': { class_type: 'KSampler', inputs: { seed: 2 } } } })
+    expect(second.ok).toBe(true)
+    expect(second.runId).not.toBe(first.runId)
+    await tick(30)
+    expect(bridge.getRun(second.runId).form.graph['3'].inputs.seed).toBe(2)
+    expect(daemon.status('beach').value.state).toBe('completed')
+  })
+
   it('rejects a concurrent run for the same workflow (boundary)', () => {
     const bridge = makeBridge()
     const daemon = createRunDaemon({ bridge, executeRun: () => new Promise(() => {}) })
