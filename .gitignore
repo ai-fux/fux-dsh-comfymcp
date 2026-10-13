@@ -12,6 +12,10 @@ dist/
 .secrets/
 config/*.env
 
+# 公开主干不收录本地研发文件（仅存在于私有/快照分支）
+AGENTS.md
+PLUGIN_PLAN.md
+
 # 本地覆盖层与临时
 *.local.json
 __check.mjs
