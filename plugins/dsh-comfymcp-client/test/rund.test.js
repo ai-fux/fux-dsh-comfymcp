@@ -112,6 +112,37 @@ describe('run daemon', () => {
     expect(daemon.status('beach').value.state).toBe('completed')
   })
 
+  it('attaches structured params to each finished run (hover payload)', async () => {
+    const bridge = makeBridge()
+    const graph = {
+      '57:3': { class_type: 'KSampler', inputs: { seed: 222222, steps: 8, cfg: 1, sampler_name: 'euler', model: ['57:2', 0], positive: ['57:4', 0] } },
+      '57:4': { class_type: 'CLIPTextEncode', inputs: { text: '一只猫', clip: ['57:1', 0] } },
+      '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'out', images: ['57:5', 0] } },
+    }
+    const daemon = createRunDaemon({
+      bridge,
+      executeRun: async (options) => {
+        const existing = bridge.getRun(options.runId) ?? {}
+        bridge.recordRun({ ...existing, id: options.runId, name: options.name, state: 'completed', finishedAt: Date.now(), localFiles: [], artifacts: [], prompts: { positive: '一只猫' } })
+        return { ok: true, state: 'completed', runId: options.runId, localFiles: [], artifacts: [] }
+      },
+    })
+    const started = daemon.start({ workflow: 'beach', graph })
+    await tick(30)
+    const status = daemon.status('beach').value
+    expect(status.runId).toBe(started.runId)
+    const params = status.params ?? []
+    expect(params.length).toBeGreaterThan(0)
+    // 提示词优先，其次采样参数；链接引用不算参数
+    expect(params[0]).toMatchObject({ node: '57:4', field: 'text', value: '一只猫' })
+    const fields = params.map((param) => param.field)
+    expect(fields).toContain('seed')
+    expect(fields).toContain('steps')
+    expect(fields).toContain('filename_prefix')
+    expect(fields).not.toContain('model')
+    expect(params.find((param) => param.field === 'seed')).toMatchObject({ node: '57:3', value: '222222' })
+  })
+
   it('rejects a concurrent run for the same workflow (boundary)', () => {
     const bridge = makeBridge()
     const daemon = createRunDaemon({ bridge, executeRun: () => new Promise(() => {}) })

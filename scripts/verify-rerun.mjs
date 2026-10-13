@@ -57,6 +57,16 @@ try {
 
   const size = secondStatus.files?.[0]?.path && existsSync(secondStatus.files[0].path) ? statSync(secondStatus.files[0].path).size : 0
   console.log(`[4] 判定 → 第二次 ${secondStatus.state === 'completed' ? '执行成功 ✓' : '未成功 ✗'} · 种子 ${firstStatus.seed} → ${secondStatus.seed}${firstStatus.seed !== secondStatus.seed ? '（已变 ✓）' : '（未变 ✗）'} · 产物 ${size} 字节`)
+
+  // 成果区分组数据：多次运行 + 每次附带的参数（页面按组渲染，悬浮可见）
+  const history = (await workbench.runHistory({ workflow, limit: 6 }))?.value ?? []
+  console.log(`[5] 历史分组 → ${history.length} 组`)
+  history.slice(0, 3).forEach((run, index) => {
+    const top = (run.params ?? []).slice(0, 6).map((param) => `${param.field}=${String(param.value).slice(0, 18)}`).join(', ')
+    console.log(`    #${index + 1} ${run.state} · 种子 ${run.seed} · 用时 ${run.durationMs ?? run.elapsedMs}ms · 参数 ${(run.params ?? []).length} 项 · 产物 ${(run.files ?? []).length} 件`)
+    console.log(`        参数示例: ${top}`)
+    console.log(`        提示词: 正「${String(run.prompts?.positive ?? '').slice(0, 30)}」`)
+  })
 } catch (error) {
   console.log('[!] 失败：', error instanceof Error ? error.message : String(error))
 } finally {

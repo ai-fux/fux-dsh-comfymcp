@@ -43,6 +43,58 @@ function stepsTotalOf(graph) {
   }
   return total
 }
+/** 参数优先级：提示词最前，其次采样/尺寸，再模型与其余标量。 */
+const PARAM_PRIORITY = [
+  /^(text|prompt|positive|negative)$/i,
+  /^(seed|noise_seed)$/i,
+  /^(steps|cfg|denoise|shift|guidance)$/i,
+  /^(sampler_name|scheduler|type|device|weight_dtype)$/i,
+  /^(width|height|batch_size|length|fps|frames)$/i,
+  /(ckpt|unet|vae|clip|lora|model|name|prefix)/i,
+]
+const MAX_PARAMS = 60
+
+/**
+ * 从运行记录里提取结构化参数（供成果物附加展示 + 鼠标悬浮查看）：
+ * 以运行时的**终图**为准（含表单回填后的值），按优先级排序并截断。
+ */
+function paramsOf(record) {
+  const graph = record?.form?.graph
+  const params = []
+  const push = (nodeId, field, value) => {
+    const text = typeof value === 'string' ? value : JSON.stringify(value)
+    if (text === undefined || text === null) return
+    params.push({ node: String(nodeId), field, value: String(value), text: text.slice(0, 400) })
+  }
+  if (graph !== null && typeof graph === 'object') {
+    for (const [nodeId, node] of Object.entries(graph)) {
+      const inputs = node !== null && typeof node === 'object' && node.inputs !== null && typeof node.inputs === 'object' ? node.inputs : {}
+      for (const [field, value] of Object.entries(inputs)) {
+        if (value === null || value === undefined) continue
+        if (Array.isArray(value)) continue // 链接引用不算参数
+        if (typeof value === 'object') continue
+        push(nodeId, field, value)
+      }
+    }
+  }
+  if (params.length === 0 && record?.form?.values !== null && typeof record?.form?.values === 'object') {
+    for (const [key, value] of Object.entries(record.form.values)) {
+      if (value === null || value === undefined || typeof value === 'object') continue
+      const separator = key.lastIndexOf(':')
+      push(separator > 0 ? key.slice(0, separator) : '', separator > 0 ? key.slice(separator + 1) : key, value)
+    }
+  }
+  const rank = (param) => {
+    const index = PARAM_PRIORITY.findIndex((pattern) => pattern.test(param.field))
+    return index < 0 ? PARAM_PRIORITY.length : index
+  }
+  return params
+    .map((param, order) => ({ param, order }))
+    .sort((a, b) => rank(a.param) - rank(b.param) || a.order - b.order)
+    .slice(0, MAX_PARAMS)
+    .map((entry) => entry.param)
+}
+
 /** 页面展示状态（进程内存 + runs.json 持久化的组合）。 */
 function summarize(record, active) {
   if (active !== undefined) return active
@@ -58,11 +110,14 @@ function summarize(record, active) {
     durationMs: record.durationMs ?? null,
     promptId: record.promptId ?? null,
     progress: null,
+    seed: record.seed ?? null,
+    prompt: record.prompt ?? '',
     files: Array.isArray(record.localFiles) ? record.localFiles : [],
     artifacts: Array.isArray(record.artifacts) ? record.artifacts : [],
     error: record.error ?? '',
     saved: record.form?.saved ?? null,
     prompts: record.prompts ?? null,
+    params: paramsOf(record),
   }
 }
 
@@ -290,6 +345,7 @@ export function createRunDaemon({ bridge, executeRun }) {
             entry.prompts = record.prompts ?? entry.prompts ?? null
             entry.seed = record.seed ?? entry.seed ?? null
             entry.prompt = record.prompt ?? entry.prompt ?? ''
+            entry.params = paramsOf(record) // 参数附加到本次成果上（鼠标悬浮可查看）
           }
           bridge.updateRun?.(runId, { durationMs: entry.durationMs })
         }

@@ -165,6 +165,26 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .modal textarea{width:100%;min-height:56vh;max-height:70vh;font-size:13px;line-height:1.5;padding:10px}
 .assignHint{border-left:3px solid var(--accent);background:var(--surface);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px}
 .assignHint[hidden]{display:none}
+/* 成果分组：每次运行一组，一行或多行自适应 */
+.history{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:12px;margin-top:10px}
+.runGroup{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.runGroup .rgHead{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.runGroup .rgHead .idx{font-weight:600;font-size:13px}
+.runGroup .chip.ok{background:rgba(26,127,55,.12);color:var(--ok)}
+.runGroup .chip.bad{background:rgba(192,57,43,.12);color:var(--err)}
+.runGroup .promptMini{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
+.runGroup details.params{font-size:12px}
+.runGroup details.params summary{cursor:pointer;color:var(--accent)}
+.runGroup table.pv{width:100%;border-collapse:collapse;margin-top:6px}
+.runGroup table.pv td{border-top:1px solid var(--line);padding:2px 6px;vertical-align:top;word-break:break-all}
+.runGroup table.pv td.k{color:var(--muted);white-space:nowrap;width:38%}
+.runGroup .mediaRow{display:flex;flex-wrap:wrap;gap:8px}
+.runGroup .mediaRow .item{position:relative;width:104px;height:104px;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:var(--accent-weak);display:flex;align-items:center;justify-content:center;cursor:zoom-in}
+.runGroup .mediaRow .item img{width:100%;height:100%;object-fit:cover;display:block}
+.runGroup .mediaRow .item .big{font-size:28px;color:var(--accent)}
+.runGroup .mediaRow .item .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:1px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runGroup .rgOps{display:flex;gap:6px;flex-wrap:wrap}
+.history .empty{color:var(--muted);font-size:13px}
 `
 
 function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
@@ -264,10 +284,15 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <div class="timing muted" id="timing"></div>
 <div class="progress" id="progress" hidden><div class="bar"><div class="fill" id="progress-fill"></div></div><div class="muted" id="progress-text"></div></div>
 <div class="results" id="results" hidden>
-  <div class="head"><b>成果物 <span id="results-count">0</span></b><button type="button" class="mini" id="clear-btn">清空展示</button></div>
-  <div class="tiles" id="tiles"></div>
-  <div class="files" id="files"></div>
+  <div class="head"><b>成果物 <span id="results-count">0</span></b>
+  <span class="muted">最近多次运行按组展示；每组的「参数」可展开，鼠标移入缩略图可看参数</span>
+  <span><button type="button" class="mini" id="history-reload" title="重新读取运行历史">↻ 刷新成果</button>
+  <button type="button" class="mini" id="clear-btn">清空展示</button></span></div>
+  <div class="history" id="history"></div>
 </div>
+<div class="modal" id="preview2" hidden><div class="box">
+<div class="bar2"><span id="preview2-name"></span><button type="button" class="mini" id="preview2-close">关闭 ✕</button></div>
+<div id="preview2-body"></div></div></div>
 <div class="modal" id="textmodal" hidden><div class="box wide">
 <div class="bar2"><span id="textmodal-name">编辑全文</span><span>
 <button type="button" class="mini" id="textmodal-save">保存到表单</button>
@@ -330,31 +355,75 @@ function showProgress(status) {
   document.getElementById('progress-text').textContent =
     (status.stage || '执行中') + stepText + nodeText + ' · 已用 ' + fmtElapsed(status.elapsedMs) + (status.promptId ? ' · ' + String(status.promptId).slice(0, 8) : '');
 }
-function renderFiles(files) {
-  var tiles = document.getElementById('tiles');
-  var list = document.getElementById('files');
-  tiles.innerHTML = ''; list.innerHTML = '';
-  var items = files || [];
-  document.getElementById('results-count').textContent = String(items.length);
-  items.forEach(function (file) {
-    if (file.kind === 'image') {
-      var a = document.createElement('a');
-      a.href = artifactUrl(file); a.target = '_blank'; a.rel = 'noreferrer';
-      var img = document.createElement('img');
-      img.src = artifactUrl(file); img.alt = file.filename || ''; img.title = file.filename || '';
-      a.appendChild(img); tiles.appendChild(a);
-    } else {
-      var row = document.createElement('div');
-      row.className = 'file';
-      var link = document.createElement('a');
-      link.href = artifactUrl(file); link.target = '_blank'; link.rel = 'noreferrer';
-      link.textContent = (file.kind === 'video' ? '▶ ' : '📄 ') + (file.filename || file.path || '');
-      row.appendChild(link);
-      if (file.bytes) { var meta = document.createElement('span'); meta.className = 'muted'; meta.textContent = ' ' + Math.round(file.bytes / 1024) + ' KB'; row.appendChild(meta); }
-      list.appendChild(row);
-    }
+/* ---------------- 运行历史（多次执行成果分组展示） ---------------- */
+function paramRows(params) {
+  var rows = '';
+  (params || []).forEach(function (param) {
+    var label = (param.node ? param.node + ' · ' : '') + param.field;
+    rows += '<tr><td class="k">' + esc(label) + '</td><td title="' + esc(param.text || param.value) + '">' + esc(String(param.text || param.value).slice(0, 300)) + '</td></tr>';
   });
+  return rows || '<tr><td class="k">—</td><td>（无标量参数）</td></tr>';
+}
+function paramSummaryText(run) {
+  var parts = ['种子 ' + (run.seed === null || run.seed === undefined ? '-' : run.seed), '用时 ' + fmtElapsed(run.durationMs || run.elapsedMs)];
+  var interesting = ['steps', 'cfg', 'sampler_name', 'scheduler', 'denoise', 'width', 'height', 'batch_size', 'filename_prefix'];
+  (run.params || []).forEach(function (param) {
+    if (interesting.indexOf(param.field) < 0) return;
+    parts.push(param.field + '=' + String(param.value).slice(0, 40));
+  });
+  var prompts = run.prompts || {};
+  if (prompts.positive) parts.push('正:' + String(prompts.positive).slice(0, 60));
+  if (prompts.negative) parts.push('负:' + String(prompts.negative).slice(0, 40));
+  return parts.join(' · ');
+}
+function esc(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function groupHtml(run, index) {
+  var state = run.state || '';
+  var chipClass = state === 'completed' ? 'ok' : state === 'failed' || state === 'aborted' ? 'bad' : '';
+  var time = run.startedAt ? new Date(run.startedAt).toLocaleString('zh-CN') : '';
+  var hover = paramSummaryText(run);
+  var promptText = '';
+  var prompts = run.prompts || {};
+  if (prompts.positive) promptText += '<div class="promptMini" title="' + esc(prompts.positive) + '">正：' + esc(String(prompts.positive).slice(0, 160)) + '</div>';
+  if (prompts.negative) promptText += '<div class="promptMini" title="' + esc(prompts.negative) + '">负：' + esc(String(prompts.negative).slice(0, 160)) + '</div>';
+  var media = (run.files || []).map(function (file) {
+    var url = artifactUrl(file);
+    var inner = file.kind === 'image'
+      ? '<img src="' + url + '" alt="" loading="lazy">'
+      : '<span class="big">' + (file.kind === 'video' ? '▶' : file.kind === 'audio' ? '♪' : '📄') + '</span>';
+    var tip = (file.filename || '') + '\\n' + hover;
+    return '<div class="item" data-preview2="' + esc(file.path || '') + '" data-kind="' + esc(file.kind || 'file') + '" data-name="' + esc(file.filename || '') + '" title="' + esc(tip) + '">'
+      + inner + '<span class="cap">' + esc(file.filename || '') + '</span></div>';
+  }).join('');
+  var body = media || '<div class="muted">（本次无成果物）</div>';
+  return '<section class="runGroup" title="' + esc(hover) + '">'
+    + '<div class="rgHead"><span class="idx">#' + index + ' ' + esc(run.workflow || WORKFLOW) + '</span>'
+    + '<span class="chip ' + chipClass + '">' + esc(state) + '</span>'
+    + '<span class="muted">种子 ' + esc(run.seed === null || run.seed === undefined ? '-' : run.seed) + ' · 用时 ' + esc(fmtElapsed(run.durationMs || run.elapsedMs)) + (time ? ' · ' + esc(time) : '') + '</span></div>'
+    + promptText
+    + (run.error ? '<div class="muted" style="color:var(--err)">' + esc(run.error) + '</div>' : '')
+    + '<details class="params"><summary>参数（' + ((run.params || []).length) + '）· 鼠标移入亦可查看</summary><table class="pv">' + paramRows(run.params) + '</table></details>'
+    + '<div class="mediaRow">' + body + '</div>'
+    + '<div class="rgOps"><button type="button" class="mini" data-history-export="' + esc(run.runId || '') + '">⇩ 导出该次 JSON</button>'
+    + '<a class="mini" style="padding:2px 8px" href="/ui/artifacts?token=' + encodeURIComponent(API_CFG.token || '') + '">成果物库 →</a></div>'
+    + '</section>';
+}
+function renderHistory(runs) {
+  var box = document.getElementById('history');
+  var items = runs || [];
   document.getElementById('results').hidden = items.length === 0;
+  document.getElementById('results-count').textContent = String(items.length);
+  box.innerHTML = items.length === 0
+    ? '<div class="empty">还没有带成果物的运行。点上方「▶ 执行工作流」开始。</div>'
+    : items.map(function (run, index) { return groupHtml(run, index + 1); }).join('');
+}
+function loadHistory() {
+  return api('/api/run/history?workflow=' + encodeURIComponent(WORKFLOW) + '&limit=6').then(function (runs) {
+    renderHistory(runs || []);
+  }).catch(function () { /* 历史读取失败静默 */ });
 }
 function fmtClock(ts) {
   if (!ts) return '-';
@@ -394,7 +463,7 @@ function applyStatus(status, quiet) {
     showProgress(null);
     cancelBtn.hidden = true;
     var files = status.files || [];
-    renderFiles(files);
+    loadHistory(); // 结束后刷新成果分组（本轮会作为新的一组出现在最前）
     if (status.state === 'failed') state('✗ ' + (status.error || '执行失败'), true);
     else if (status.state === 'aborted') state('■ ' + (status.error || '执行已中断'), true);
     else if (files.length > 0) state('✓ 完成 · ' + files.length + ' 个成果物 · 用时 ' + fmtElapsed(status.durationMs || status.elapsedMs), false);
@@ -416,7 +485,6 @@ function collectValues() {
 }
 function start(makeCall, label) {
   busy(true, label);
-  renderFiles([]);       // 新一轮开始：先清掉上一轮成果，避免误读为新结果
   showProgress(null);
   state('⏳ 正在提交…', false);
   makeCall().then(function (started) {
@@ -426,6 +494,30 @@ function start(makeCall, label) {
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
+  if (t.id === 'preview2-close' || t.id === 'preview2') {
+    document.getElementById('preview2-body').innerHTML = '';
+    document.getElementById('preview2').hidden = true;
+    return;
+  }
+  var historyExport = t.getAttribute && t.getAttribute('data-history-export');
+  if (historyExport) {
+    location.href = '/export?runs=' + encodeURIComponent(historyExport) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
+    return;
+  }
+  var preview2 = t.getAttribute && t.getAttribute('data-preview2');
+  if (preview2) {
+    var kind2 = t.getAttribute('data-kind') || 'file';
+    var url2 = '/artifact?path=' + encodeURIComponent(preview2) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
+    document.getElementById('preview2-name').textContent = t.getAttribute('data-name') || '';
+    var holder = document.getElementById('preview2-body');
+    if (kind2 === 'video') holder.innerHTML = '<video src="' + url2 + '" controls autoplay playsinline></video>';
+    else if (kind2 === 'audio') holder.innerHTML = '<audio src="' + url2 + '" controls autoplay></audio>';
+    else if (kind2 === 'image') holder.innerHTML = '<img src="' + url2 + '" alt="">';
+    else holder.innerHTML = '<div class="muted">该类型不支持内嵌预览，请用成果物库下载。</div>';
+    document.getElementById('preview2').hidden = false;
+    return;
+  }
+  if (t.id === 'history-reload') { loadHistory(); return; }
   if (t.id === 'textmodal-close' || t.id === 'textmodal') {
     document.getElementById('textmodal').hidden = true;
     return;
@@ -473,7 +565,7 @@ document.addEventListener('click', function (event) {
     return;
   }
   if (t.id === 'clear-btn') {
-    api('/api/runs/clear', { workflow: WORKFLOW }).then(function () { renderFiles([]); state('已清空展示（产物文件仍可在成果物页查看）', false); })
+    api('/api/runs/clear', { workflow: WORKFLOW }).then(function () { loadHistory(); state('已清空展示（产物文件仍可在成果物页查看）', false); })
       .catch(function (e) { alert('清空失败：' + e.message); });
     return;
   }
@@ -488,7 +580,8 @@ document.getElementById('run-form').addEventListener('submit', function (event) 
   event.preventDefault();
   start(function () { return api('/api/run', { workflow: WORKFLOW, values: collectValues() }); }, '执行中…');
 });
-// 页面加载即恢复：执行中的进度，或上次完成的成果物（刷新不丢）
+// 页面加载即恢复：执行中的进度，或历史成果分组（刷新不丢）
+loadHistory();
 api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (status) {
   applyStatus(status, true);
   if (status && status.state === 'running') poll();

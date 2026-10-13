@@ -111,6 +111,22 @@ describe('page scripts stay parseable', () => {
     }
   })
 
+  it('workflow page renders multi-run history groups with attached params', () => {
+    const html = pages().workflow
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    // 成果区：多次运行分组容器 + 历史加载 + 参数（折叠 + 悬浮）
+    expect(html).toContain('id="history"')
+    expect(html).toContain('class="history"')
+    expect(html).toContain('id="history-reload"')
+    expect(code).toContain("api('/api/run/history?workflow=")
+    expect(code).toContain('function groupHtml(')
+    expect(code).toContain('function paramSummaryText(')
+    expect(code).toContain('details class="params"')
+    expect(code).toContain('data-preview2=')
+    expect(code).toContain('data-history-export=')
+    expect(code).toContain('loadHistory(); // 结束后刷新成果分组')
+  })
+
   it('workflow page binds submit and blocks native navigation (boundary)', () => {
     const html = pages().workflow
     const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
