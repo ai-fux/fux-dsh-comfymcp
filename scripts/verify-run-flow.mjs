@@ -70,7 +70,18 @@ try {
   const ignored = /已忽略 (\d+) 次无成果物记录/.exec(artifactsPage.html)?.[1] ?? '0'
   console.log(`[4b] 成果物页 → ${runsShown} 次运行 / ${cards} 张媒体卡 · 忽略无产物记录 ${ignored} 条 · 预览弹层 ${artifactsPage.html.includes('id="preview"') ? '有' : '无'}`)
   const page = await workbench.pageWorkflow(workflow, { token: 'demo' })
-  console.log(`[4c] 工作流页 → spinner 可隐藏 ${page.html.includes('.spinner[hidden]{display:none}') ? '✓' : '✗'} · 中断按钮 ${page.html.includes('id="cancel-btn"') ? '✓' : '✗'}`)
+  console.log(`[4c] 工作流页 → spinner 可隐藏 ${page.html.includes('.spinner[hidden]{display:none}') ? '✓' : '✗'} · 中断按钮 ${page.html.includes('id="cancel-btn"') ? '✓' : '✗'} · 文本展开 ${page.html.includes('data-expand=') ? '✓' : '✗'}`)
+  const prompts = status?.prompts ?? null
+  console.log(`[4d] 提示词 → 正「${String(prompts?.positive ?? '').slice(0, 40) || '(空)'}」 负「${String(prompts?.negative ?? '').slice(0, 40) || '(空)'}」 正字段 ${prompts?.positiveField ?? '-'} 负字段 ${prompts?.negativeField ?? '-'}`)
+  const exported = await workbench.exportArtifacts({ ids: status?.runId ?? '' })
+  const payload = JSON.parse(exported.json)
+  const file = payload.runs[0]?.files?.[0]
+  const onDisk = status?.files?.[0]?.path && existsSync(status.files[0].path) ? statSync(status.files[0].path).size : 0
+  const base64Bytes = file?.data ? Buffer.from(file.data, 'base64').byteLength : 0
+  console.log(`[4e] 导出 → ${exported.filename} · ${payload.runs.length} 次运行 · base64 ${base64Bytes} 字节（磁盘 ${onDisk} 字节）→ ${base64Bytes === onDisk ? '✓ 一致' : '✗ 不一致'}`)
+  const assigned = await workbench.assignPrompt({ workflow, field: prompts?.positiveField ?? 'x:y', value: '赋值测试', kind: 'positive' })
+  const taken = await workbench.takePrompt({ workflow })
+  console.log(`[4f] 赋值往返 → ${assigned.ok === true && taken.value?.value === '赋值测试' ? '✓ 成功' : `✗ ${JSON.stringify({ assigned, taken })}`}`)
   const cleared = await workbench.clearRuns({ workflow })
   console.log('[5] 清空 →', JSON.stringify(cleared))
   const afterClear = await workbench.runStatus({ workflow })

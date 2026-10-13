@@ -103,6 +103,48 @@ describe('control-server', () => {
     expect(bad.status).toBe(416)
   })
 
+  it('downloads artifact exports and routes prompt assignment (boundary)', async () => {
+    const assigned = []
+    const { base } = await startServer({
+      token: 'secret',
+      extraMethods: {
+        exportArtifacts: async ({ ids }) => ({ filename: 'out.json', json: JSON.stringify({ ids }), runs: 1 }),
+        assignPrompt: async (payload) => {
+          assigned.push(payload)
+          return payload.field ? { ok: true } : { ok: false, reason: '缺少目标字段' }
+        },
+        takePrompt: async () => ({ ok: true, value: { field: '6:text', value: 'x' } }),
+      },
+    })
+    const exported = await fetch(`${base}/export?runs=r1&token=secret`)
+    expect(exported.status).toBe(200)
+    expect(exported.headers.get('content-type')).toContain('application/json')
+    expect(exported.headers.get('content-disposition')).toContain('attachment; filename="out.json"')
+    expect(JSON.parse(await exported.text())).toEqual({ ids: 'r1' })
+    expect((await fetch(`${base}/export?runs=r1&token=wrong`)).status).toBe(403)
+
+    const ok = await fetch(`${base}/api/prompt/assign`, {
+      method: 'POST',
+      headers: { ...MARKER, 'x-dsh-comfymcp-token': 'secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'beach', field: '6:text', value: '夕阳', kind: 'positive' }),
+    })
+    expect(ok.status).toBe(200)
+    expect(assigned[0]).toMatchObject({ workflow: 'beach', field: '6:text' })
+    const rejected = await fetch(`${base}/api/prompt/assign`, {
+      method: 'POST',
+      headers: { ...MARKER, 'x-dsh-comfymcp-token': 'secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'beach', field: '' }),
+    })
+    expect(rejected.status).toBe(400)
+    const taken = await fetch(`${base}/api/prompt/take`, {
+      method: 'POST',
+      headers: { ...MARKER, 'x-dsh-comfymcp-token': 'secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'beach' }),
+    })
+    expect(taken.status).toBe(200)
+    expect((await taken.json()).value).toMatchObject({ field: '6:text' })
+  })
+
   it('falls through to the next port when the requested one is taken (boundary)', async () => {
     const { createServer } = await import('node:http')
     const blocker = createServer()

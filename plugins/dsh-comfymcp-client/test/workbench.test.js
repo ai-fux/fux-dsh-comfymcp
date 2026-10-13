@@ -210,6 +210,43 @@ describe('workbench runPage / quickRun', () => {
   })
 })
 
+describe('workbench prompt assign / export', () => {
+  it('stores a pending prompt assignment and consumes it once', async () => {
+    const workbench = makeWorkbench(await makeBridge())
+    await expect(workbench.takePrompt({ workflow: 'beach' })).resolves.toMatchObject({ value: null })
+    await expect(workbench.assignPrompt({ workflow: 'beach', field: '6:text', value: '夕阳', kind: 'positive' })).resolves.toMatchObject({ ok: true })
+    await expect(workbench.assignPrompt({ workflow: '', field: 'x', value: 'y' })).resolves.toMatchObject({ ok: false })
+    const taken = await workbench.takePrompt({ workflow: 'beach' })
+    expect(taken.value).toMatchObject({ field: '6:text', value: '夕阳', kind: 'positive' })
+    await expect(workbench.takePrompt({ workflow: 'beach' })).resolves.toMatchObject({ value: null }) // 一次性消费
+  })
+
+  it('exports runs as JSON with inline base64 file payloads', async () => {
+    const bytes = Buffer.from('png-bytes')
+    const bridge = await makeBridge({
+      readArtifactBytes: () => ({ bytes, contentType: 'image/png' }),
+      listRuns: () => [
+        {
+          id: 'r1', name: 'beach', state: 'completed', seed: 7, startedAt: 1, finishedAt: 11, durationMs: 10,
+          prompts: { positive: '夕阳', negative: '模糊', positiveField: '6:text', negativeField: '7:text' },
+          localFiles: [{ path: join(workdir, 'a.png'), filename: 'a.png', kind: 'image', bytes: bytes.byteLength }],
+        },
+        { id: 'r2', name: 'no-media', state: 'failed', localFiles: [] },
+      ],
+    })
+    const workbench = makeWorkbench(bridge)
+    const exported = await workbench.exportArtifacts({})
+    expect(exported.runs).toBe(1) // 无模态数据不入库
+    const payload = JSON.parse(exported.json)
+    expect(payload.runs[0]).toMatchObject({ id: 'r1', name: 'beach', seed: 7, durationMs: 10 })
+    expect(payload.runs[0].prompts).toMatchObject({ positive: '夕阳', negative: '模糊' })
+    expect(payload.runs[0].files[0]).toMatchObject({ filename: 'a.png', encoding: 'base64', data: bytes.toString('base64') })
+    expect(exported.filename).toMatch(/^comfymcp-artifacts-.*\.json$/)
+    const only = await workbench.exportArtifacts({ ids: 'r2' })
+    expect(only.runs).toBe(0)
+  })
+})
+
 describe('workbench tags', () => {
   it('updateTags persists via the tag store', async () => {
     const workbench = makeWorkbench(await makeBridge())

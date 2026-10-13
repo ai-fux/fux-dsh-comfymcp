@@ -324,6 +324,8 @@ export class ComfymcpBridge {
       state: run.state ?? 'failed',
       seed: run.seed ?? null,
       prompt: run.prompt ?? '',
+      prompts: run.prompts ?? null,
+      durationMs: run.durationMs ?? null,
       autoUnload: run.autoUnload === true,
       unloadApplied: run.unloadApplied === false ? false : run.unloadApplied === true,
       promptId: run.promptId ?? null,

@@ -80,6 +80,12 @@ describe('renderPageHtml', () => {
     // 回归：spinner 必须能被 hidden 隐藏，否则执行按钮永远像在 loading
     expect(a).toContain('.spinner[hidden]{display:none}')
     expect(a).toContain('id="cancel-btn"')
+    // 文本字段：区分 textarea、自动增高、可展开大域编辑全文
+    expect(a).toContain('class="textwrap"')
+    expect(a).toContain('rows="3"')
+    expect(a).toContain('data-expand=')
+    expect(a).toContain('id="textmodal"')
+    expect(a).toContain('id="assign-hint"')
   })
 })
 
@@ -124,10 +130,29 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(html).toContain('来源：项目A')
     // 卡片化 + 预览弹层（图片放大 / 视频音频播放）
     expect(html).toContain('class="mediacard"')
+    expect(html).toContain('class="mediaList"') // 一列卡片布局
     expect(html).toContain('data-preview="C:\\a\\out.png"')
     expect(html).toContain('data-kind="video"')
     expect(html).toContain('id="preview"')
     expect(html).toContain("body.innerHTML = '<video")
+    // 导出：单个运行 + 整体（JSON / base64）
+    expect(html).toContain('data-export-run=')
+    expect(html).toContain('id="export-all"')
+    expect(html).toContain('/export?runs=')
+    // 提示词正/负：分列、折叠箭头、悬浮全文、快捷赋值
+    const promptRun = {
+      id: 'r9', name: 'beach', state: 'completed', seed: 3,
+      prompts: { positive: '夕阳 沙滩', negative: '模糊', positiveField: '6:text', negativeField: '7:text' },
+      localFiles: [{ path: 'C:\\a\\p.png', filename: 'p.png', kind: 'image', bytes: 1 }],
+    }
+    const withPrompt = renderArtifactsHtml({ runs: [promptRun], tags: {}, token: 'tk' })
+    expect(withPrompt).toContain('>正<')
+    expect(withPrompt).toContain('>负<')
+    expect(withPrompt).toContain('data-prompt-toggle=')
+    expect(withPrompt).toContain('class="promptFull hidden"')
+    expect(withPrompt).toContain('title="夕阳 沙滩"') // 悬浮全文
+    expect(withPrompt).toContain('data-assign-field="6:text"')
+    expect(withPrompt).toContain('data-assign-field="7:text"')
     // 无模态数据不入库：没有产物的运行不出现在成果物页
     const empty = renderArtifactsHtml({ runs: [{ name: 'x', state: 'failed', localFiles: [] }], tags: {}, token: '' })
     expect(empty).toContain('还没有带成果物的运行')

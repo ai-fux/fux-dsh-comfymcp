@@ -3,6 +3,7 @@ import {
   applyAnswers,
   buildQuestions,
   deriveFields,
+  extractPrompts,
   firstPromptText,
   firstSeed,
   FormError,
@@ -199,5 +200,27 @@ describe('graph helpers', () => {
     expect(firstPromptText(SAMPLE_GRAPH)).toBe('a girl in the rain')
     expect(firstSeed(SAMPLE_GRAPH)).toBe(42)
     expect(firstSeed({ '1': { class_type: 'A', inputs: {} } })).toBeNull()
+  })
+
+  it('splits positive/negative prompts with assignable field keys', () => {
+    const prompts = extractPrompts(SAMPLE_GRAPH)
+    expect(prompts.positive).toBe('a girl in the rain')
+    expect(prompts.negative).toBe('blurry')
+    expect(prompts.positiveField).toBe('6:text')
+    expect(prompts.negativeField).toBe('7:text')
+    expect(prompts.others).toEqual([])
+  })
+
+  it('falls back to text order when sampler links are absent (boundary)', () => {
+    const graph = {
+      '1': { class_type: 'CLIPTextEncode', inputs: { text: 'first' } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: 'second' } },
+      '3': { class_type: 'CLIPTextEncode', inputs: { text: 'third' } },
+    }
+    const prompts = extractPrompts(graph)
+    expect(prompts.positive).toBe('first')
+    expect(prompts.negative).toBe('second')
+    expect(prompts.others.map((entry) => entry.text)).toEqual(['third'])
+    expect(extractPrompts({ '1': { class_type: 'KSampler', inputs: { seed: 1 } } })).toMatchObject({ positive: '', negative: '' })
   })
 })

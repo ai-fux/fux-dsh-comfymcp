@@ -62,6 +62,7 @@ function summarize(record, active) {
     artifacts: Array.isArray(record.artifacts) ? record.artifacts : [],
     error: record.error ?? '',
     saved: record.form?.saved ?? null,
+    prompts: record.prompts ?? null,
   }
 }
 
@@ -75,21 +76,24 @@ export function createRunDaemon({ bridge, executeRun }) {
     ? join(bridge.config.dataDir, 'ui-state.json')
     : ''
   let cleared = {}
+  let pending = {}
   if (stateFile.length > 0) {
     try {
       if (existsSync(stateFile)) {
         const parsed = JSON.parse(readFileSync(stateFile, 'utf8'))
         if (parsed !== null && typeof parsed === 'object' && parsed.cleared !== null && typeof parsed.cleared === 'object') cleared = parsed.cleared
+        if (parsed !== null && typeof parsed === 'object' && parsed.pending !== null && typeof parsed.pending === 'object') pending = parsed.pending
       }
     } catch {
       cleared = {}
+      pending = {}
     }
   }
   const persistState = () => {
     if (stateFile.length === 0) return
     try {
       mkdirSync(dirname(stateFile), { recursive: true })
-      writeFileSync(stateFile, `${JSON.stringify({ version: 1, cleared }, null, 2)}\n`, 'utf8')
+      writeFileSync(stateFile, `${JSON.stringify({ version: 1, cleared, pending }, null, 2)}\n`, 'utf8')
     } catch {
       /* 尽力而为 */
     }
@@ -272,6 +276,13 @@ export function createRunDaemon({ bridge, executeRun }) {
           entry.error = result?.error ?? ''
           entry.saved = result?.saved ?? null
           entry.runId = result?.runId ?? entry.runId
+          // 运行记录里才有正/负提示词与种子（由运行核心提取），同步进内存态供页面展示
+          const record = bridge.getRun?.(entry.runId) ?? null
+          if (record !== null) {
+            entry.prompts = record.prompts ?? entry.prompts ?? null
+            entry.seed = record.seed ?? entry.seed ?? null
+            entry.prompt = record.prompt ?? entry.prompt ?? ''
+          }
           bridge.updateRun?.(runId, { durationMs: entry.durationMs })
         }
         // 运行结束后保留最终状态 60s 供页面收尾轮询，然后回落到 runs.json 记录
@@ -376,6 +387,28 @@ export function createRunDaemon({ bridge, executeRun }) {
 
     isActive(workflow) {
       return active.get(String(workflow ?? '').trim())?.state === 'running'
+    },
+
+    /** 成果物页「⇢ 赋值」：暂存一条待回填的提示词（按工作流）。 */
+    setPendingPrompt(workflow, assignment) {
+      const key = String(workflow ?? '').trim()
+      if (key.length === 0) return { ok: false, reason: '缺少工作流标识' }
+      const field = String(assignment?.field ?? '').trim()
+      if (field.length === 0) return { ok: false, reason: '缺少目标字段' }
+      pending[key] = { field, value: String(assignment?.value ?? ''), kind: assignment?.kind === 'negative' ? 'negative' : 'positive', at: Date.now() }
+      persistState()
+      return { ok: true, pending: pending[key] }
+    },
+
+    /** 工作流页取回并清空待赋值（一次性消费）。 */
+    takePendingPrompt(workflow) {
+      const key = String(workflow ?? '').trim()
+      const hit = pending[key] ?? null
+      if (hit !== null) {
+        delete pending[key]
+        persistState()
+      }
+      return { ok: true, value: hit }
     },
   }
 }

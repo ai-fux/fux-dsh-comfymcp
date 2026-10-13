@@ -384,6 +384,66 @@ export function createWorkbenchMethods({ bridge, config }) {
       return daemon.cancel(workflow)
     },
 
+    /** 成果物页「⇢ 赋值」：暂存提示词，工作流页加载时回填。 */
+    async assignPrompt({ workflow, field, value, kind } = {}) {
+      return daemon.setPendingPrompt(workflow, { field, value, kind })
+    },
+
+    /** 工作流页取回待赋值（一次性消费）。 */
+    async takePrompt({ workflow } = {}) {
+      return daemon.takePendingPrompt(workflow)
+    },
+
+    /**
+     * 导出成果物 JSON：当前已有字段 + 文件字节（base64 内嵌）。
+     * ids 传运行 id（逗号分隔）时只导出选中项。
+     */
+    async exportArtifacts({ ids, limit } = {}) {
+      const wanted = typeof ids === 'string' && ids.trim().length > 0 ? new Set(ids.split(',').map((id) => id.trim()).filter(Boolean)) : null
+      const all = bridge.listRuns(200).filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0)
+      const selected = (wanted === null ? all : all.filter((run) => wanted.has(String(run.id)))).slice(0, Math.max(1, Number(limit) || 50))
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        fields: ['id', 'name', 'state', 'seed', 'prompts', 'startedAt', 'finishedAt', 'durationMs', 'promptId', 'error', 'tags', 'collections', 'fields'],
+        runs: selected.map((run) => ({
+          id: run.id,
+          name: run.name,
+          state: run.state,
+          seed: run.seed ?? null,
+          prompts: run.prompts ?? { positive: run.prompt ?? '', negative: '' },
+          startedAt: run.startedAt ?? null,
+          finishedAt: run.finishedAt ?? null,
+          durationMs: run.durationMs ?? (run.finishedAt && run.startedAt ? run.finishedAt - run.startedAt : null),
+          promptId: run.promptId ?? null,
+          error: run.error ?? '',
+          saved: run.form?.saved ?? null,
+          files: (run.localFiles ?? []).map((file) => {
+            const key = file.key ?? file.path ?? file.filename
+            const meta = tagStore.get(key) ?? {}
+            const outcome = typeof file.path === 'string' ? bridge.readArtifactBytes(new URLSearchParams({ path: file.path })) : { error: 'no path' }
+            return {
+              key,
+              filename: file.filename ?? null,
+              kind: file.kind ?? null,
+              bytes: file.bytes ?? (outcome.bytes !== undefined ? outcome.bytes.byteLength : null),
+              mime: file.mime ?? null,
+              tags: Array.isArray(meta.tags) ? meta.tags : [],
+              collections: Array.isArray(meta.collections) ? meta.collections : [],
+              fields: meta.fields ?? {},
+              prompt: meta.prompt ?? '',
+              source: meta.source ?? '',
+              ...(outcome.bytes !== undefined
+                ? { encoding: 'base64', data: Buffer.from(outcome.bytes).toString('base64') }
+                : { encoding: null, data: null, readError: outcome.error ?? 'unreadable' }),
+            }
+          }),
+        })),
+      }
+      const filename = `comfymcp-artifacts-${new Date().toISOString().replaceAll(/[:.]/g, '-').slice(0, 19)}.json`
+      return { filename, json: JSON.stringify(payload, null, 2), runs: payload.runs.length }
+    },
+
     /** 最近运行历史（供页面展示成果物列表）。 */
     async runHistory({ workflow, limit } = {}) {
       return { ok: true, value: daemon.history(workflow, typeof limit === 'number' && limit > 0 ? limit : 5) }

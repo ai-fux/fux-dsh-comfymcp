@@ -5,7 +5,7 @@
  */
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { integrateUnloadNode, firstSeed, firstPromptText } from './forms.js'
+import { integrateUnloadNode, firstSeed, firstPromptText, extractPrompts } from './forms.js'
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 
@@ -127,6 +127,7 @@ export function createRunExecutor({ bridge }) {
       promptId: null,
       seed: firstSeed(options.graph),
       prompt: firstPromptText(options.graph),
+      prompts: extractPrompts(options.graph),
       form: { unload: { requested: false, applied: false, reason: '' }, saved: null, values: options.values ?? null, graph: options.graph },
       startedAt,
     }

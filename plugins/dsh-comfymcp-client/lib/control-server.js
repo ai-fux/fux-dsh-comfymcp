@@ -249,6 +249,24 @@ export function createControlServer(options = {}) {
 
     // 工作台静态页面（/ui）：导航请求带不了自定义头，走查询令牌或放宽跨站。
     // 有令牌配置时令牌必须正确；未配置令牌时只放行非跨站导航（直开/同站），防任意网站嵌入探测。
+    // 成果物导出：导航式下载（同 /artifact，用查询令牌）
+    if (pathname === '/export' && request.method === 'GET') {
+      if (token.length > 0 && url.searchParams.get('token') !== token) {
+        sendJson(response, 403, { ok: false, error: { code: 'token_invalid', message: 'export token is missing or wrong' } }, undefined)
+        return
+      }
+      const exported = await methods.exportArtifacts({ ids: url.searchParams.get('runs') ?? '', limit: 200 })
+      const payload = Buffer.from(exported.json, 'utf8')
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': String(payload.byteLength),
+        'content-disposition': `attachment; filename="${exported.filename}"`,
+        'cache-control': 'no-store',
+      })
+      response.end(payload)
+      return
+    }
+
     if ((pathname === '/ui' || pathname.startsWith('/ui/')) && request.method === 'GET') {
       const origin = request.headers.origin
       const allowedOrigin = isLoopbackOrigin(origin) ? origin : undefined
@@ -379,6 +397,30 @@ export function createControlServer(options = {}) {
       const limit = Number(url.searchParams.get('limit') ?? '') || undefined
       const history = await methods.runHistory({ workflow, limit })
       sendJson(response, 200, { ok: true, value: history?.value ?? [] }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/prompt/assign' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const assigned = await methods.assignPrompt(body.payload ?? {})
+      if (assigned?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'assign_rejected', message: assigned?.reason ?? '赋值失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: assigned }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/prompt/take' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const taken = await methods.takePrompt(body.payload ?? {})
+      sendJson(response, 200, { ok: true, value: taken?.value ?? null }, allowedOrigin)
       return
     }
     if (pathname === '/api/runs/clear' && request.method === 'POST') {

@@ -387,3 +387,64 @@ export function firstSeed(graph) {
   }
   return null
 }
+
+/** 解析链接引用 [nodeId, slot] → 源节点及其文本字段键。 */
+function textSourceOf(graph, ref) {
+  if (!Array.isArray(ref) || ref.length < 2) return null
+  const node = graph[String(ref[0])]
+  if (node === null || typeof node !== 'object') return null
+  const inputs = inputsOf(node)
+  for (const key of ['text', 'prompt', 'string', 'value', 'positive', 'negative']) {
+    if (typeof inputs[key] === 'string') return { nodeId: String(ref[0]), field: key, text: inputs[key] }
+  }
+  return null
+}
+
+/**
+ * 提取正/负提示词（含可回填的字段键，供「快捷赋值」用）：
+ * 1) 优先按采样节点的 positive / negative 链接定位到文本节点（最准确）；
+ * 2) 其余文本节点按出现顺序归入 others；
+ * 3) 完全无链接信息时，第一条文本视为正向、第二条视为负向（best-effort）。
+ */
+export function extractPrompts(graph) {
+  const nodes = asGraph(graph)
+  const result = { positive: '', negative: '', positiveField: '', negativeField: '', others: [] }
+  const used = new Set()
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    const inputs = inputsOf(node)
+    for (const [slotKey, kind] of [['positive', 'positive'], ['negative', 'negative']]) {
+      const ref = inputs[slotKey]
+      if (!Array.isArray(ref)) continue
+      const source = textSourceOf(nodes, ref)
+      if (source === null || used.has(`${source.nodeId}:${source.field}`)) continue
+      used.add(`${source.nodeId}:${source.field}`)
+      if (result[kind].length === 0) {
+        result[kind] = source.text
+        result[`${kind}Field`] = `${source.nodeId}:${source.field}`
+      }
+    }
+    void nodeId
+  }
+  // 兜底/补充：尚未使用的文本节点
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    for (const [field, value] of Object.entries(inputsOf(node))) {
+      if (typeof value !== 'string' || value.trim().length === 0) continue
+      if (!/^(text|prompt)$/i.test(field)) continue
+      const key = `${nodeId}:${field}`
+      if (used.has(key)) continue
+      used.add(key)
+      result.others.push({ nodeId, field, text: value })
+    }
+  }
+  if (result.positive.length === 0 && result.others.length > 0) {
+    const first = result.others.shift()
+    result.positive = first.text
+    result.positiveField = `${first.nodeId}:${first.field}`
+  }
+  if (result.negative.length === 0 && result.others.length > 0) {
+    const second = result.others.shift()
+    result.negative = second.text
+    result.negativeField = `${second.nodeId}:${second.field}`
+  }
+  return result
+}

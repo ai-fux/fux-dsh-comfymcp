@@ -157,6 +157,14 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 @keyframes pulse{0%{margin-left:0;width:25%}50%{margin-left:65%;width:35%}100%{margin-left:0;width:25%}}
 .results{margin-top:16px}.results .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .files{margin-top:8px}.tiles a{display:inline-block}
+/* 文本字段：宽域 + 自动增高 + 展开编辑 */
+.textwrap{flex:1;min-width:220px;display:flex;flex-direction:column;gap:4px}
+.textwrap textarea{width:100%;min-height:64px;max-height:340px;font-size:13px;line-height:1.45}
+.texthint{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.modal .box.wide{width:min(1100px,94vw)}
+.modal textarea{width:100%;min-height:56vh;max-height:70vh;font-size:13px;line-height:1.5;padding:10px}
+.assignHint{border-left:3px solid var(--accent);background:var(--surface);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px}
+.assignHint[hidden]{display:none}
 `
 
 function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
@@ -194,7 +202,13 @@ function fieldControlHtml(field, fieldId, dataKey) {
     return `<select id="${fieldId}" data-field="${escapeHtml(dataKey)}">${stale}${list}</select>`
   }
   if (type === 'text') {
-    return `<textarea id="${fieldId}" data-field="${escapeHtml(dataKey)}">${escapeHtml(field.value)}</textarea>`
+    // 提示词类字段：更宽的域 + 自动增高 + 「展开」大域查看全文
+    const value = String(field.value ?? '')
+    const lines = value.split('\n').length
+    const rows = Math.max(3, Math.min(14, Math.max(lines, Math.ceil(value.length / 70))))
+    return `<div class="textwrap"><textarea id="${fieldId}" data-field="${escapeHtml(dataKey)}" rows="${rows}" placeholder="（空）">${escapeHtml(value)}</textarea>
+<div class="texthint"><span class="muted">${value.length} 字 · ${lines} 行</span>
+<button type="button" class="mini" data-expand="${fieldId}" title="在大窗口中查看/编辑全文">⤢ 展开</button></div></div>`
   }
   const minMax = `${field.min !== undefined && field.min !== null ? ` min="${field.min}"` : ''}${field.max !== undefined && field.max !== null ? ` max="${field.max}"` : ''}`
   const step = type === 'number' ? ` step="${field.step ?? 1}"` : ' step="1"'
@@ -246,6 +260,7 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 </div>
 </form>
 <div class="state" id="state"></div>
+<div class="assignHint" id="assign-hint" hidden></div>
 <div class="timing muted" id="timing"></div>
 <div class="progress" id="progress" hidden><div class="bar"><div class="fill" id="progress-fill"></div></div><div class="muted" id="progress-text"></div></div>
 <div class="results" id="results" hidden>
@@ -253,6 +268,13 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
   <div class="tiles" id="tiles"></div>
   <div class="files" id="files"></div>
 </div>
+<div class="modal" id="textmodal" hidden><div class="box wide">
+<div class="bar2"><span id="textmodal-name">编辑全文</span><span>
+<button type="button" class="mini" id="textmodal-save">保存到表单</button>
+<button type="button" class="mini" id="textmodal-close">关闭 ✕</button></span></div>
+<textarea id="textmodal-area" spellcheck="false"></textarea>
+<div class="muted" id="textmodal-hint"></div>
+</div></div>
 <script>
 var API_CFG = ${JSON.stringify(apiCfg)};
 var WORKFLOW = ${JSON.stringify(descriptor.workflow)};
@@ -402,6 +424,37 @@ function start(makeCall, label) {
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
+  if (t.id === 'textmodal-close' || t.id === 'textmodal') {
+    document.getElementById('textmodal').hidden = true;
+    return;
+  }
+  if (t.id === 'textmodal-save') {
+    var area = document.getElementById('textmodal-area');
+    var source = document.getElementById(area.getAttribute('data-for'));
+    if (source) {
+      source.value = area.value;
+      var wrap = source.closest ? source.closest('.textwrap') : null;
+      var hint = wrap ? wrap.querySelector('.texthint .muted') : null;
+      if (hint) hint.textContent = area.value.length + ' 字 · ' + area.value.split('\n').length + ' 行';
+    }
+    document.getElementById('textmodal').hidden = true;
+    return;
+  }
+  var expandId = t.getAttribute && t.getAttribute('data-expand');
+  if (expandId) {
+    var field = document.getElementById(expandId);
+    if (!field) return;
+    var modal = document.getElementById('textmodal');
+    var target = document.getElementById('textmodal-area');
+    target.value = field.value;
+    target.setAttribute('data-for', expandId);
+    var label = field.closest ? field.closest('.row') : null;
+    document.getElementById('textmodal-name').textContent = (label && label.querySelector('label') ? label.querySelector('label').textContent : '') + ' · 全文编辑';
+    document.getElementById('textmodal-hint').textContent = field.value.length + ' 字 · 修改后点「保存到表单」写回';
+    modal.hidden = false;
+    target.focus();
+    return;
+  }
   if (t.getAttribute && t.getAttribute('data-refresh')) {
     t.disabled = true; t.textContent = '解析中…';
     api('/api/refresh', { workflow: WORKFLOW }).then(function () { location.reload(); })
@@ -438,6 +491,17 @@ api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (s
   applyStatus(status, true);
   if (status && status.state === 'running') poll();
 }).catch(function () { /* 首次加载静默 */ });
+// 成果物页点了「⇢ 赋值」的提示词：取回并回填到对应字段
+api('/api/prompt/take', { workflow: WORKFLOW }).then(function (pending) {
+  if (!pending || !pending.field) return;
+  var field = document.querySelector('[data-field="' + pending.field + '"]');
+  if (!field) return;
+  field.value = pending.value || '';
+  field.style.borderColor = 'var(--accent)';
+  var hint = document.getElementById('assign-hint');
+  hint.hidden = false;
+  hint.innerHTML = '已从成果物页回填「' + (pending.kind === 'negative' ? '负' : '正') + '向提示词」到字段 <b>' + pending.field + '</b>：确认后点「▶ 执行工作流」即可生效。';
+}).catch(function () { /* 无待赋值时静默 */ });
 `
 
 const PAGE_INDEX_JS = `
@@ -505,7 +569,38 @@ function closePreview() {
 document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  if (el.id === 'export-all') {
+    var ids = (window.__runIds || []).join(',');
+    if (!ids) { alert('没有可导出的运行'); return; }
+    location.href = '/export?runs=' + encodeURIComponent(ids) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '');
+    return;
+  }
   if (!el.getAttribute) return;
+  var exportRun = el.getAttribute('data-export-run');
+  if (exportRun) {
+    location.href = '/export?runs=' + encodeURIComponent(exportRun) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '');
+    return;
+  }
+  var toggle = el.getAttribute('data-prompt-toggle');
+  if (toggle) {
+    var box = document.getElementById(toggle);
+    if (box) { box.hidden = !box.hidden; el.textContent = box.hidden ? '▾' : '▴'; }
+    return;
+  }
+  var assignField = el.getAttribute('data-assign-field');
+  if (assignField) {
+    var workflow = el.getAttribute('data-workflow') || '';
+    var kind = el.getAttribute('data-assign-kind') || 'positive';
+    var row = el.parentElement; // .promptRow
+    var full = row && row.nextElementSibling; // .promptFull
+    var text = full && typeof full.className === 'string' && full.className.indexOf('promptFull') >= 0 ? full.textContent : '';
+    if (!text) { alert('没有可赋值的提示词内容'); return; }
+    el.disabled = true; var original = el.textContent; el.textContent = '赋值中…';
+    api('/api/prompt/assign', { workflow: workflow, field: assignField, value: text, kind: kind })
+      .then(function () { el.textContent = '✓ 已存入，打开工作流页即可见'; })
+      .catch(function (error) { el.disabled = false; el.textContent = original; alert('赋值失败：' + error.message); });
+    return;
+  }
   var previewPath = el.getAttribute('data-preview') || (el.parentElement && el.parentElement.getAttribute && el.parentElement.getAttribute('data-preview'));
   if (previewPath) {
     var holder = el.getAttribute('data-preview') ? el : el.parentElement;
@@ -537,22 +632,54 @@ document.addEventListener('click', function (event) {
 `
 
 const ARTIFACTS_CSS = `
-.run{margin-bottom:16px}.run .head{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:10px}
+.run{margin-bottom:18px}.run .head{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:8px}
 .run .head b{font-size:14px}
-.mediagrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
-.mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
-.mediacard .thumb{position:relative;background:var(--accent-weak);aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
+/* 一列卡片：每个文件占满一行，缩略图在左、信息在右 */
+.mediaList{display:flex;flex-direction:column;gap:10px}
+.mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
+.mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
 .mediacard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.mediacard .thumb .badge{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
-.mediacard .thumb .big{font-size:34px;color:var(--accent)}
-.mediacard .meta{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
-.mediacard .fname{font-size:12px;word-break:break-all}
-.mediacard .ops{display:flex;flex-wrap:wrap;gap:4px}
+.mediacard .thumb .badge{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
+.mediacard .thumb .big{font-size:38px;color:var(--accent)}
+.mediacard .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.mediacard .fname{font-size:13px;word-break:break-all;font-weight:600}
+.mediacard .ops{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+/* 提示词：折叠 + 悬浮预览 */
+.promptBox{display:flex;flex-direction:column;gap:4px}
+.promptRow{display:flex;align-items:center;gap:6px;font-size:12px}
+.promptRow .tag{flex:0 0 auto;border-radius:6px;padding:1px 7px;font-size:11px;background:var(--accent-weak);color:var(--accent)}
+.promptRow .tag.neg{background:rgba(192,57,43,.12);color:var(--err)}
+.promptRow .brief{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);cursor:help}
+.promptRow .arrow{border:0;background:transparent;cursor:pointer;color:var(--muted);padding:0 4px}
+.promptFull{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;max-height:none}
+.promptFull[hidden]{display:none}
+.exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 14px}
 `
+
+/** 提示词区块：正/负分列、可折叠展开全文、支持快捷赋值到工作流表单。 */
+function promptBlock(run, token) {
+  const prompts = run.prompts ?? null
+  const positive = prompts?.positive ?? run.prompt ?? ''
+  const negative = prompts?.negative ?? ''
+  if (positive.length === 0 && negative.length === 0) return ''
+  const row = (kind, label, text, field) => {
+    if (text.length === 0) return ''
+    const id = `p-${run.id ?? 'run'}-${kind}`
+    const brief = text.replaceAll(/\s+/g, ' ').slice(0, 90)
+    const assign = field
+      ? `<button type="button" class="mini" data-assign-field="${escapeHtml(field)}" data-assign-kind="${kind}" data-workflow="${escapeHtml(run.name ?? '')}" title="把这段提示词回填到工作流表单对应字段">⇢ 赋值</button>`
+      : ''
+    return `<div class="promptRow"><span class="tag ${kind === 'negative' ? 'neg' : ''}">${label}</span>
+<span class="brief" title="${escapeHtml(text)}">${escapeHtml(brief)}</span>
+<button type="button" class="arrow" data-prompt-toggle="${id}" title="展开/收起全文">▾</button>${assign}</div>
+<div class="promptFull hidden" id="${id}">${escapeHtml(text)}</div>`
+  }
+  return `<div class="promptBox">${row('positive', '正', positive, prompts?.positiveField ?? '')}${row('negative', '负', negative, prompts?.negativeField ?? '')}</div>`
+}
 
 /**
  * 渲染成果物页：只登记「有模态数据」的运行（无产物不入库），
- * 媒体以卡片展示，点击图片放大、视频/音频就地播放（弹层）。
+ * 一列卡片展示；图片放大 / 视频音频就地播放；支持单个或整体导出 JSON（base64）。
  */
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
   const tagOf = (key) => tags[key] ?? null
@@ -572,7 +699,7 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
             .map(([name, value]) => `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`)
             .join('')
           const bind = meta?.prompt || meta?.source
-            ? `<div class="muted">${meta?.prompt ? `提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
+            ? `<div class="muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
             : ''
           const src = `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
           const name = escapeHtml(file.filename ?? key)
@@ -590,9 +717,10 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-edit">标签集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="collection">🗃 集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="field">字段</button>
-<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="prompt">提示词</button>
+<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="prompt">绑定提示词</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button>
 <a class="mini" style="padding:2px 8px" href="${src}" download>下载</a>
+<button type="button" class="mini" data-export-run="${escapeHtml(run.id ?? '')}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
 </div></div></div>`
         })
         .join('\n')
@@ -605,14 +733,18 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
 <span class="chip">${escapeHtml(run.state ?? '')}</span>
 <span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${(run.localFiles ?? []).length} 件</span>
 </div>
-<div class="muted" style="margin-bottom:8px;white-space:pre-wrap">${escapeHtml(String(run.prompt ?? '').slice(0, 400))}</div>
-<div class="mediagrid">${cards}</div></section>`
+${promptBlock(run, token)}
+<div class="mediaList">${cards}</div></section>`
     })
     .join('\n')
   const excluded = runs.length - withMedia.length
   const body = `
 <h1>成果物</h1>
 <div class="sub">${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''} · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
+<div class="exportBar">
+<button type="button" class="mini" id="export-all" title="导出当前页全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
+<span class="muted">导出内容：当前已有字段（运行信息、提示词正负、标签/集合/动态字段、文件字节 base64）</span>
+</div>
 ${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}
 <div class="modal" id="preview" hidden><div class="box">
 <div class="bar2"><span id="preview-name"></span><button type="button" class="mini" id="preview-close">关闭 ✕</button></div>
@@ -620,6 +752,7 @@ ${runCards || '<div class="card">还没有带成果物的运行。先在聊天�
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
+window.__runIds = ${JSON.stringify(withMedia.map((run) => run.id ?? null).filter(Boolean))};
 ${ARTIFACTS_JS}
 </script>`
   return pageShell('成果物', body, { extraCss: ARTIFACTS_CSS })
