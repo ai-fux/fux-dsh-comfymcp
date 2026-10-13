@@ -1,6 +1,21 @@
 # 迭代计划（MVP Roadmap）
 
-> 版本规约：四段式 `主.较.常.快`；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
+> 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
+
+## dev-snapshot-20261013-0.2.1（进行中）
+
+**MVP 主题：配置界面精简 + 模型卸载开关语义修正。**
+
+| # | 迭代内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | 配置界面精简：长提示文案统一收进「ⓘ」悬浮 tips（字段、开关、分区标题皆可），去掉常显说明段落；标签与占位文案收紧（如「ComfyUI 服务地址」→「ComfyUI 地址」、「comfy-mcp 服务来源」→「服务来源」） | `client.js`（`Hint` 组件 + 各 SettingsSection） | ✅ |
+| 2 | 目录布局改为一行「当前布局」链接行（主目录 ｜ 工作流 ｜ 产物 ｜ 数据），不再常显四段拼接说明 | `client.js` `layoutSummary()` | ✅ |
+| 3 | **模型卸载开关语义修正**：关闭时**移除工作流自带的卸载节点**（此前只做「插入」，工作流文件自带 `UnloadAllModels` 时关闭也照样卸载） | `lib/forms.js` `stripUnloadNodes/unloadNodeIds`、`lib/runcore.js` | ✅ |
+| 4 | 开启时若工作流已含卸载节点则**沿用不再重复插入**（`already present`），运行记录 `form.unload.reason` 说明实际处置 | `lib/forms.js` `integrateUnloadNode` | ✅ |
+| 5 | 卸载开关行补运行期状态说明（置灰原因 / 是否整合 / 已移除几个节点） | `client.js` 模型卸载段 | ✅ |
+| 6 | 测试：卸载节点移除与沿用两路（表单层 3 例 + 边界） | `test/forms.test.js` | ✅ |
+
+**下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 
 ## snapshot-0.2.0（稳定主分支，2026-10-13 封板）✅
 

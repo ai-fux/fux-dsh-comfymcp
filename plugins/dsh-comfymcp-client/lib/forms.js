@@ -327,15 +327,51 @@ export function applyAnswers(graph, fields, answers, random = Math.random) {
   return { graph: safeGraph, applied, kept }
 }
 
+/** 卸载类节点判定（工作流文件里常自带，例如 image_z_image 的 UnloadAllModels）。 */
+const UNLOAD_CLASS = /^unload/i
+
+/** 图里已有的卸载节点 id。 */
+export function unloadNodeIds(graph) {
+  const safeGraph = graph !== null && typeof graph === 'object' && !Array.isArray(graph) ? graph : {}
+  return Object.entries(safeGraph)
+    .filter(([, node]) => UNLOAD_CLASS.test(String(node?.class_type ?? '')))
+    .map(([id]) => id)
+}
+
+/**
+ * 按配置移除图内自带的卸载节点（开关关闭时的正确语义：配置说了不卸载就不卸载）。
+ * 卸载节点是终端节点（无输出），移除后把指向它的链接一并丢弃即可。
+ */
+export function stripUnloadNodes(graph) {
+  const safeGraph = asGraph(graph)
+  const ids = unloadNodeIds(safeGraph)
+  if (ids.length === 0) return { graph: safeGraph, removed: [] }
+  for (const id of ids) delete safeGraph[id]
+  const removedRefs = []
+  for (const [nodeId, node] of Object.entries(safeGraph)) {
+    for (const [field, value] of Object.entries(inputsOf(node))) {
+      if (Array.isArray(value) && value.length >= 2 && ids.includes(String(value[0]))) {
+        delete node.inputs[field]
+        removedRefs.push(`${nodeId}.${field}`)
+      }
+    }
+  }
+  return { graph: safeGraph, removed: ids, removedRefs }
+}
+
 /**
  * 卸载节点整合（已验证的接入模式）：在输出链路上插入 UnloadAllModels——
  * 上游输出 → UnloadAllModels.value →（其 any 透传输出）→ 原输入。这样该节点
  * 必然随链路执行，推理完成后释放显存。插入点优先 Save/Preview 类终端节点的
  * 输入链接，其次任意终端节点，最后任意链接。
+ *
+ * 开关打开时：图里**已有**卸载节点则沿用（不重复插入）；没有才插入。
  */
 export function integrateUnloadNode(graph, options = {}) {
   const safeGraph = asGraph(graph)
   if (options.enabled !== true) return { graph: safeGraph, inserted: false, reason: 'disabled' }
+  const existing = unloadNodeIds(safeGraph)
+  if (existing.length > 0) return { graph: safeGraph, inserted: false, reason: 'already present', nodeId: existing[0] }
   const isConsumed = (id) =>
     Object.values(safeGraph).some((node) =>
       Object.values(inputsOf(node)).some((value) => Array.isArray(value) && String(value[0]) === id),

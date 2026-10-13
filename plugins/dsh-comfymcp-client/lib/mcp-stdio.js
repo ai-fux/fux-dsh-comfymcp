@@ -52,7 +52,7 @@ export class McpStdioClient {
     const result = await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'dsh-comfymcp-client', version: '0.2.0' },
+      clientInfo: { name: 'dsh-comfymcp-client', version: '0.2.1' },
     })
     if (result && typeof result === 'object') {
       this.serverInfo = result.serverInfo ?? null
@@ -108,7 +108,7 @@ export class McpStdioClient {
     await this.rawRequest('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'dsh-comfymcp-client', version: '0.2.0' },
+      clientInfo: { name: 'dsh-comfymcp-client', version: '0.2.1' },
     })
     this.notify('notifications/initialized', {})
   }

@@ -1,6 +1,6 @@
 # dsh-comfymcp 部署文档
 
-> 版本 0.2.0（稳定分支 `snapshot-0.2.0`，开发分支 `dev-snapshot-20261011-0.2.0`）· 封板日期 2026-10-13
+> 版本 0.2.1（迭代分支 `dev-snapshot-20261013-0.2.1`；上一稳定分支 `snapshot-0.2.0`）· 更新日期 2026-10-13
 > 配套文档：[操作手册](operations.md) · [协议说明](protocol.md) · [迭代记录](roadmap.md) · [总览 README](../README.md)
 
 ## 1. 架构总览

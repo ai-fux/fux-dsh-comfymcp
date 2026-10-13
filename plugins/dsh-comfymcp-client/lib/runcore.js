@@ -5,7 +5,7 @@
  */
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { integrateUnloadNode, firstSeed, firstPromptText, extractPrompts } from './forms.js'
+import { integrateUnloadNode, stripUnloadNodes, firstSeed, firstPromptText, extractPrompts } from './forms.js'
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 
@@ -144,15 +144,27 @@ export function createRunExecutor({ bridge }) {
           if (integrated.inserted) {
             graph = integrated.graph
             unloadState = { requested: true, applied: true, reason: `插入 ${integrated.nodeId} @ ${integrated.at}` }
+          } else if (integrated.reason === 'already present') {
+            // 工作流自带卸载节点 → 沿用，不再重复插入
+            unloadState = { requested: true, applied: true, reason: `工作流已含卸载节点 ${integrated.nodeId}` }
           } else {
             unloadState = { requested: true, applied: false, reason: integrated.reason ?? 'integration failed' }
           }
         } else {
           unloadState = { requested: true, applied: false, reason: `服务端不支持：${probe.reason}` }
         }
-        base.form.unload = unloadState
-        base.form.graph = graph
+      } else {
+        // 开关关闭：配置说了不卸载就不卸载 —— 移除工作流自带的卸载节点
+        const stripped = stripUnloadNodes(graph)
+        if (stripped.removed.length > 0) {
+          graph = stripped.graph
+          unloadState = { requested: false, applied: false, reason: `已按配置移除工作流自带的 ${stripped.removed.length} 个卸载节点（${stripped.removed.join(', ')}）` }
+        } else {
+          unloadState = { requested: false, applied: false, reason: '未启用，且工作流不含卸载节点' }
+        }
       }
+      base.form.unload = unloadState
+      base.form.graph = graph
 
       // 服务端签名：save_workflow(name*, graph*, overwrite)
       stage('保存工作流')

@@ -23,7 +23,7 @@ import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = 'dsh-comfymcp-client'
-export const version = '0.2.0'
+export const version = '0.2.1'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 

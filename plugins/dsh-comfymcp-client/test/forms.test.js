@@ -8,6 +8,8 @@ import {
   firstSeed,
   FormError,
   integrateUnloadNode,
+  stripUnloadNodes,
+  unloadNodeIds,
   normalizeNodeInfos,
   randomizeSeeds,
   resolveAnswer,
@@ -192,6 +194,36 @@ describe('integrateUnloadNode', () => {
     const result = integrateUnloadNode(linkless, { enabled: true })
     expect(result.inserted).toBe(false)
     expect(result.reason).toBe('no upstream link found')
+  })
+
+  it('reuses an unload node the workflow already carries (no duplicate)', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    graph['94'] = { class_type: 'UnloadAllModels', inputs: { value: ['8', 0] } }
+    const result = integrateUnloadNode(graph, { enabled: true })
+    expect(result.inserted).toBe(false)
+    expect(result.reason).toBe('already present')
+    expect(result.nodeId).toBe('94')
+    expect(unloadNodeIds(graph).length).toBe(1)
+  })
+})
+
+describe('stripUnloadNodes（开关关闭时必须真的不卸载）', () => {
+  it('removes workflow-provided unload nodes and their references', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    graph['94'] = { class_type: 'UnloadAllModels', inputs: { value: ['8', 0] } }
+    graph['9'].inputs.images = ['94', 0] // 极端情况：输出被接到卸载节点
+    const result = stripUnloadNodes(graph)
+    expect(result.removed).toEqual(['94'])
+    expect(graph['94']).toBeUndefined()
+    expect(graph['9'].inputs.images).toBeUndefined()
+    expect(unloadNodeIds(graph)).toEqual([])
+  })
+
+  it('is a no-op when the workflow has no unload node (boundary)', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    const result = stripUnloadNodes(graph)
+    expect(result.removed).toEqual([])
+    expect(Object.keys(graph).length).toBe(Object.keys(SAMPLE_GRAPH).length)
   })
 })
 
