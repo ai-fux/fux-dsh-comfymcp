@@ -251,7 +251,7 @@ export function renderPageHtml(descriptor, options = {}) {
 <a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>
 ${noteBar}
 ${quickBar}
-<form id="run-form">
+<form id="run-form" onsubmit="return false">
 ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <div class="actions">
 <button type="submit" class="primary" id="run-btn"><span class="spinner" id="run-spin" hidden></span><span id="run-label">▶ 执行工作流</span></button>
@@ -435,7 +435,7 @@ document.addEventListener('click', function (event) {
       source.value = area.value;
       var wrap = source.closest ? source.closest('.textwrap') : null;
       var hint = wrap ? wrap.querySelector('.texthint .muted') : null;
-      if (hint) hint.textContent = area.value.length + ' 字 · ' + area.value.split('\n').length + ' 行';
+      if (hint) hint.textContent = area.value.length + ' 字 · ' + area.value.split('\\n').length + ' 行';
     }
     document.getElementById('textmodal').hidden = true;
     return;

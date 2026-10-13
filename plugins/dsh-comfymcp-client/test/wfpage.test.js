@@ -89,6 +89,38 @@ describe('renderPageHtml', () => {
   })
 })
 
+describe('page scripts stay parseable', () => {
+  const pages = () => ({
+    workflow: renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' }),
+    artifacts: renderArtifactsHtml({
+      runs: [{ id: 'r1', name: 'demo', state: 'completed', prompts: { positive: '正', negative: '负' }, localFiles: [{ path: 'C:\\a\\x.png', filename: 'x.png', kind: 'image', bytes: 3 }] }],
+      tags: {},
+      token: 'tk',
+    }),
+    index: renderIndexHtml({ mine: [{ name: 'demo', title: 'demo' }], library: [], token: 'tk' }),
+  })
+
+  it('every rendered page script parses (a broken script would break the run button)', () => {
+    for (const [name, html] of Object.entries(pages())) {
+      const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1])
+      expect(scripts.length, `${name} 页应有脚本`).toBeGreaterThan(0)
+      for (const code of scripts) {
+        // 语法错误（例如模板串里未转义的 \n）会让整段脚本失效 → 提交退化为表单跳转
+        expect(() => new Function(code), `${name} 页脚本语法错误`).not.toThrow()
+      }
+    }
+  })
+
+  it('workflow page binds submit and blocks native navigation (boundary)', () => {
+    const html = pages().workflow
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain("getElementById('run-form').addEventListener('submit'")
+    expect(code).toContain('event.preventDefault()')
+    // 双保险：即使脚本异常，原生表单提交也不跳转
+    expect(html).toContain('<form id="run-form" onsubmit="return false">')
+  })
+})
+
 describe('renderIndexHtml / renderArtifactsHtml', () => {
   it('renders mine/library tabs with pull buttons and reload (boundary: empty)', () => {
     const html = renderIndexHtml({
