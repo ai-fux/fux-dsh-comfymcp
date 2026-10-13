@@ -67,6 +67,47 @@ function sendBytes(response, status, bytes, contentType, token) {
 }
 
 /**
+ * 媒体字节流：支持 Range 请求（206），否则视频/音频无法拖动播放。
+ * range 形如 `bytes=start-end`；非法/越界时回落到整文件 200。
+ */
+function sendMedia(response, bytes, contentType, rangeHeader) {
+  const total = bytes.byteLength
+  const base = {
+    'content-type': contentType,
+    'cache-control': 'no-store',
+    'accept-ranges': 'bytes',
+  }
+  const match = typeof rangeHeader === 'string' ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null
+  if (match === null) {
+    response.writeHead(200, { ...base, 'content-length': String(total) })
+    response.end(bytes)
+    return
+  }
+  const hasStart = match[1].length > 0
+  const hasEnd = match[2].length > 0
+  let start = hasStart ? Number(match[1]) : 0
+  let end = hasEnd ? Number(match[2]) : total - 1
+  if (!hasStart && hasEnd) {
+    // 后缀区间 bytes=-N：最后 N 字节
+    start = Math.max(0, total - end)
+    end = total - 1
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+    response.writeHead(416, { ...base, 'content-range': `bytes */${total}` })
+    response.end()
+    return
+  }
+  end = Math.min(end, total - 1)
+  const chunk = bytes.subarray(start, end + 1)
+  response.writeHead(206, {
+    ...base,
+    'content-length': String(chunk.byteLength),
+    'content-range': `bytes ${start}-${end}/${total}`,
+  })
+  response.end(chunk)
+}
+
+/**
  * @param options { methods, port, portWindow, token, host, version, log }
  *   methods: { status(): Promise, configRead(): Promise, configWrite(patch): Promise,
  *              artifact(searchParams): { bytes, contentType } | { error } }
@@ -202,7 +243,7 @@ export function createControlServer(options = {}) {
         sendJson(response, 404, { ok: false, error: { code: 'not_found', message: outcome.error } }, undefined)
         return
       }
-      sendBytes(response, 200, outcome.bytes, outcome.contentType)
+      sendMedia(response, outcome.bytes, outcome.contentType, request.headers.range)
       return
     }
 

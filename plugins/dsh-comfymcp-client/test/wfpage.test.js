@@ -77,6 +77,9 @@ describe('renderPageHtml', () => {
     expect(a).toContain('data-dice=')
     expect(a).toContain('/api/run')
     expect(a).toContain('/artifact?path=')
+    // 回归：spinner 必须能被 hidden 隐藏，否则执行按钮永远像在 loading
+    expect(a).toContain('.spinner[hidden]{display:none}')
+    expect(a).toContain('id="cancel-btn"')
   })
 })
 
@@ -111,13 +114,24 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
       },
     ]
     const tags = { k1: { tags: ['夕阳'], collections: ['旅拍'], fields: { 尺寸: '768x512' }, prompt: 'p', source: '项目A' } }
-    const html = renderArtifactsHtml({ runs, tags, token: 'tk' })
+    const videoRun = { name: 'video-wf', state: 'completed', seed: 1, localFiles: [{ path: 'C:\\a\\clip.mp4', filename: 'clip.mp4', kind: 'video', bytes: 2048 }] }
+    const html = renderArtifactsHtml({ runs: [...runs, videoRun], tags, token: 'tk' })
     expect(html).toContain('/artifact?path=C%3A%5Ca%5Cout.png&token=tk')
     expect(html).toContain('夕阳')
     expect(html).toContain('🗃 旅拍')
     expect(html).toContain('尺寸=768x512')
     expect(html).toContain('data-op="prompt"')
     expect(html).toContain('来源：项目A')
-    expect(renderArtifactsHtml({ runs: [], tags: {}, token: '' })).toContain('还没有运行记录')
+    // 卡片化 + 预览弹层（图片放大 / 视频音频播放）
+    expect(html).toContain('class="mediacard"')
+    expect(html).toContain('data-preview="C:\\a\\out.png"')
+    expect(html).toContain('data-kind="video"')
+    expect(html).toContain('id="preview"')
+    expect(html).toContain("body.innerHTML = '<video")
+    // 无模态数据不入库：没有产物的运行不出现在成果物页
+    const empty = renderArtifactsHtml({ runs: [{ name: 'x', state: 'failed', localFiles: [] }], tags: {}, token: '' })
+    expect(empty).toContain('还没有带成果物的运行')
+    expect(empty).toContain('已忽略 1 次无成果物记录')
+    expect(empty).not.toContain('x</b>')
   })
 })

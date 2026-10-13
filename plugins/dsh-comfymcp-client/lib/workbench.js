@@ -309,7 +309,8 @@ export function createWorkbenchMethods({ bridge, config }) {
     },
 
     async pageArtifacts({ token = '' } = {}) {
-      return { html: renderArtifactsHtml({ runs: bridge.listRuns(30), tags: tagStore.all(), token }) }
+      // 无模态数据不入库由渲染层过滤（并统计忽略条数）；这里给出全部近期记录
+      return { html: renderArtifactsHtml({ runs: bridge.listRuns(60), tags: tagStore.all(), token }) }
     },
 
     async listWorkflows() {

@@ -14,6 +14,21 @@ import { randomUUID } from 'node:crypto'
 
 const POLL_MS = 2500
 
+/** 任意抛出物 → 可读消息（对象型错误不再变成 [object Object]）。 */
+function errorText(error) {
+  if (error instanceof Error) return error.message
+  if (error !== null && typeof error === 'object') {
+    const inner = error.message ?? error.error ?? error.text ?? error.reason
+    if (typeof inner === 'string' && inner.length > 0) return inner
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return String(error)
+    }
+  }
+  return String(error ?? '')
+}
+
 /** 图里的采样步数（用于把 job_progress 的 step 换算成百分比；后端只给 step 不给 total）。 */
 function stepsTotalOf(graph) {
   let total = null
@@ -286,7 +301,7 @@ export function createRunDaemon({ bridge, executeRun }) {
           })
           finish(result)
         } catch (error) {
-          finish({ ok: false, state: 'failed', error: error instanceof Error ? error.message : String(error) })
+          finish({ ok: false, state: 'failed', error: errorText(error) })
         }
       })()
 
@@ -326,6 +341,11 @@ export function createRunDaemon({ bridge, executeRun }) {
           error: '执行状态丢失：未在运行中的任务记录被标记为中断（可能因插件重启或运行异常退出）',
         })
         return { ok: true, value: summarize(patched ?? { ...record, state: 'failed' }, undefined) }
+      }
+      // 陈旧失败（无产物且已过 10 分钟）不再当作「当前结果」回放，避免一打开页面就看到旧报错
+      const hasFiles = Array.isArray(record.localFiles) && record.localFiles.length > 0
+      if (record.state === 'failed' && !hasFiles && (record.finishedAt ?? 0) > 0 && Date.now() - record.finishedAt > 600000) {
+        return { ok: true, value: null }
       }
       return { ok: true, value: summarize(record, undefined) }
     },

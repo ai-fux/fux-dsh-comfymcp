@@ -64,6 +64,13 @@ try {
   }
   const history = await workbench.runHistory({ workflow, limit: 3 })
   console.log('[4] 历史条数 →', (history.value ?? []).length)
+  const artifactsPage = await workbench.pageArtifacts({ token: 'demo' })
+  const cards = (artifactsPage.html.match(/class="mediacard"/g) ?? []).length
+  const runsShown = (artifactsPage.html.match(/<section class="run">/g) ?? []).length
+  const ignored = /已忽略 (\d+) 次无成果物记录/.exec(artifactsPage.html)?.[1] ?? '0'
+  console.log(`[4b] 成果物页 → ${runsShown} 次运行 / ${cards} 张媒体卡 · 忽略无产物记录 ${ignored} 条 · 预览弹层 ${artifactsPage.html.includes('id="preview"') ? '有' : '无'}`)
+  const page = await workbench.pageWorkflow(workflow, { token: 'demo' })
+  console.log(`[4c] 工作流页 → spinner 可隐藏 ${page.html.includes('.spinner[hidden]{display:none}') ? '✓' : '✗'} · 中断按钮 ${page.html.includes('id="cancel-btn"') ? '✓' : '✗'}`)
   const cleared = await workbench.clearRuns({ workflow })
   console.log('[5] 清空 →', JSON.stringify(cleared))
   const afterClear = await workbench.runStatus({ workflow })

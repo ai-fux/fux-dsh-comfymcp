@@ -141,7 +141,16 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .muted{color:var(--muted);font-size:12px}.hidden{display:none}
 .actions{display:flex;gap:8px;align-items:center;margin-top:12px}
 .spinner{display:inline-block;width:12px;height:12px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
+.spinner[hidden]{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* 媒体预览弹层（图片放大 / 视频音频播放） */
+.modal{position:fixed;inset:0;background:rgba(12,14,17,.78);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
+.modal[hidden]{display:none}
+.modal .box{background:var(--surface);border-radius:10px;padding:12px;max-width:92vw;max-height:88vh;overflow:auto;position:relative}
+.modal img{max-width:88vw;max-height:74vh;display:block;border-radius:6px}
+.modal video{max-width:88vw;max-height:74vh;display:block;border-radius:6px;background:#000}
+.modal audio{width:min(560px,84vw);display:block}
+.modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;font-size:13px}
 .progress{margin-top:12px}.bar{height:8px;border-radius:99px;background:var(--accent-weak);overflow:hidden}
 .bar .fill{height:100%;width:0;background:var(--accent);transition:width .4s ease}
 .bar .fill.indeterminate{animation:pulse 1.4s ease-in-out infinite}
@@ -486,8 +495,32 @@ function api(path, body) {
     .then(function (res) { return res.json().then(function (data) { if (!res.ok || data.ok === false) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status)); return data.value !== undefined ? data.value : data }); });
 }
 function ask(label, current) { var v = prompt(label, current || ''); return v === null ? null : v.trim(); }
+function mediaUrl(path) { return '/artifact?path=' + encodeURIComponent(path) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : ''); }
+function closePreview() {
+  var modal = document.getElementById('preview');
+  var body = document.getElementById('preview-body');
+  body.innerHTML = ''; // 停止播放
+  modal.hidden = true;
+}
 document.addEventListener('click', function (event) {
-  var el = event.target; if (!el.getAttribute) return;
+  var el = event.target;
+  if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  if (!el.getAttribute) return;
+  var previewPath = el.getAttribute('data-preview') || (el.parentElement && el.parentElement.getAttribute && el.parentElement.getAttribute('data-preview'));
+  if (previewPath) {
+    var holder = el.getAttribute('data-preview') ? el : el.parentElement;
+    var kind = holder.getAttribute('data-kind') || 'file';
+    var name = holder.getAttribute('data-name') || '';
+    var url = mediaUrl(previewPath);
+    document.getElementById('preview-name').textContent = name;
+    var body = document.getElementById('preview-body');
+    if (kind === 'video') body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>';
+    else if (kind === 'audio') body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>';
+    else if (kind === 'image') body.innerHTML = '<img src="' + url + '" alt="">';
+    else body.innerHTML = '<div class="muted">该类型不支持内嵌预览，请使用下载。</div>';
+    document.getElementById('preview').hidden = false;
+    return;
+  }
   var key = el.getAttribute('data-key'); if (!key) return;
   var op = el.getAttribute('data-op');
   var patch = null;
@@ -503,12 +536,31 @@ document.addEventListener('click', function (event) {
 });
 `
 
-/** 渲染成果物页（runs + 文件 + 标签操作）。 */
+const ARTIFACTS_CSS = `
+.run{margin-bottom:16px}.run .head{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:10px}
+.run .head b{font-size:14px}
+.mediagrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.mediacard .thumb{position:relative;background:var(--accent-weak);aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
+.mediacard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.mediacard .thumb .badge{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
+.mediacard .thumb .big{font-size:34px;color:var(--accent)}
+.mediacard .meta{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.mediacard .fname{font-size:12px;word-break:break-all}
+.mediacard .ops{display:flex;flex-wrap:wrap;gap:4px}
+`
+
+/**
+ * 渲染成果物页：只登记「有模态数据」的运行（无产物不入库），
+ * 媒体以卡片展示，点击图片放大、视频/音频就地播放（弹层）。
+ */
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
   const tagOf = (key) => tags[key] ?? null
-  const runCards = runs
+  // 无模态数据不入库：丢弃没有任何产物的运行记录
+  const withMedia = runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0)
+  const runCards = withMedia
     .map((run) => {
-      const files = (run.localFiles ?? [])
+      const cards = (run.localFiles ?? [])
         .map((file) => {
           const key = file.key ?? file.path ?? file.filename
           const meta = tagOf(key)
@@ -520,38 +572,55 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
             .map(([name, value]) => `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`)
             .join('')
           const bind = meta?.prompt || meta?.source
-            ? `<div class="muted" style="width:100%">${meta?.prompt ? `提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
+            ? `<div class="muted">${meta?.prompt ? `提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
             : ''
           const src = `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
-          const preview = file.kind === 'image'
-            ? `<a href="${src}" target="_blank" rel="noreferrer"><img src="${src}" alt="${escapeHtml(file.filename ?? '')}" style="width:72px;border-radius:6px;border:1px solid var(--line);display:block"></a>`
-            : `<span>${file.kind === 'video' ? '▶' : '📄'}</span>`
-          return `<div class="file">${preview}<span class="name">${escapeHtml(file.filename ?? key)}</span>
-<span class="muted">${escapeHtml(String(file.bytes ?? ''))}B</span>
-${chips}${fields}${bind}
+          const name = escapeHtml(file.filename ?? key)
+          const kindLabel = file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : file.kind === 'audio' ? '音频' : '文件'
+          const big = file.kind === 'image' ? '' : file.kind === 'video' ? '▶' : file.kind === 'audio' ? '♪' : '📄'
+          const thumb = file.kind === 'image'
+            ? `<img src="${src}" alt="${name}" loading="lazy">`
+            : `<span class="big">${big}</span>`
+          const sizeText = file.bytes ? `${Math.round(file.bytes / 1024)} KB` : ''
+          return `<div class="mediacard">
+<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
+<div class="meta"><span class="fname" title="${name}">${name}</span>${chips}${fields}${bind}
+<div class="ops">
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add">＋标签</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-edit">标签集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="collection">🗃 集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="field">字段</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="prompt">提示词</button>
-<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button></div>`
+<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button>
+<a class="mini" style="padding:2px 8px" href="${src}" download>下载</a>
+</div></div></div>`
         })
         .join('\n')
       const duration = typeof run.durationMs === 'number'
         ? (run.durationMs < 60000 ? `${Math.round(run.durationMs / 1000)}s` : `${Math.round(run.durationMs / 60000)}m`)
         : (run.finishedAt && run.startedAt ? `${Math.round((run.finishedAt - run.startedAt) / 1000)}s` : '-')
-      return `<div class="card"><h3>${escapeHtml(run.name ?? 'workflow')} · ${escapeHtml(run.state ?? '')} · 种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}</h3>
-<div class="muted" style="margin-bottom:6px">${escapeHtml(run.prompt ?? '')}</div>${files || '<div class="muted">（无成果物）</div>'}</div>`
+      const time = run.startedAt ? new Date(run.startedAt).toLocaleString('zh-CN') : ''
+      return `<section class="run"><div class="head">
+<b>${escapeHtml(run.name ?? 'workflow')}</b>
+<span class="chip">${escapeHtml(run.state ?? '')}</span>
+<span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${(run.localFiles ?? []).length} 件</span>
+</div>
+<div class="muted" style="margin-bottom:8px;white-space:pre-wrap">${escapeHtml(String(run.prompt ?? '').slice(0, 400))}</div>
+<div class="mediagrid">${cards}</div></section>`
     })
     .join('\n')
+  const excluded = runs.length - withMedia.length
   const body = `
 <h1>成果物</h1>
-<div class="sub">最近 ${runs.length} 次运行 · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
-${runCards || '<div class="card">还没有运行记录。先在聊天里或工作流页执行一次工作流。</div>'}
+<div class="sub">${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''} · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
+${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}
+<div class="modal" id="preview" hidden><div class="box">
+<div class="bar2"><span id="preview-name"></span><button type="button" class="mini" id="preview-close">关闭 ✕</button></div>
+<div id="preview-body"></div></div></div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
 ${ARTIFACTS_JS}
 </script>`
-  return pageShell('成果物', body)
+  return pageShell('成果物', body, { extraCss: ARTIFACTS_CSS })
 }

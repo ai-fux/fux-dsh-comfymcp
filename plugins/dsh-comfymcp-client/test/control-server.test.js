@@ -87,6 +87,22 @@ describe('control-server', () => {
     expect(missing.status).toBe(404)
   })
 
+  it('serves artifact byte ranges so video/audio can seek (boundary)', async () => {
+    const { base } = await startServer({ token: 'secret' })
+    const full = await fetch(`${base}/artifact?path=a.png&token=secret`)
+    expect(full.headers.get('accept-ranges')).toBe('bytes')
+    const ranged = await fetch(`${base}/artifact?path=a.png&token=secret`, { headers: { range: 'bytes=1-3' } })
+    expect(ranged.status).toBe(206)
+    expect(ranged.headers.get('content-range')).toBe('bytes 1-2/3') // 3 字节体：末端自动收敛
+    expect(ranged.headers.get('content-length')).toBe('2')
+    expect((await ranged.arrayBuffer()).byteLength).toBe(2)
+    const suffix = await fetch(`${base}/artifact?path=a.png&token=secret`, { headers: { range: 'bytes=-2' } })
+    expect(suffix.status).toBe(206)
+    expect(suffix.headers.get('content-range')).toBe('bytes 1-2/3')
+    const bad = await fetch(`${base}/artifact?path=a.png&token=secret`, { headers: { range: 'bytes=99-120' } })
+    expect(bad.status).toBe(416)
+  })
+
   it('falls through to the next port when the requested one is taken (boundary)', async () => {
     const { createServer } = await import('node:http')
     const blocker = createServer()

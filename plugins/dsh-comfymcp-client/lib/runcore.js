@@ -10,8 +10,26 @@ import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 
 function oneLine(value) {
-  const text = value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
-  return text.replaceAll(/\s+/g, ' ').slice(0, 600)
+  if (value instanceof Error) return value.message.replaceAll(/\s+/g, ' ').slice(0, 600)
+  if (value !== null && typeof value === 'object') {
+    // 常见包装：{message}/{error}/{text} 优先取可读字段，避免出现 [object Object]
+    const inner = value.message ?? value.error ?? value.text ?? value.reason
+    if (typeof inner === 'string' && inner.trim().length > 0) {
+      const nested = value.details ?? value.data ?? null
+      return `${inner}${nested !== null && typeof nested === 'object' ? ` ${JSON.stringify(nested)}` : ''}`.replaceAll(/\s+/g, ' ').slice(0, 600)
+    }
+    try {
+      return JSON.stringify(value).replaceAll(/\s+/g, ' ').slice(0, 600)
+    } catch {
+      return String(value).slice(0, 600)
+    }
+  }
+  return String(value ?? '').replaceAll(/\s+/g, ' ').slice(0, 600)
+}
+
+/** 任意抛出物 → 可读消息（绝不出现 [object Object]）。 */
+function errorText(error) {
+  return oneLine(error)
 }
 
 /** 解宿主转发包装：structuredContent = {ok,isError,tool,data,...} → 内层 data。 */
@@ -28,9 +46,10 @@ function isToolError(answer, data) {
 /** 按扩展名推断成果物类型。 */
 function inferKind(filename) {
   const ext = String(filename ?? '').toLowerCase().split('.').pop() ?? ''
-  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(ext)) return 'image'
-  if (['mp4', 'webm', 'mov', 'mkv', 'gif'].includes(ext)) return 'video'
-  if (['txt', 'json', 'csv', 'log'].includes(ext)) return 'text'
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'].includes(ext)) return 'image'
+  if (['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext)) return 'video'
+  if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac'].includes(ext)) return 'audio'
+  if (['txt', 'json', 'csv', 'log', 'md'].includes(ext)) return 'text'
   return 'file'
 }
 
@@ -58,7 +77,7 @@ export async function distributeArtifacts(bridge, files) {
       }
       if (pushed.length > 0) result.storage = { id: storage.id, pushed }
     } catch (error) {
-      result.storage = { error: error instanceof Error ? error.message : String(error) }
+      result.storage = { error: errorText(error) }
     }
   }
   const downloadDir = typeof bridge.config.downloadDir === 'string' ? bridge.config.downloadDir.trim() : ''
@@ -79,7 +98,7 @@ export async function distributeArtifacts(bridge, files) {
       }
       if (mirrored.length > 0) result.download = { dir: target, mirrored: mirrored.length }
     } catch (error) {
-      result.download = { error: error instanceof Error ? error.message : String(error) }
+      result.download = { error: errorText(error) }
     }
   }
   return Object.keys(result).length > 0 ? result : null
@@ -175,7 +194,7 @@ export function createRunExecutor({ bridge }) {
           )
           finalData = { ...runData, ...unwrapTool(waitAnswer) }
         } catch (error) {
-          finalData = { ...runData, waitError: error instanceof Error ? error.message : String(error) }
+          finalData = { ...runData, waitError: errorText(error) }
         }
       }
       // 成果物：fetch_outputs 把产物落到本地（outDir），并给出 artifacts 引用
@@ -198,7 +217,7 @@ export function createRunExecutor({ bridge }) {
           }
           if (Array.isArray(fetched.artifacts) && fetched.artifacts.length > 0) artifacts = fetched.artifacts
         } catch (error) {
-          base.downloadError = error instanceof Error ? error.message : String(error)
+          base.downloadError = errorText(error)
         }
       }
       // 成果物分发：对象存储推送 + downloadDir 镜像
@@ -226,7 +245,7 @@ export function createRunExecutor({ bridge }) {
         ...(record.error.length > 0 ? { error: record.error } : {}),
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error)
       const record = bridge.recordRun({ ...base, id: options.runId, state: 'failed', error: message, finishedAt: Date.now() })
       return {
         ok: false,
