@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createWorkbenchMethods } from '../lib/workbench.js'
@@ -137,8 +137,10 @@ describe('workbench pages', () => {
   it('falls back to the remote template library and adapts COMBO fields (official shape)', async () => {
     const workbench = makeWorkbench(await makeBridge())
     const index = await workbench.pageIndex({ token: '' })
-    expect(index.html).toContain('/ui/wf/library%3Ademo.json')
-    expect(index.html).toContain('模板库')
+    expect(index.html).toContain('我的工作流') // 三 Tab 齐平
+    const library = await workbench.pageLibrary({ token: '' })
+    expect(library.html).toContain('/ui/wf/library%3Ademo.json')
+    expect(library.html).toContain('执行一次即自动保存')
     const page = await workbench.pageWorkflow('library:demo.json', { token: '' })
     expect(page.error).toBeUndefined()
     expect(page.html).toContain('data-field="3:seed"')
@@ -148,7 +150,8 @@ describe('workbench pages', () => {
     // 远端图执行：复合键应用后异步启动（桩无后端，状态轮询到失败）
     const started = await workbench.runPage({ workflow: 'library:demo.json', values: { '3:seed': 3 } })
     expect(started.ok).toBe(true)
-    const finished = await waitForFinish(workbench, 'library:demo.json')
+    expect(started.workflow).toBe('demo') // 运行名统一为文件词干，便于下次匹配上次参数
+    const finished = await waitForFinish(workbench, 'demo')
     expect(finished.state).toBe('failed')
     expect(finished.error).toContain('no backend')
   })
@@ -208,6 +211,40 @@ describe('workbench runPage / quickRun', () => {
     const result = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
     expect(result).toMatchObject({ ok: false })
     expect(result.reason).toContain('没有可复用')
+  })
+})
+
+describe('template run persistence and last-run prefill', () => {
+  it('saves a template into my workflows on first run and remembers its params', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    const started = await workbench.runPage({ workflow: 'library:demo.json', values: { '3:seed': 99 } })
+    expect(started.ok).toBe(true)
+    // 落库到插件自有 workflows 目录（模板跑过即进入「我的工作流」）
+    const saved = join(workdir, 'comfymcp-test-workflows', 'workflows', 'demo.json')
+    expect(existsSync(saved)).toBe(true)
+    const savedGraph = JSON.parse(readFileSync(saved, 'utf8'))
+    expect(savedGraph['3'].class_type).toBe('KSampler')
+    // 落库后「我的工作流」里出现本地条目
+    const groups = await workbench.listWorkflows()
+    expect(groups.mine.some((page) => page.name === 'demo' && page.origin === 'local')).toBe(true)
+    await waitForFinish(workbench, 'library:demo.json')
+
+    // 造一条历史成功记录 → 打开页面时带出上次参数并标记来源
+    const history = [
+      {
+        id: 'h1', name: 'demo', state: 'completed', finishedAt: Date.now(), startedAt: Date.now() - 1000,
+        localFiles: [{ path: join(workdir, 'h.png'), filename: 'h.png', kind: 'image' }],
+        form: { values: { '3:seed': 42, '3:sampler_name': 'heun' }, graph: JSON.parse(JSON.stringify(REMOTE_GRAPH)) },
+      },
+    ]
+    bridge.listRuns = () => history
+    const page = await workbench.pageWorkflow('demo', { token: '' })
+    expect(page.error).toBeUndefined()
+    expect(page.html).toContain('已带出上一次运行的参数')
+    expect(page.html).toContain('value="42"')
+    expect(page.html).toContain('>上次<')
+    expect(page.html).toContain('<option value="heun" selected>')
   })
 })
 

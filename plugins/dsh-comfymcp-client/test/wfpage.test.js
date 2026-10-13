@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageDescriptor, renderArtifactsHtml, renderIndexHtml, renderPageHtml } from '../lib/wfpage.js'
+import { buildPageDescriptor, renderArtifactsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
 
 const NODE_INFOS = {
   KSampler: {
@@ -152,7 +152,7 @@ describe('page scripts stay parseable', () => {
 })
 
 describe('renderIndexHtml / renderArtifactsHtml', () => {
-  it('renders mine/library tabs with pull buttons and reload (boundary: empty)', () => {
+  it('renders the three peer tabs with pull buttons and reload (boundary: empty)', () => {
     const html = renderIndexHtml({
       mine: [
         { name: 'beach', title: 'beach', origin: 'local', updatedAt: '2026-10-11' },
@@ -161,17 +161,25 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
       library: [{ name: 'library:x.json', title: 'x', origin: 'remote' }],
       token: 'tk',
     })
-    expect(html).toContain('data-tab="mine"')
-    expect(html).toContain('data-tab="library"')
+    // 三 Tab 齐平（跨页一致）
+    expect(html).toContain('class="wtabs"')
     expect(html).toContain('我的工作流（2）')
-    expect(html).toContain('模板库（1）')
+    expect(html).toContain('模板（1）')
+    expect(html).toContain('>成果物<')
+    expect(html).toContain('href="/ui?token=tk"')
+    expect(html).toContain('href="/ui/library?token=tk"')
+    expect(html).toContain('href="/ui/artifacts?token=tk"')
     expect(html).toContain('/ui/wf/beach?token=tk')
-    expect(html).toContain('/ui/wf/library%3Ax.json')
     expect(html).toContain('data-pull="ws:gen-1"')
     expect(html).toContain('↻ 重新加载')
+    // 模板页：条目 + 「执行一次即自动保存」提示
+    const lib = renderLibraryHtml({ library: [{ name: 'library:x.json', title: 'x', origin: 'remote' }], mine: [], token: 'tk' })
+    expect(lib).toContain('/ui/wf/library%3Ax.json')
+    expect(lib).toContain('执行一次即自动保存')
+    expect(lib).toContain('class="wtabs"')
     const empty = renderIndexHtml({ mine: [], library: [], token: '' })
     expect(empty).toContain('还没有我的工作流')
-    expect(empty).toContain('模板库暂不可达')
+    expect(renderLibraryHtml({ library: [], mine: [], token: '' })).toContain('模板库暂不可达')
   })
 
   it('renders runs with tags chips, dynamic fields and binding (boundary: empty)', () => {

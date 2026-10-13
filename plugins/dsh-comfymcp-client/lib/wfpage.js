@@ -75,7 +75,7 @@ function fieldFor(nodeId, input, value) {
  * 构建页面描述符。
  * @param nodeInfos node_info 返回的 { Cls: { inputs: [{name,type,required,default,min,max,step}] } }
  */
-export function buildPageDescriptor({ name, title, graph, nodeInfos = {}, notes = [] }) {
+export function buildPageDescriptor({ name, title, graph, nodeInfos = {}, notes = [], prefill = {} }) {
   const sections = []
   for (const [nodeId, nodeRaw] of Object.entries(graph ?? {})) {
     const node = nodeRaw !== null && typeof nodeRaw === 'object' ? nodeRaw : {}
@@ -91,17 +91,24 @@ export function buildPageDescriptor({ name, title, graph, nodeInfos = {}, notes 
       seen.add(fieldName)
       const value = values[fieldName]
       if (value !== undefined && value !== null && Array.isArray(value) && value.length >= 2) continue // 输入链接
-      const field = fieldFor(nodeId, input, value !== undefined ? value : input.default)
-      if (field !== null) fields.push(field)
+      // 上次运行的参数优先（同名字段直接带出，并标记来源）
+      const remembered = prefill !== null && typeof prefill === 'object' ? prefill[`${nodeId}:${fieldName}`] : undefined
+      const usesRemembered = remembered !== undefined && remembered !== null && !(typeof remembered === 'object')
+      const field = fieldFor(nodeId, input, usesRemembered ? remembered : value !== undefined ? value : input.default)
+      if (field === null) continue
+      fields.push(usesRemembered ? { ...field, fromLastRun: true } : field)
     }
     // 声明缺失（node_info 不可用）时回退：渲染图里已有的非链接标量
     if (declared.length === 0) {
       for (const [fieldName, value] of Object.entries(values)) {
         if (value !== null && typeof value === 'object') continue
         if (Array.isArray(value) && value.length >= 2) continue
-        const upper = typeof value === 'number' ? (Number.isInteger(value) ? 'INT' : 'FLOAT') : typeof value === 'boolean' ? 'BOOLEAN' : 'STRING'
-        const field = fieldFor(nodeId, { name: fieldName, type: upper, required: false }, value)
-        if (field !== null) fields.push(field)
+        const remembered = prefill !== null && typeof prefill === 'object' ? prefill[`${nodeId}:${fieldName}`] : undefined
+        const usesRemembered = remembered !== undefined && remembered !== null && !(typeof remembered === 'object')
+        const effective = usesRemembered ? remembered : value
+        const upper = typeof effective === 'number' ? (Number.isInteger(effective) ? 'INT' : 'FLOAT') : typeof effective === 'boolean' ? 'BOOLEAN' : 'STRING'
+        const field = fieldFor(nodeId, { name: fieldName, type: upper, required: false }, effective)
+        if (field !== null) fields.push(usesRemembered ? { ...field, fromLastRun: true } : field)
       }
     }
     if (fields.length === 0) continue
@@ -128,6 +135,8 @@ h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-b
 .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}
 .row:last-child{margin-bottom:0}label{min-width:130px;max-width:100%;color:var(--muted);font-size:12px;word-break:break-all}
+.row.fromLast label{color:var(--accent)}
+.row.fromLast input,.row.fromLast textarea,.row.fromLast select{border-color:var(--accent)}
 input[type=text],input[type=number],textarea,select{flex:1;min-width:180px;padding:5px 9px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--text);font:inherit}
 textarea{min-height:56px;resize:vertical}button{padding:6px 14px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface);color:var(--text);cursor:pointer;font:inherit}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.mini{padding:2px 8px;font-size:12px}
@@ -250,7 +259,8 @@ export function renderPageHtml(descriptor, options = {}) {
           // 复合键 nodeId:field —— 同名字段跨节点不冲突
           const fieldId = `f-${section.nodeId}-${escapeHtml(field.field)}`
           const control = fieldControlHtml(field, fieldId, `${section.nodeId}:${field.field}`)
-          return `<div class="row"><label for="${fieldId}">${escapeHtml(field.label)}</label>${control}</div>`
+          const mark = field.fromLastRun === true ? ' <span class="chip" title="该值来自上一次运行，可手动改回">上次</span>' : ''
+          return `<div class="row${field.fromLastRun === true ? ' fromLast' : ''}"><label for="${fieldId}">${escapeHtml(field.label)}${mark}</label>${control}</div>`
         })
         .join('\n')
       return `<div class="card"><h3>${escapeHtml(section.title)}</h3>${rows}</div>`
@@ -314,6 +324,25 @@ ${PAGE_RUN_JS}
 </script>`
   return pageShell(descriptor.title, body, { extraCss: PREVIEW_CSS })
 }
+
+/** 工作台顶部三 Tab（我的工作流 / 模板 / 成果物），三页共用，齐平展示。 */
+export function workbenchTabs(active, token = '') {
+  const enc = encodeURIComponent(token)
+  const item = (key, label, href, count) => `<a class="wtab ${active === key ? 'active' : ''}" href="${href}?token=${enc}">${label}${typeof count === 'number' ? `（${count}）` : ''}</a>`
+  return `<nav class="wtabs">
+${item('mine', '我的工作流', '/ui', typeof active === 'object' ? active.mine : undefined)}
+${item('library', '模板', '/ui/library', typeof active === 'object' ? active.library : undefined)}
+${item('artifacts', '成果物', '/ui/artifacts', typeof active === 'object' ? active.artifacts : undefined)}
+</nav>`
+}
+
+/** Tab 栏样式（三页共用）。 */
+const TABS_CSS = `
+.wtabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:2px 0 16px;flex-wrap:wrap}
+.wtabs .wtab{padding:7px 16px;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;background:var(--bg);color:var(--muted);font-size:13px;margin-bottom:-1px}
+.wtabs .wtab.active{background:var(--surface);color:var(--text);font-weight:600;border-color:var(--line)}
+.wtabs .wtab:hover{color:var(--text)}
+`
 
 /** CSS：预览弹层（含缩放画布）。两页共用。 */
 const PREVIEW_CSS = `
@@ -751,7 +780,7 @@ document.addEventListener('click', function (event) {
 });
 `
 
-/** 渲染索引页：分「我的工作流 / 模板库」两个 Tab，组内按名称去重；远端条目可手动拉取。 */
+/** 渲染「我的工作流」页（三 Tab 之一）：本地工作流 + 远端工作区条目（可拉取）。 */
 export function renderIndexHtml({ mine = [], library = [], token = '' }) {
   const enc = encodeURIComponent(token)
   const pageLink = (page, extra = '') => `<a class="card" style="display:block" href="/ui/wf/${encodeURIComponent(page.name)}?token=${enc}">
@@ -760,19 +789,32 @@ export function renderIndexHtml({ mine = [], library = [], token = '' }) {
   const pullButton = (page) => `<div class="card"><b>${escapeHtml(page.title ?? page.name)}</b> <button type="button" class="mini" data-pull="${escapeHtml(page.name)}">⬇ 拉取</button>
 <div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></div>`
   const mineItems = mine.map((page) => (page.origin === 'remote' ? pullButton(page) : pageLink(page))).join('\n')
-  const libraryItems = library.map((page) => pageLink(page)).join('\n')
   const body = `
 <h1>ComfyUI 工作台</h1>
-<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 · <a href="/ui/artifacts?token=${enc}">成果物 →</a> ·
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}
+<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 ·
 <button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
-<div class="tabs">
-<button type="button" class="tab active" data-tab="mine">我的工作流（${mine.length}）</button>
-<button type="button" class="tab" data-tab="library">模板库（${library.length}）</button>
-</div>
-<div data-group="mine">${mineItems || '<div class="card">还没有我的工作流：在聊天里让 AI 生成并保存，或在「模板库」里拉取一份到本地。</div>'}</div>
-<div data-group="library" style="display:none">${libraryItems || '<div class="card">模板库暂不可达（服务端未连接或目录为空）。</div>'}</div>
+${mineItems || '<div class="card">还没有我的工作流：在「模板」里点开任一模板执行一次，或点条目的「⬇ 拉取」保存到本地。</div>'}
 `
-  return pageShell('ComfyUI 工作台', body, { extraScript: `var TOKEN = ${JSON.stringify(token)};\n${PAGE_INDEX_JS}`, extraCss: INDEX_CSS })
+  return pageShell('ComfyUI 工作台', body, { extraScript: `var TOKEN = ${JSON.stringify(token)};\n${PAGE_INDEX_JS}`, extraCss: `${INDEX_CSS}${TABS_CSS}` })
+}
+
+/** 渲染「模板」页（三 Tab 之一）：远端模板库条目，执行一次即自动存入我的工作流。 */
+export function renderLibraryHtml({ library = [], mine = [], token = '' }) {
+  const enc = encodeURIComponent(token)
+  const items = library
+    .map((page) => `<a class="card" style="display:block" href="/ui/wf/${encodeURIComponent(page.name)}?token=${enc}">
+<b>${escapeHtml(page.title ?? page.name)}</b>
+<div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''} · 打开后执行一次即自动保存到「我的工作流」</div></a>`)
+    .join('\n')
+  const body = `
+<h1>ComfyUI 工作台</h1>
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}
+<div class="sub">模板库共 ${library.length} 个 · 执行过一次后自动落入「我的工作流」；已存在时优先沿用上次运行的参数 ·
+<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+${items || '<div class="card">模板库暂不可达（服务端未连接或目录为空）。</div>'}
+`
+  return pageShell('ComfyUI 工作台 · 模板', body, { extraCss: `${INDEX_CSS}${TABS_CSS}` })
 }
 
 const ARTIFACTS_JS = `
@@ -976,6 +1018,17 @@ const ARTIFACTS_CSS = `
 button.mini.danger{border-color:var(--err);color:var(--err)}
 button.mini.danger:hover{background:rgba(192,57,43,.12)}
 .picked{outline:2px solid var(--accent);outline-offset:-2px;border-radius:8px}
+/* 同组多张：扑克牌摊开（重叠扇开，悬浮抬起看全） */
+.fan{display:flex;align-items:flex-start;padding:16px 78px 14px 8px;overflow-x:auto;overflow-y:hidden}
+.fan .mediacard{width:230px;flex:0 0 auto;margin-left:-132px;transform:rotate(-5deg);transform-origin:bottom center;transition:transform .18s ease,box-shadow .18s ease;box-shadow:0 2px 6px rgba(0,0,0,.14);background:var(--surface)}
+.fan .mediacard:first-child{margin-left:0}
+.fan .mediacard:nth-child(2n){transform:rotate(4deg)}
+.fan .mediacard:nth-child(3n){transform:rotate(-1deg) translateY(4px)}
+.fan .mediacard:hover,.fan .mediacard.picked{transform:rotate(0) translateY(-12px) scale(1.03);z-index:9;position:relative;box-shadow:0 10px 22px rgba(0,0,0,.22)}
+.fan .mediacard .thumb{flex:0 0 88px;width:88px;height:88px}
+.fan .mediacard .meta{gap:4px}
+.fan .mediacard .ops{display:none}
+.fan .mediacard:hover .ops{display:flex}
 `
 
 /** 提示词区块：正/负分列、可折叠展开全文、支持快捷赋值到工作流表单。 */
@@ -1052,15 +1105,17 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
       const hits = Array.isArray(run.hits) && run.hits.length > 0
         ? `<span class="muted">命中：${escapeHtml(run.hits.slice(0, 4).join(' / '))}</span>`
         : ''
+      const files = Array.isArray(run.localFiles) ? run.localFiles : []
+      const fanned = files.length >= 4 // 同组多张 → 扑克牌摊开（重叠）样式
       return `<section class="run"><div class="head">
 <label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${escapeHtml(run.id ?? '')}"></label>
 <b>${escapeHtml(run.name ?? 'workflow')}</b>
 <span class="chip">${escapeHtml(run.state ?? '')}</span>
-<span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${(run.localFiles ?? []).length} 件</span>
+<span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件${fanned ? ' · 重叠展示' : ''}</span>
 ${hits}
 </div>
 ${promptBlock(run, token)}
-<div class="mediaList">${cards}</div></section>`
+<div class="${fanned ? 'fan' : 'mediaList'}">${cards}</div></section>`
     })
     .join('\n')
   const excluded = runs.length - withMedia.length
@@ -1076,8 +1131,9 @@ ${promptBlock(run, token)}
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
   const { html: runCards, summary, shown } = artifactsRunsHtml({ runs, tags, token })
   const body = `
-<h1>成果物</h1>
-<div class="sub" id="runs-summary">${summary} · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
+<h1>ComfyUI 工作台</h1>
+${workbenchTabs('artifacts', token)}
+<div class="sub" id="runs-summary">${summary}</div>
 <form id="search-form" onsubmit="return false" class="searchbar">
 <div class="srow">
 <input type="text" id="q-text" placeholder="模糊检索：提示词 / 文件名 / 标签 / 参数值">
@@ -1115,5 +1171,5 @@ bindPreviewEvents('preview');
 refreshPickCount();
 ${ARTIFACTS_JS}
 </script>`
-  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}` })
+  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}` })
 }

@@ -13,7 +13,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml, artifactsRunsHtml } from './wfpage.js'
+import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
 import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
@@ -262,12 +262,42 @@ export function createWorkbenchMethods({ bridge, config }) {
     return list.some((workflow) => String(workflow?.id ?? '') === guess) ? guess : null
   }
 
+  /** 该工作流上一次成功运行的参数（复合键 values），用于「已存在则沿用上次参数」。 */
+  function lastValuesFor(name) {
+    const record = bridge
+      .listRuns(80)
+      .find((run) => run.state === 'completed' && run.form?.values !== null && run.form?.values !== undefined && (run.name === name || String(run.name).startsWith(`${name}-`)))
+    if (record === undefined) return null
+    const values = record.form.values
+    return values !== null && typeof values === 'object' && Object.keys(values).length > 0 ? values : null
+  }
+
   async function descriptorFor(name) {
     const resolved = await resolveGraph(name)
     if (resolved === null) return null
     const classes = [...new Set(Object.values(resolved.graph).map((node) => node?.class_type).filter((cls) => typeof cls === 'string' && cls.length > 0))]
     const catalog = classes.length > 0 ? await remote.nodeCatalog(classes) : {}
-    return buildPageDescriptor({ name, title: name, graph: resolved.graph, nodeInfos: catalog, notes: resolved.notes })
+    // 已有历史运行 → 表单优先带出上一次的参数（含种子/提示词等）
+    const prefill = lastValuesFor(name)
+    const notes = [...resolved.notes]
+    if (prefill !== null) notes.push(`已带出上一次运行的参数（${Object.keys(prefill).length} 项）；如需回到工作流文件原值，点上方「↻ 重新解析」。`)
+    return buildPageDescriptor({ name, title: name, graph: resolved.graph, nodeInfos: catalog, notes, prefill: prefill ?? {} })
+  }
+
+  /** 模板首次执行时落库到「我的工作流」（插件自有目录，API 图）。 */
+  function persistLocalGraph(name, graph) {
+    if (typeof config.homeDir !== 'string' || config.homeDir.length === 0) return null
+    const stem = safeFileStem(String(name).replace(/^(library|saved):/, '').replace(/\.json$/i, ''))
+    if (stem.length === 0) return null
+    const dir = join(config.homeDir, 'workflows')
+    const file = join(dir, `${stem}.json`)
+    try {
+      mkdirSync(dir, { recursive: true })
+      if (!existsSync(file)) writeFileSync(file, JSON.stringify(graph, null, 2), 'utf8')
+      return file
+    } catch {
+      return null
+    }
   }
 
   /** Tab 分组：我的工作流 = 本地主目录 + 远端非模板库条目（参与过 DSH 交互的）；模板库 = 远端 library。组内按名称去重。 */
@@ -301,6 +331,12 @@ export function createWorkbenchMethods({ bridge, config }) {
     async pageIndex({ token = '' } = {}) {
       const groups = tabGroups(await remote.remoteList())
       return { html: renderIndexHtml({ mine: groups.mine, library: groups.library, token }) }
+    },
+
+    /** 模板页（三 Tab 之一）：只列远端模板库条目。 */
+    async pageLibrary({ token = '' } = {}) {
+      const groups = tabGroups(await remote.remoteList())
+      return { html: renderLibraryHtml({ library: groups.library, mine: groups.mine, token }) }
     },
 
     async pageWorkflow(name, { token = '' } = {}) {
@@ -364,7 +400,12 @@ export function createWorkbenchMethods({ bridge, config }) {
       const resolved = await resolveGraph(workflow)
       if (resolved === null) return { ok: false, error: `工作流 ${workflow} 不存在` }
       applyValues(resolved.graph, values)
-      const runName = typeof name === 'string' && name.trim().length > 0 ? name : isPlainStem(workflow) ? workflow : 'workflow'
+      // 名统一为「文件词干」：模板 id（library:x.json）跑完后与「我的工作流」条目同名，
+      // 这样下次打开才能匹配到上次运行的参数。
+      const stem = safeFileStem(String(workflow).replace(/^(library|saved):/, '').replace(/\.json$/i, '')) || 'workflow'
+      const runName = typeof name === 'string' && name.trim().length > 0 ? name : stem
+      // 模板（远端）跑过即落库到「我的工作流」，之后从本地文件解析（已存在则沿用上次参数）
+      if (resolved.origin === 'remote') persistLocalGraph(runName, resolved.graph)
       return daemon.start({
         workflow: runName,
         name: runName,

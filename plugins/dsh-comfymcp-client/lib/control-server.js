@@ -287,6 +287,8 @@ export function createControlServer(options = {}) {
       let outcome
       if (pathname === '/ui/artifacts') {
         outcome = methods.pageArtifacts !== undefined ? await methods.pageArtifacts({ token: queryToken }) : { error: 'artifacts page unavailable' }
+      } else if (pathname === '/ui/library') {
+        outcome = methods.pageLibrary !== undefined ? await methods.pageLibrary({ token: queryToken }) : { error: 'library page unavailable' }
       } else if (pathname.startsWith('/ui/wf/')) {
         const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
         outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
