@@ -6,6 +6,7 @@ import { join } from 'node:path'
 /** Local defaults mirroring the bundle patch row. */
 export const DEFAULTS = Object.freeze({
   endpoint: 'http://127.0.0.1:18800/mcp',
+  authToken: '',
   hostCommand: 'node',
   hostEntry: '',
   workflowDirs: [],

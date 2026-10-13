@@ -3,6 +3,20 @@
 > 版本 0.2.1（迭代分支 `dev-snapshot-20261013-0.2.1`；上一稳定分支 `snapshot-0.2.0`）· 更新日期 2026-10-13
 > 配套文档：[操作手册](operations.md) · [协议说明](protocol.md) · [迭代记录](roadmap.md) · [总览 README](../README.md)
 
+## 0. 传输方式（v0.2.1）
+
+| 模式 | 传输 | 说明 |
+| --- | --- | --- |
+| 内置服务（`embeddedServer=true`） | stdio | 插件自带 comfy-mcp-server（随机端口）+ 本地 stdio 宿主；单机推荐，无需配置端点 |
+| 远程（`embeddedServer=false`） | **Streamable HTTP** | 直接 POST JSON-RPC 到「服务端点」（单端点，兼容 `application/json` 与 `text/event-stream` 响应），沿用 `Mcp-Session-Id` 会话；可选「访问令牌」作为 `Authorization: Bearer` |
+
+要点：
+
+- **远程模式不再 spawn 本地 stdio 宿主**，也不再要求 `hostEntry`（此前远程也因宿主入口缺失而报错）。
+- 工具名兼容：插件内部仍用宿主工具名（`connection_status` / `list_remote_tools` / `call_remote_tool` / `fetch_artifacts`），远程模式下由门面翻译成原生工具（`server_info` / `tools/list` / `tools/call` / `fetch_outputs`），上层与运行链路无感。
+- 切换模式，或修改端点/访问令牌后，连接立即按新配置重建（无需重启 DSH）。
+- 快速自检：`node scripts/verify-remote-http.mjs`（起真实服务端 → 远程直连 → 探测 / 工具目录 / 远程调用）。
+
 ## 1. 架构总览
 
 ```
@@ -10,10 +24,8 @@
    │  comfymcp_* 工具调用 / 结构化表单（ask-user-question）
    ▼
 dsh-comfymcp-client（DSH 插件，纯 JS 无构建）
-   │  spawn stdio
-   ▼
-MCP 宿主 fux-comfymcp-host.mjs（FUX runtime + @fux-mcp/comfy-client 通用插件）
-   │  MCP Streamable HTTP :18800
+   │  【远程模式】MCP Streamable HTTP（单端点 POST JSON-RPC，兼容 SSE）
+   │  【内置模式】spawn stdio → MCP 宿主 fux-comfymcp-host.mjs（FUX runtime + @fux-mcp/comfy-client）
    ▼
 comfy-mcp-server 参考服务端（Node，可配 mock / stdio 两种后端）
    │  mock：内置 13 工具离线联调，出 PNG

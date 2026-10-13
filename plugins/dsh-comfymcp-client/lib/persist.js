@@ -44,6 +44,7 @@ export function writeOverlay(path, patch) {
 
 export const OVERLAY_KEYS = [
   'endpoint',
+  'authToken',
   'workflowDirs',
   'saveSubdir',
   'artifactsDir',

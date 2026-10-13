@@ -15,6 +15,11 @@
 | 5 | 卸载开关行补运行期状态说明（置灰原因 / 是否整合 / 已移除几个节点） | `client.js` 模型卸载段 | ✅ |
 | 6 | 测试：卸载节点移除与沿用两路（表单层 3 例 + 边界） | `test/forms.test.js` | ✅ |
 
+| 7 | **远程传输改造**：远程模式不再 spawn 本地 stdio 宿主，改用 **MCP Streamable HTTP 直连**端点（单端点 POST + JSON/SSE 双响应形态 + Mcp-Session-Id 会话 + Bearer 令牌）；宿主工具名（connection_status / list_remote_tools / call_remote_tool / fetch_artifacts）经门面翻译成原生工具，上层无感 | lib/mcp-http.js、lib/bridge.js | ✅ |
+| 8 | 修远程报错根因：探测曾对**远程模式**也强制要求 hostEntry（必然报「宿主入口未配置」）；现在仅内置/stdio 模式要求，远程报传输/端点错误 | lib/bridge.js probe() | ✅ |
+| 9 | 配置切换即时生效：embeddedServer / endpoint / authToken 变化时丢弃旧客户端并重建（此前一直复用旧 stdio 子进程） | lib/bridge.js pplyOverlay() | ✅ |
+| 10 | 设置页：远程模式显式标注「Streamable HTTP」，新增「访问令牌」；传输/会话与宿主入口按模式分开展示 | client.js | ✅ |
+| 11 | 测试：HTTP 客户端 6 例（JSON/SSE、会话头、Bearer、连接失败/超时/无端点、门面翻译）+ 桥接 4 例（传输选择、远程探测、切换重建） | 	est/mcp-http.test.js、	est/bridge.test.js | ✅ |
 **下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 
 ## snapshot-0.2.0（稳定主分支，2026-10-13 封板）✅
