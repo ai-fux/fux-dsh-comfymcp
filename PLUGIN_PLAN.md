@@ -111,4 +111,4 @@ ComfyUI http://127.0.0.1:8000（已手动安装 comfyui-unload-model）
 
 - 每层 vitest/node --test：happy path + 错误路径 + 边界；FUX 插件 coverage ≥ 80% statements。
 - 端到端验证脚本 `scripts/verify-e2e.mjs`：对照 A1–A4 出报告（需要 ComfyUI 运行 + comfy-mcp 服务启动）。
-- 分支：`snapshot-0.1.0`（公开发布分支）；版本三段式规约，插件 `manifest.version` = `package.json#version`。
+- 分支：`master`（公开主干，唯一公开分支）；版本三段式规约，插件 `manifest.version` = `package.json#version`。

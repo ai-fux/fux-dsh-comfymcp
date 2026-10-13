@@ -130,7 +130,8 @@ Client 半区：`settings.section`（id=comfymcp）+ `tool.call.toolview`（keye
 
 ## 版本与分支
 
-- 远程：GitHub `easymor2024-ychen/dsh-comfy-mcp`，默认分支 `snapshot-0.1.0`，CI 见 `.github/workflows/ci.yml`。
+- 远程：GitHub `easymor2024-ychen/dsh-comfy-mcp`，公开主干 `master`（唯一公开分支），CI 见 `.github/workflows/ci.yml`。
+- 迭代：`dev-snapshot-<yyyyMMdd>-<version>` 本地开发，内容检查通过后合并 `master` 推送。
 - 标签：`v0.1.0`；版本三段 `X.Y.Z`（平台 SEMVER 限制），发布时打 `vX.Y.Z` tag。
 
 ## 本次迭代（0.1.0-MVP）完成内容

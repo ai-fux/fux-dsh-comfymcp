@@ -24,7 +24,8 @@
 
 ## 分支与版本
 
-- 默认分支：`snapshot-0.1.0`；迭代开发分支：`dev-snapshot-<yyyyMMdd>-<version>`。
+- 分支模型：`master` 为公开主干（唯一公开分支）；版本分支 `snapshot-<version>` 按需发布；
+  迭代开发分支 `dev-snapshot-<yyyyMMdd>-<version>` 留在本地，内容检查通过后合并 `master` 再推送。
 - 版本：三段 `X.Y.Z`（平台 SEMVER 限制）；发布时打 `vX.Y.Z` tag。
 - 远程推送需用户二次确认；严禁强推已发布分支。
 

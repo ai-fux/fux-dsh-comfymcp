@@ -1,6 +1,6 @@
 # dsh-comfymcp 部署文档
 
-> 版本 0.1.0（分支 `snapshot-0.1.0`，tag `v0.1.0`）
+> 版本 0.1.0（`master`，tag `v0.1.0`）
 > 配套文档：[操作手册](operations.md) · [协议说明](protocol.md) · [总览 README](../README.md)
 
 ## 1. 架构总览
