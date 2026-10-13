@@ -35,8 +35,8 @@ const stubElement = () => ({
   classList: { add() {}, remove() {}, toggle() {} },
   addEventListener() {}, appendChild() {}, setAttribute() {}, querySelector: () => null, closest: () => null,
 })
-const documentStub = { addEventListener() {}, getElementById: stubElement, querySelectorAll: () => [] }
-const windowStub = {}
+const documentStub = { addEventListener() {}, getElementById: stubElement, querySelector: () => null, querySelectorAll: () => [] }
+const windowStub = { addEventListener() {}, removeEventListener() {} }
 const fetchStub = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, value: [] }) })
 const factory = new Function('document', 'window', 'fetch', 'setTimeout', `${code}\n;return { groupHtml: groupHtml, paramSummaryText: paramSummaryText };`)
 const render = factory(documentStub, windowStub, fetchStub, () => {})

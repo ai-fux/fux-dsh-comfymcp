@@ -125,6 +125,20 @@ describe('page scripts stay parseable', () => {
     expect(code).toContain('data-preview2=')
     expect(code).toContain('data-history-export=')
     expect(code).toContain('loadHistory(); // 结束后刷新成果分组')
+    // 点击缩略图内的 <img> 也要能打开预览（closest 向上找承载节点）
+    expect(code).toContain("t.closest('[data-preview2]')")
+    // 图片缩放：滚轮 / 工具按钮 / 拖拽 / 快捷键；视频音频播放
+    expect(code).toContain('function zoomBy(')
+    expect(code).toContain("modal.addEventListener('wheel'")
+    expect(html).toContain('data-zoom="in"')
+    expect(code).toContain("event.key === '+'")
+    expect(html).toContain('id="zoom-label"')
+    expect(code).toContain("'<video src=\"' + url")
+    expect(code).toContain("'<audio src=\"' + url")
+    // 删除：单件删除 + 整组移除
+    expect(code).toContain('data-remove-file=')
+    expect(code).toContain('data-drop-run=')
+    expect(code).toContain("api('/api/artifacts/remove'")
   })
 
   it('workflow page binds submit and blocks native navigation (boundary)', () => {

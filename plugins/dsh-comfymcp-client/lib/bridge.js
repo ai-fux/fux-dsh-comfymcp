@@ -356,6 +356,15 @@ export class ComfymcpBridge {
     return next
   }
 
+  /** 删除一条运行记录（页面「移除该组」用），并落盘。 */
+  removeRun(id) {
+    if (!this.runs.has(id)) return false
+    this.runs.delete(id)
+    this.runOrder = this.runOrder.filter((entry) => entry !== id)
+    this.persistRuns()
+    return true
+  }
+
   /** 结构化数据：运行记录落盘 <dataDir>/runs.json（尽力而为，失败仅记日志）。 */
   persistRuns() {
     const dataDir = this.config?.dataDir

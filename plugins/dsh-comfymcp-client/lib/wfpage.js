@@ -184,6 +184,8 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .runGroup .mediaRow .item .big{font-size:28px;color:var(--accent)}
 .runGroup .mediaRow .item .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:1px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .runGroup .rgOps{display:flex;gap:6px;flex-wrap:wrap}
+.runGroup .mediaRow .item .del{position:absolute;right:4px;top:4px;width:20px;height:20px;padding:0;border-radius:6px;border:1px solid rgba(255,255,255,.5);background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:1;cursor:pointer}
+.runGroup .mediaRow .item .del:hover{background:var(--err);border-color:var(--err)}
 .history .empty{color:var(--muted);font-size:13px}
 `
 
@@ -268,8 +270,7 @@ export function renderPageHtml(descriptor, options = {}) {
   const body = `
 <div class="top"><div><h1>${escapeHtml(descriptor.title)}</h1>
 <div class="sub">工作流 ${escapeHtml(descriptor.workflow)} · ${descriptor.nodeCount} 节点 · ${sections.length} 组参数 · 生成于 ${escapeHtml(descriptor.generatedAt)} · ${refreshBtn}</div></div>
-<a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>
-${noteBar}
+<a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>${noteBar}
 ${quickBar}
 <form id="run-form" onsubmit="return false">
 ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
@@ -291,8 +292,14 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
   <div class="history" id="history"></div>
 </div>
 <div class="modal" id="preview2" hidden><div class="box">
-<div class="bar2"><span id="preview2-name"></span><button type="button" class="mini" id="preview2-close">关闭 ✕</button></div>
-<div id="preview2-body"></div></div></div>
+<div class="bar2"><span id="preview2-name"></span><span class="tools">
+<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
+<button type="button" class="mini" data-zoom="in">＋</button>
+<button type="button" class="mini" data-zoom="reset">重置</button>
+<button type="button" class="mini" id="preview2-close">关闭 ✕</button></span></div>
+<div id="preview2-body"></div>
+<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div>
+</div></div>
 <div class="modal" id="textmodal" hidden><div class="box wide">
 <div class="bar2"><span id="textmodal-name">编辑全文</span><span>
 <button type="button" class="mini" id="textmodal-save">保存到表单</button>
@@ -305,10 +312,109 @@ var API_CFG = ${JSON.stringify(apiCfg)};
 var WORKFLOW = ${JSON.stringify(descriptor.workflow)};
 ${PAGE_RUN_JS}
 </script>`
-  return pageShell(descriptor.title, body)
+  return pageShell(descriptor.title, body, { extraCss: PREVIEW_CSS })
 }
 
+/** CSS：预览弹层（含缩放画布）。两页共用。 */
+const PREVIEW_CSS = `
+.modal{position:fixed;inset:0;background:rgba(12,14,17,.82);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
+.modal[hidden]{display:none}
+.modal .box{background:var(--surface);border-radius:10px;padding:10px 12px;max-width:94vw;max-height:90vh;display:flex;flex-direction:column;gap:8px;position:relative}
+.modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}
+.modal .bar2 .tools{display:flex;gap:6px;align-items:center}
+.modal .stage{overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:8px;min-width:min(70vw,320px);min-height:200px}
+.modal .stage img{max-width:88vw;max-height:70vh;display:block;border-radius:6px;transform-origin:center center;cursor:grab;user-select:none}
+.modal .stage img.dragging{cursor:grabbing}
+.modal video{max-width:88vw;max-height:70vh;display:block;border-radius:6px;background:#000}
+.modal audio{width:min(560px,84vw);display:block;margin:24px auto}
+.modal .zoomHint{color:var(--muted);font-size:11px;text-align:right}
+`
+
+/**
+ * 预览器脚本：两页共用（图片滚轮缩放/拖拽平移/重置，视频音频就地播放）。
+ * 需要调用方提供 openPreview(target) —— 由各页在自己的点击处理里按属性名分派。
+ */
+const PREVIEW_JS = `
+var ZOOM = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 };
+function zoomApply(img) {
+  img.style.transform = 'translate(' + ZOOM.x + 'px,' + ZOOM.y + 'px) scale(' + ZOOM.scale + ')';
+  var label = document.getElementById('zoom-label');
+  if (label) label.textContent = Math.round(ZOOM.scale * 100) + '%';
+}
+function zoomReset() {
+  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
+  var img = document.querySelector('.modal .stage img');
+  if (img) zoomApply(img);
+}
+function zoomBy(factor) {
+  var img = document.querySelector('.modal .stage img');
+  if (!img) return;
+  ZOOM.scale = Math.max(0.1, Math.min(8, ZOOM.scale * factor));
+  zoomApply(img);
+}
+function fillPreview(bodyId, kind, url, name) {
+  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
+  var body = document.getElementById(bodyId);
+  if (kind === 'video') body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>';
+  else if (kind === 'audio') body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>';
+  else if (kind === 'image') body.innerHTML = '<div class="stage"><img src="' + url + '" alt="" draggable="false"></div>';
+  else body.innerHTML = '<div class="muted">该类型不支持内嵌预览，请下载后查看。</div>';
+  var label = document.getElementById('zoom-label');
+  if (label) label.textContent = '100%';
+  var hint = document.getElementById('zoom-hint');
+  if (hint) hint.hidden = kind !== 'image';
+}
+function bindPreviewEvents(modalId) {
+  var modal = document.getElementById(modalId);
+  if (!modal) return;
+  modal.addEventListener('wheel', function (event) {
+    var img = modal.querySelector('.stage img');
+    if (!img) return;
+    event.preventDefault();
+    zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+  modal.addEventListener('mousedown', function (event) {
+    var img = modal.querySelector('.stage img');
+    if (!img || event.target !== img) return;
+    ZOOM.dragging = true; ZOOM.startX = event.clientX - ZOOM.x; ZOOM.startY = event.clientY - ZOOM.y;
+    img.classList.add('dragging');
+    event.preventDefault();
+  });
+  window.addEventListener('mousemove', function (event) {
+    if (!ZOOM.dragging) return;
+    var img = modal.querySelector('.stage img');
+    if (!img) return;
+    ZOOM.x = event.clientX - ZOOM.startX; ZOOM.y = event.clientY - ZOOM.startY;
+    zoomApply(img);
+  });
+  window.addEventListener('mouseup', function () {
+    ZOOM.dragging = false;
+    var img = modal.querySelector('.stage img');
+    if (img) img.classList.remove('dragging');
+  });
+  modal.addEventListener('dblclick', function (event) {
+    if (event.target.tagName !== 'IMG') return;
+    ZOOM.scale = ZOOM.scale > 1.01 ? 1 : 2;
+    ZOOM.x = 0; ZOOM.y = 0;
+    zoomApply(event.target);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (modal.hidden) return;
+    if (event.key === 'Escape') closePreviewModal(modalId);
+    else if (event.key === '+' || event.key === '=') zoomBy(1.2);
+    else if (event.key === '-') zoomBy(1 / 1.2);
+    else if (event.key === '0') zoomReset();
+  });
+}
+function closePreviewModal(modalId) {
+  var body = document.getElementById(modalId + '-body');
+  if (body) body.innerHTML = ''; // 清空以停止播放
+  document.getElementById(modalId).hidden = true;
+}
+`
+
 const PAGE_RUN_JS = `
+${PREVIEW_JS}
 function api(path, body) {
   return fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
@@ -392,11 +498,12 @@ function groupHtml(run, index) {
   var media = (run.files || []).map(function (file) {
     var url = artifactUrl(file);
     var inner = file.kind === 'image'
-      ? '<img src="' + url + '" alt="" loading="lazy">'
+      ? '<img src="' + url + '" alt="" loading="lazy" draggable="false">'
       : '<span class="big">' + (file.kind === 'video' ? '▶' : file.kind === 'audio' ? '♪' : '📄') + '</span>';
-    var tip = (file.filename || '') + '\\n' + hover;
+    var tip = (file.filename || '') + '\\n' + hover + '\\n（点击预览：图片可滚轮缩放）';
     return '<div class="item" data-preview2="' + esc(file.path || '') + '" data-kind="' + esc(file.kind || 'file') + '" data-name="' + esc(file.filename || '') + '" title="' + esc(tip) + '">'
-      + inner + '<span class="cap">' + esc(file.filename || '') + '</span></div>';
+      + inner + '<span class="cap">' + esc(file.filename || '') + '</span>'
+      + '<button type="button" class="del" title="删除该成果物（含磁盘文件）" data-remove-file="' + esc(file.path || '') + '" data-remove-run="' + esc(run.runId || '') + '">✕</button></div>';
   }).join('');
   var body = media || '<div class="muted">（本次无成果物）</div>';
   return '<section class="runGroup" title="' + esc(hover) + '">'
@@ -408,6 +515,7 @@ function groupHtml(run, index) {
     + '<details class="params"><summary>参数（' + ((run.params || []).length) + '）· 鼠标移入亦可查看</summary><table class="pv">' + paramRows(run.params) + '</table></details>'
     + '<div class="mediaRow">' + body + '</div>'
     + '<div class="rgOps"><button type="button" class="mini" data-history-export="' + esc(run.runId || '') + '">⇩ 导出该次 JSON</button>'
+    + '<button type="button" class="mini" data-drop-run="' + esc(run.runId || '') + '" title="仅从展示中移除该次运行（磁盘文件保留）">✕ 移除该组</button>'
     + '<a class="mini" style="padding:2px 8px" href="/ui/artifacts?token=' + encodeURIComponent(API_CFG.token || '') + '">成果物库 →</a></div>'
     + '</section>';
 }
@@ -495,29 +603,50 @@ function start(makeCall, label) {
 document.addEventListener('click', function (event) {
   var t = event.target;
   if (t.id === 'preview2-close' || t.id === 'preview2') {
-    document.getElementById('preview2-body').innerHTML = '';
-    document.getElementById('preview2').hidden = true;
+    closePreviewModal('preview2');
     return;
   }
+  var zoomAction = t.getAttribute && t.getAttribute('data-zoom');
+  if (zoomAction) {
+    if (zoomAction === 'in') zoomBy(1.25);
+    else if (zoomAction === 'out') zoomBy(1 / 1.25);
+    else zoomReset();
+    return;
+  }
+  if (t.id === 'history-reload') { loadHistory(); return; }
   var historyExport = t.getAttribute && t.getAttribute('data-history-export');
   if (historyExport) {
     location.href = '/export?runs=' + encodeURIComponent(historyExport) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
     return;
   }
-  var preview2 = t.getAttribute && t.getAttribute('data-preview2');
-  if (preview2) {
-    var kind2 = t.getAttribute('data-kind') || 'file';
-    var url2 = '/artifact?path=' + encodeURIComponent(preview2) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
-    document.getElementById('preview2-name').textContent = t.getAttribute('data-name') || '';
-    var holder = document.getElementById('preview2-body');
-    if (kind2 === 'video') holder.innerHTML = '<video src="' + url2 + '" controls autoplay playsinline></video>';
-    else if (kind2 === 'audio') holder.innerHTML = '<audio src="' + url2 + '" controls autoplay></audio>';
-    else if (kind2 === 'image') holder.innerHTML = '<img src="' + url2 + '" alt="">';
-    else holder.innerHTML = '<div class="muted">该类型不支持内嵌预览，请用成果物库下载。</div>';
+  var removeTarget = t.closest ? t.closest('[data-remove-file]') : null;
+  if (removeTarget) {
+    var removePath = removeTarget.getAttribute('data-remove-file');
+    var removeRun = removeTarget.getAttribute('data-remove-run') || '';
+    if (!confirm('删除该成果物？\\n\\n将从展示与运行记录中移除，并删除磁盘文件（不可恢复）。')) return;
+    api('/api/artifacts/remove', { runId: removeRun, path: removePath, deleteFile: true })
+      .then(function () { state('已删除该成果物', false); loadHistory(); })
+      .catch(function (error) { alert('删除失败：' + error.message); });
+    return;
+  }
+  var dropGroup = t.getAttribute && t.getAttribute('data-drop-run');
+  if (dropGroup) {
+    if (!confirm('把该次运行整组从展示中移除？（磁盘文件保留，可在成果物库查看）')) return;
+    api('/api/artifacts/remove', { runId: dropGroup, dropRun: true })
+      .then(function () { loadHistory(); })
+      .catch(function (error) { alert('移除失败：' + error.message); });
+    return;
+  }
+  var previewHost = t.closest ? t.closest('[data-preview2]') : null;
+  if (previewHost) {
+    var kind2 = previewHost.getAttribute('data-kind') || 'file';
+    var path2 = previewHost.getAttribute('data-preview2');
+    var url2 = '/artifact?path=' + encodeURIComponent(path2) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
+    document.getElementById('preview2-name').textContent = previewHost.getAttribute('data-name') || '';
+    fillPreview('preview2-body', kind2, url2, previewHost.getAttribute('data-name') || '');
     document.getElementById('preview2').hidden = false;
     return;
   }
-  if (t.id === 'history-reload') { loadHistory(); return; }
   if (t.id === 'textmodal-close' || t.id === 'textmodal') {
     document.getElementById('textmodal').hidden = true;
     return;
@@ -581,6 +710,7 @@ document.getElementById('run-form').addEventListener('submit', function (event) 
   start(function () { return api('/api/run', { workflow: WORKFLOW, values: collectValues() }); }, '执行中…');
 });
 // 页面加载即恢复：执行中的进度，或历史成果分组（刷新不丢）
+bindPreviewEvents('preview2');
 loadHistory();
 api('/api/run/status?workflow=' + encodeURIComponent(WORKFLOW)).then(function (status) {
   applyStatus(status, true);
@@ -646,6 +776,7 @@ export function renderIndexHtml({ mine = [], library = [], token = '' }) {
 }
 
 const ARTIFACTS_JS = `
+${PREVIEW_JS}
 var API_CFG = ${JSON.stringify({ token: '' })}; API_CFG.token = TOKEN;
 function api(path, body) {
   return fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -655,15 +786,17 @@ function api(path, body) {
 }
 function ask(label, current) { var v = prompt(label, current || ''); return v === null ? null : v.trim(); }
 function mediaUrl(path) { return '/artifact?path=' + encodeURIComponent(path) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : ''); }
-function closePreview() {
-  var modal = document.getElementById('preview');
-  var body = document.getElementById('preview-body');
-  body.innerHTML = ''; // 停止播放
-  modal.hidden = true;
-}
+function closePreview() { closePreviewModal('preview'); }
 document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  var zoomAction = el.getAttribute && el.getAttribute('data-zoom');
+  if (zoomAction) {
+    if (zoomAction === 'in') zoomBy(1.25);
+    else if (zoomAction === 'out') zoomBy(1 / 1.25);
+    else zoomReset();
+    return;
+  }
   if (el.id === 'export-all') {
     var ids = (window.__runIds || []).join(',');
     if (!ids) { alert('没有可导出的运行'); return; }
@@ -696,18 +829,13 @@ document.addEventListener('click', function (event) {
       .catch(function (error) { el.disabled = false; el.textContent = original; alert('赋值失败：' + error.message); });
     return;
   }
-  var previewPath = el.getAttribute('data-preview') || (el.parentElement && el.parentElement.getAttribute && el.parentElement.getAttribute('data-preview'));
-  if (previewPath) {
-    var holder = el.getAttribute('data-preview') ? el : el.parentElement;
-    var kind = holder.getAttribute('data-kind') || 'file';
-    var name = holder.getAttribute('data-name') || '';
-    var url = mediaUrl(previewPath);
+  var previewHost = el.closest ? el.closest('[data-preview]') : null;
+  if (previewHost) {
+    var kind = previewHost.getAttribute('data-kind') || 'file';
+    var name = previewHost.getAttribute('data-name') || '';
+    var url = mediaUrl(previewHost.getAttribute('data-preview'));
     document.getElementById('preview-name').textContent = name;
-    var body = document.getElementById('preview-body');
-    if (kind === 'video') body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>';
-    else if (kind === 'audio') body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>';
-    else if (kind === 'image') body.innerHTML = '<img src="' + url + '" alt="">';
-    else body.innerHTML = '<div class="muted">该类型不支持内嵌预览，请使用下载。</div>';
+    fillPreview('preview-body', kind, url, name);
     document.getElementById('preview').hidden = false;
     return;
   }
@@ -842,13 +970,19 @@ ${promptBlock(run, token)}
 </div>
 ${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}
 <div class="modal" id="preview" hidden><div class="box">
-<div class="bar2"><span id="preview-name"></span><button type="button" class="mini" id="preview-close">关闭 ✕</button></div>
-<div id="preview-body"></div></div></div>
+<div class="bar2"><span id="preview-name"></span><span class="tools">
+<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
+<button type="button" class="mini" data-zoom="in">＋</button>
+<button type="button" class="mini" data-zoom="reset">重置</button>
+<button type="button" class="mini" id="preview-close">关闭 ✕</button></span></div>
+<div id="preview-body"></div>
+<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div></div></div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
 window.__runIds = ${JSON.stringify(withMedia.map((run) => run.id ?? null).filter(Boolean))};
+bindPreviewEvents('preview');
 ${ARTIFACTS_JS}
 </script>`
-  return pageShell('成果物', body, { extraCss: ARTIFACTS_CSS })
+  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}` })
 }

@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createWorkbenchMethods } from '../lib/workbench.js'
@@ -244,6 +245,51 @@ describe('workbench prompt assign / export', () => {
     expect(exported.filename).toMatch(/^comfymcp-artifacts-.*\.json$/)
     const only = await workbench.exportArtifacts({ ids: 'r2' })
     expect(only.runs).toBe(0)
+  })
+})
+
+describe('workbench artifact removal', () => {
+  it('removes a registered artifact and optionally deletes the file', async () => {
+    const file = join(workdir, 'out.png')
+    await writeFile(file, 'png', 'utf8')
+    const bridge = await makeBridge({
+      getRun: (id) => (id === 'r1' ? { id: 'r1', name: 'beach', state: 'completed', localFiles: [{ path: file, filename: 'out.png', kind: 'image', bytes: 3 }] } : null),
+    })
+    const updates = []
+    bridge.updateRun = (id, patch) => {
+      updates.push({ id, patch })
+      return { id, ...patch }
+    }
+    const workbench = makeWorkbench(bridge)
+    const removed = await workbench.removeArtifact({ runId: 'r1', path: file, deleteFile: true })
+    expect(removed).toMatchObject({ ok: true, deleted: true, remaining: 0 })
+    expect(updates[0].patch.localFiles).toEqual([])
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('refuses unregistered paths and missing runs (boundary)', async () => {
+    const bridge = await makeBridge({
+      getRun: (id) => (id === 'r1' ? { id: 'r1', localFiles: [{ path: join(workdir, 'a.png') }] } : null),
+    })
+    const workbench = makeWorkbench(bridge)
+    await expect(workbench.removeArtifact({ runId: 'nope', path: 'x' })).resolves.toMatchObject({ ok: false })
+    await expect(workbench.removeArtifact({ runId: 'r1', path: 'C:\\windows\\system32\\cmd.exe' })).resolves.toMatchObject({ ok: false })
+    expect((await workbench.removeArtifact({ runId: 'r1', path: 'C:\\x' })).reason).toContain('未登记')
+    await expect(workbench.removeArtifact({ runId: '' })).resolves.toMatchObject({ ok: false })
+  })
+
+  it('drops a whole run group without deleting files', async () => {
+    const dropped = []
+    const bridge = await makeBridge({
+      getRun: () => ({ id: 'r9', name: 'beach', localFiles: [{ path: join(workdir, 'keep.png') }] }),
+      removeRun: (id) => {
+        dropped.push(id)
+        return true
+      },
+    })
+    const workbench = makeWorkbench(bridge)
+    await expect(workbench.removeArtifact({ runId: 'r9', dropRun: true })).resolves.toMatchObject({ ok: true, dropped: 'r9' })
+    expect(dropped).toEqual(['r9'])
   })
 })
 

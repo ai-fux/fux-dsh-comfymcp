@@ -11,7 +11,7 @@
  * - 工作流来源：本地主目录 JSON 优先，缺省回落远端模板库（get_workflow，
  *   服务端已把 UI 格式转换为 API 图）。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
@@ -465,6 +465,39 @@ export function createWorkbenchMethods({ bridge, config }) {
       const rerun = buildQuickRerun(lastRun ?? null, entry)
       if (rerun.ok !== true) return { ok: false, reason: rerun.reason }
       return daemon.start({ workflow: rerun.name, name: rerun.name, graph: rerun.graph, values: rerun.values, subdir: config.saveSubdir })
+    },
+
+    /**
+     * 删除成果物（成果区「✕ 删除」与「移除该组」）：
+     * - dropRun=true → 仅移除该次运行记录（磁盘文件保留）；
+     * - 指定 path → 从记录移除该文件，deleteFile=true 时一并删盘。
+     * 安全：只允许删除「确实登记在这条运行记录里」的路径，避免任意路径删除。
+     */
+    async removeArtifact({ runId, path: targetPath, deleteFile = false, dropRun = false } = {}) {
+      const id = String(runId ?? '').trim()
+      if (id.length === 0) return { ok: false, reason: '缺少运行标识' }
+      const record = bridge.getRun(id)
+      if (record === null || record === undefined) return { ok: false, reason: `找不到运行记录 ${id}` }
+      if (dropRun === true) {
+        bridge.removeRun?.(id)
+        return { ok: true, dropped: id }
+      }
+      const path = String(targetPath ?? '')
+      const files = Array.isArray(record.localFiles) ? record.localFiles : []
+      const hit = files.find((file) => file?.path === path)
+      if (hit === undefined) return { ok: false, reason: '该文件不属于这条运行记录（拒绝删除未登记的路径）' }
+      const kept = files.filter((file) => file?.path !== path)
+      bridge.updateRun?.(id, { localFiles: kept })
+      let deleted = false
+      if (deleteFile === true) {
+        try {
+          rmSync(path, { force: true })
+          deleted = true
+        } catch (error) {
+          return { ok: false, reason: `已从记录移除，但删除文件失败：${error instanceof Error ? error.message : String(error)}` }
+        }
+      }
+      return { ok: true, runId: id, removed: path, deleted, remaining: kept.length }
     },
 
     async listArtifacts() {
