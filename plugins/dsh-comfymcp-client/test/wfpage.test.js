@@ -221,4 +221,34 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(empty).toContain('已忽略 1 次无成果物记录')
     expect(empty).not.toContain('x</b>')
   })
+
+  it('artifacts page supports search, picking and batch delete', () => {
+    const run = {
+      id: 'r1', name: 'beach', state: 'completed', seed: 1,
+      prompts: { positive: 'sunset', negative: '' },
+      localFiles: [{ path: 'C:\\a\\x.png', filename: 'x.png', kind: 'image', bytes: 3, key: 'k1' }],
+    }
+    const html = renderArtifactsHtml({ runs: [run], tags: { k1: { tags: ['夕阳'], fields: { 尺寸: '768' } } }, token: 'tk' })
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    // 检索表单：模糊词 / 标签 / 参数 / 动态字段 + 与或
+    expect(html).toContain('id="q-text"')
+    expect(html).toContain('id="q-tags"')
+    expect(html).toContain('id="q-params"')
+    expect(html).toContain('id="q-fields"')
+    expect(html).toContain('<option value="and">')
+    expect(html).toContain('<option value="or">')
+    expect(code).toContain("api('/api/artifacts/query'")
+    expect(code).toContain('function renderRuns(')
+    // 勾选与批量删除
+    expect(html).toContain('class="rowpick"')
+    expect(html).toContain('class="runpick"')
+    expect(html).toContain('id="pick-all"')
+    expect(html).toContain('id="pick-none"')
+    expect(html).toContain('id="remove-picked"')
+    expect(code).toContain("api('/api/artifacts/remove-batch'")
+    expect(code).toContain('function picked()')
+    // 单件删除
+    expect(html).toContain('data-remove-file=')
+    expect(code).toContain("api('/api/artifacts/remove'")
+  })
 })

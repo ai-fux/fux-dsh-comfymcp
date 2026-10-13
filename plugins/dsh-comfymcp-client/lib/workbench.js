@@ -13,12 +13,13 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml } from './wfpage.js'
+import { buildPageDescriptor, renderIndexHtml, renderPageHtml, renderArtifactsHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
 import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
-import { createRunDaemon } from './rund.js'
+import { createRunDaemon, summarizeRun } from './rund.js'
 import { normalizeNodeCatalog } from './nodecat.js'
+import { matchRun } from './artifactsearch.js'
 import { safeFileStem } from './bridge.js'
 import { apiGraphFromUi, hasSubgraphs, isUiWorkflow } from './wfgraph.js'
 const REMOTE_TTL_MS = 5 * 60 * 1000
@@ -498,6 +499,63 @@ export function createWorkbenchMethods({ bridge, config }) {
         }
       }
       return { ok: true, runId: id, removed: path, deleted, remaining: kept.length }
+    },
+
+    /**
+     * 成果物检索：模糊词（提示词/文件名/标签/参数值）+ 标签 + 参数 + 动态字段，
+     * 与/或由 mode 控制；返回渲染好的列表 HTML（与首屏同一份渲染逻辑）。
+     */
+    async queryArtifacts({ text: fuzzy, tags: tagText, params: paramText, fields: fieldText, mode } = {}) {
+      const records = bridge.listRuns(200)
+      const tagRecords = tagStore.all()
+      const criteria = { text: fuzzy, tagText, paramText, fieldText, mode: mode === 'or' ? 'or' : 'and' }
+      // 记录里的 params 由 summarize 从终图提取 —— 检索前先富化，否则参数条件永不命中
+      const enriched = records.map((run) => summarizeRun(run))
+      const withMedia = enriched.filter((run) => Array.isArray(run.files) && run.files.length > 0)
+      const matched = withMedia
+        .map((run) => {
+          const outcome = matchRun(run, criteria, tagRecords)
+          return { ...run, hits: outcome.hits, matched: outcome.matched }
+        })
+        .filter((run) => run.matched === true)
+      const rendered = artifactsRunsHtml({ runs: matched, tags: tagRecords, token: '' })
+      const queryText = [
+        typeof fuzzy === 'string' && fuzzy.trim().length > 0 ? `模糊「${fuzzy.trim()}」` : '',
+        typeof tagText === 'string' && tagText.trim().length > 0 ? `标签「${tagText.trim()}」` : '',
+        typeof paramText === 'string' && paramText.trim().length > 0 ? `参数「${paramText.trim()}」` : '',
+        typeof fieldText === 'string' && fieldText.trim().length > 0 ? `字段「${fieldText.trim()}」` : '',
+        criteria.mode === 'or' ? '（或）' : '（与）',
+      ].filter((part) => part.length > 0).join(' + ')
+      return {
+        ok: true,
+        html: rendered.html,
+        summary: `${rendered.shown} 条命中 · 共 ${withMedia.length} 条有产物记录`,
+        queryText,
+        runIds: matched.map((run) => run.id).filter(Boolean),
+        hits: matched.length,
+      }
+    },
+
+    /** 批量删除成果物：逐条移除并按需删盘；该组清空后自动移除记录（无模态数据不入库）。 */
+    async removeArtifactsBatch({ items, deleteFile = true } = {}) {
+      const list = Array.isArray(items) ? items : []
+      if (list.length === 0) return { ok: false, reason: '没有选中任何成果物' }
+      let deleted = 0
+      let failed = 0
+      const errors = []
+      for (const item of list) {
+        const outcome = await this.removeArtifact({ runId: item?.runId, path: item?.path, deleteFile })
+        if (outcome?.ok === true) deleted += 1
+        else {
+          failed += 1
+          if (errors.length < 3) errors.push(outcome?.reason ?? 'unknown')
+        }
+        const record = bridge.getRun(String(item?.runId ?? ''))
+        if (record !== null && record !== undefined && Array.isArray(record.localFiles) && record.localFiles.length === 0) {
+          bridge.removeRun?.(record.id)
+        }
+      }
+      return { ok: true, deleted, failed, errors }
     },
 
     async listArtifacts() {

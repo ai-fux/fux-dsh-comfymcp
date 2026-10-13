@@ -399,6 +399,29 @@ export function createControlServer(options = {}) {
       sendJson(response, 200, { ok: true, value: history?.value ?? [] }, allowedOrigin)
       return
     }
+    if (pathname === '/api/artifacts/query' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: await methods.queryArtifacts(body.payload ?? {}) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/artifacts/remove-batch' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const removed = await methods.removeArtifactsBatch(body.payload ?? {})
+      if (removed?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'remove_rejected', message: removed?.reason ?? '批量删除失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: removed }, allowedOrigin)
+      return
+    }
     if (pathname === '/api/artifacts/remove' && request.method === 'POST') {
       const body = await jsonBody()
       if (body.error !== undefined) {

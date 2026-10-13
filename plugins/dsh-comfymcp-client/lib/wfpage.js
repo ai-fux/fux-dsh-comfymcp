@@ -787,9 +787,98 @@ function api(path, body) {
 function ask(label, current) { var v = prompt(label, current || ''); return v === null ? null : v.trim(); }
 function mediaUrl(path) { return '/artifact?path=' + encodeURIComponent(path) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : ''); }
 function closePreview() { closePreviewModal('preview'); }
+function picked() {
+  return Array.prototype.slice.call(document.querySelectorAll('.rowpick:checked')).map(function (el) {
+    return { runId: el.getAttribute('data-run') || '', path: el.getAttribute('data-path') || '' };
+  });
+}
+function refreshPickCount() {
+  var groups = {}, count = 0;
+  document.querySelectorAll('.rowpick:checked').forEach(function (el) {
+    count += 1;
+    var run = el.getAttribute('data-run') || '';
+    groups[run] = (groups[run] || 0) + 1;
+  });
+  document.querySelectorAll('.runpick').forEach(function (el) {
+    el.checked = (groups[el.getAttribute('data-run') || ''] || 0) > 0;
+  });
+  var label = document.getElementById('pick-count');
+  if (label) label.textContent = '已选 ' + count + ' 件' + (Object.keys(groups).length > 1 ? '（跨 ' + Object.keys(groups).length + ' 组）' : '');
+  document.querySelectorAll('.mediacard').forEach(function (card) {
+    var box = card.querySelector('.rowpick');
+    if (box) card.classList.toggle('picked', box.checked);
+  });
+}
+function renderRuns(payload) {
+  var box = document.getElementById('runs');
+  box.innerHTML = payload && payload.html ? payload.html : '<div class="card">没有符合条件的成果物。</div>';
+  var summary = document.getElementById('runs-summary');
+  if (summary && payload) {
+    summary.innerHTML = (payload.summary || '') + (payload.queryText ? ' · 检索：' + payload.queryText : '') + ' · <a href="/ui?token=' + encodeURIComponent(TOKEN || '') + '">← 工作台</a>';
+  }
+  if (payload && payload.runIds) window.__runIds = payload.runIds;
+  refreshPickCount();
+}
+function searchPayload() {
+  return {
+    text: document.getElementById('q-text').value,
+    tags: document.getElementById('q-tags').value,
+    params: document.getElementById('q-params').value,
+    fields: document.getElementById('q-fields').value,
+    mode: document.getElementById('q-mode').value,
+  };
+}
+function runSearch() {
+  var payload = searchPayload();
+  return api('/api/artifacts/query', payload).then(function (result) { renderRuns(result); return result; })
+    .catch(function (error) { alert('检索失败：' + error.message); });
+}
+document.addEventListener('change', function (event) {
+  var el = event.target;
+  if (!el.classList) return;
+  if (el.classList.contains('rowpick')) { refreshPickCount(); return; }
+  if (el.classList.contains('runpick')) {
+    var runId = el.getAttribute('data-run') || '';
+    document.querySelectorAll('.rowpick[data-run="' + runId + '"]').forEach(function (box) { box.checked = el.checked; });
+    refreshPickCount();
+  }
+});
 document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  if (el.id === 'q-run') { runSearch(); return; }
+  if (el.id === 'q-reset') {
+    ['q-text', 'q-tags', 'q-params', 'q-fields'].forEach(function (id) { var input = document.getElementById(id); if (input) input.value = ''; });
+    document.getElementById('q-mode').value = 'and';
+    runSearch();
+    return;
+  }
+  if (el.id === 'pick-all') { document.querySelectorAll('.rowpick').forEach(function (box) { box.checked = true; }); refreshPickCount(); return; }
+  if (el.id === 'pick-none') { document.querySelectorAll('.rowpick').forEach(function (box) { box.checked = false; }); refreshPickCount(); return; }
+  if (el.id === 'remove-picked') {
+    var items = picked();
+    if (items.length === 0) { alert('请先勾选要删除的成果物'); return; }
+    if (!confirm('删除选中的 ' + items.length + ' 件成果物？\\n\\n将从记录中移除并删除磁盘文件（不可恢复）。')) return;
+    el.disabled = true;
+    api('/api/artifacts/remove-batch', { items: items, deleteFile: true })
+      .then(function (result) {
+        alert('已删除 ' + result.deleted + ' 件' + (result.failed > 0 ? '，失败 ' + result.failed + ' 件' : ''));
+        return runSearch();
+      })
+      .catch(function (error) { alert('批量删除失败：' + error.message); })
+      .then(function () { el.disabled = false; });
+    return;
+  }
+  var removeBtn = el.closest ? el.closest('[data-remove-file]') : null;
+  if (removeBtn) {
+    var path = removeBtn.getAttribute('data-remove-file');
+    var runId = removeBtn.getAttribute('data-remove-run') || '';
+    if (!confirm('删除该成果物？\\n\\n将从记录移除并删除磁盘文件（不可恢复）。')) return;
+    api('/api/artifacts/remove', { runId: runId, path: path, deleteFile: true })
+      .then(function () { return runSearch(); })
+      .catch(function (error) { alert('删除失败：' + error.message); });
+    return;
+  }
   var zoomAction = el.getAttribute && el.getAttribute('data-zoom');
   if (zoomAction) {
     if (zoomAction === 'in') zoomBy(1.25);
@@ -877,6 +966,16 @@ const ARTIFACTS_CSS = `
 .promptFull{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;max-height:none}
 .promptFull[hidden]{display:none}
 .exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 14px}
+.searchbar{display:flex;flex-direction:column;gap:6px;margin:10px 0 4px}
+.searchbar .srow{display:flex;gap:8px;flex-wrap:wrap}
+.searchbar input[type=text]{flex:1;min-width:220px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+.searchbar select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;cursor:pointer}
+.mediacard .pick{margin-right:2px}
+.run .head .pick{margin-right:4px}
+button.mini.danger{border-color:var(--err);color:var(--err)}
+button.mini.danger:hover{background:rgba(192,57,43,.12)}
+.picked{outline:2px solid var(--accent);outline-offset:-2px;border-radius:8px}
 `
 
 /** 提示词区块：正/负分列、可折叠展开全文、支持快捷赋值到工作流表单。 */
@@ -900,11 +999,8 @@ function promptBlock(run, token) {
   return `<div class="promptBox">${row('positive', '正', positive, prompts?.positiveField ?? '')}${row('negative', '负', negative, prompts?.negativeField ?? '')}</div>`
 }
 
-/**
- * 渲染成果物页：只登记「有模态数据」的运行（无产物不入库），
- * 一列卡片展示；图片放大 / 视频音频就地播放；支持单个或整体导出 JSON（base64）。
- */
-export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
+/** 成果物列表 HTML（首次渲染与检索结果复用同一份）。 */
+export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
   const tagOf = (key) => tags[key] ?? null
   // 无模态数据不入库：丢弃没有任何产物的运行记录
   const withMedia = runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0)
@@ -933,7 +1029,8 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
             : `<span class="big">${big}</span>`
           const sizeText = file.bytes ? `${Math.round(file.bytes / 1024)} KB` : ''
           return `<div class="mediacard">
-<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
+<label class="pick" title="勾选后可批量删除"><input type="checkbox" class="rowpick" data-run="${escapeHtml(run.id ?? '')}" data-path="${escapeHtml(file.path ?? '')}"></label>
+<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
 <div class="meta"><span class="fname" title="${name}">${name}</span>${chips}${fields}${bind}
 <div class="ops">
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add">＋标签</button>
@@ -944,6 +1041,7 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button>
 <a class="mini" style="padding:2px 8px" href="${src}" download>下载</a>
 <button type="button" class="mini" data-export-run="${escapeHtml(run.id ?? '')}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
+<button type="button" class="mini danger" data-remove-file="${escapeHtml(file.path ?? '')}" data-remove-run="${escapeHtml(run.id ?? '')}" title="删除该成果物（含磁盘文件）">✕ 删除</button>
 </div></div></div>`
         })
         .join('\n')
@@ -951,24 +1049,56 @@ export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
         ? (run.durationMs < 60000 ? `${Math.round(run.durationMs / 1000)}s` : `${Math.round(run.durationMs / 60000)}m`)
         : (run.finishedAt && run.startedAt ? `${Math.round((run.finishedAt - run.startedAt) / 1000)}s` : '-')
       const time = run.startedAt ? new Date(run.startedAt).toLocaleString('zh-CN') : ''
+      const hits = Array.isArray(run.hits) && run.hits.length > 0
+        ? `<span class="muted">命中：${escapeHtml(run.hits.slice(0, 4).join(' / '))}</span>`
+        : ''
       return `<section class="run"><div class="head">
+<label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${escapeHtml(run.id ?? '')}"></label>
 <b>${escapeHtml(run.name ?? 'workflow')}</b>
 <span class="chip">${escapeHtml(run.state ?? '')}</span>
 <span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${(run.localFiles ?? []).length} 件</span>
+${hits}
 </div>
 ${promptBlock(run, token)}
 <div class="mediaList">${cards}</div></section>`
     })
     .join('\n')
   const excluded = runs.length - withMedia.length
+  const summary = `${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''}`
+  return { html: runCards, summary, shown: withMedia.length, total: runs.length }
+}
+
+/**
+ * 渲染成果物页：只登记「有模态数据」的运行（无产物不入库），
+ * 一列卡片展示；支持检索（模糊/标签/参数/动态字段，与或）、勾选批量删除、
+ * 图片放大与缩放、视频音频播放、单次或整体导出 JSON（base64）。
+ */
+export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
+  const { html: runCards, summary, shown } = artifactsRunsHtml({ runs, tags, token })
   const body = `
 <h1>成果物</h1>
-<div class="sub">${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''} · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
-<div class="exportBar">
-<button type="button" class="mini" id="export-all" title="导出当前页全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
-<span class="muted">导出内容：当前已有字段（运行信息、提示词正负、标签/集合/动态字段、文件字节 base64）</span>
+<div class="sub" id="runs-summary">${summary} · <a href="/ui?token=${encodeURIComponent(token)}">← 工作台</a></div>
+<form id="search-form" onsubmit="return false" class="searchbar">
+<div class="srow">
+<input type="text" id="q-text" placeholder="模糊检索：提示词 / 文件名 / 标签 / 参数值">
+<select id="q-mode"><option value="and">全部条件（与）</option><option value="or">任一条件（或）</option></select>
+<button type="submit" class="primary" id="q-run">检索</button>
+<button type="button" class="mini" id="q-reset">重置</button>
 </div>
-${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}
+<div class="srow">
+<input type="text" id="q-tags" placeholder="标签/集合（逗号分隔，如：夕阳,旅拍）">
+<input type="text" id="q-params" placeholder="参数条件（如 steps=25, sampler_name=euler）">
+<input type="text" id="q-fields" placeholder="动态字段（如 尺寸=768）">
+</div>
+</form>
+<div class="exportBar">
+<button type="button" class="mini" id="pick-all">全选</button>
+<button type="button" class="mini" id="pick-none">全不选</button>
+<button type="button" class="mini danger" id="remove-picked">🗑 删除选中（含磁盘文件）</button>
+<span class="muted" id="pick-count">已选 0 件</span>
+<button type="button" class="mini" id="export-all" title="导出当前列表全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
+</div>
+<div id="runs">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
 <div class="modal" id="preview" hidden><div class="box">
 <div class="bar2"><span id="preview-name"></span><span class="tools">
 <button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
@@ -980,8 +1110,9 @@ ${runCards || '<div class="card">还没有带成果物的运行。先在聊天�
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
-window.__runIds = ${JSON.stringify(withMedia.map((run) => run.id ?? null).filter(Boolean))};
+window.__runIds = ${JSON.stringify(runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0).map((run) => run.id ?? null).filter(Boolean))};
 bindPreviewEvents('preview');
+refreshPickCount();
 ${ARTIFACTS_JS}
 </script>`
   return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}` })

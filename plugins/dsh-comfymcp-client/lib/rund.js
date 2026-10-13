@@ -77,6 +77,13 @@ function paramsOf(record) {
       }
     }
   }
+  if (params.length === 0 && Array.isArray(record?.params) && record.params.length > 0) {
+    // 已带参数（检索富化 / 旧记录）→ 直接沿用
+    for (const param of record.params) {
+      if (param === null || typeof param !== 'object') continue
+      push(param.node ?? '', param.field ?? '', param.value ?? '')
+    }
+  }
   if (params.length === 0 && record?.form?.values !== null && typeof record?.form?.values === 'object') {
     for (const [key, value] of Object.entries(record.form.values)) {
       if (value === null || value === undefined || typeof value === 'object') continue
@@ -95,12 +102,22 @@ function paramsOf(record) {
     .map((entry) => entry.param)
 }
 
+/**
+ * 把一条持久化记录整理成页面/检索用的形状（含从终图提取的 params）。
+ * 守护与成果物检索共用，保证两侧看到同一份数据。
+ */
+export function summarizeRun(record) {
+  return summarize(record, undefined)
+}
+
 /** 页面展示状态（进程内存 + runs.json 持久化的组合）。 */
 function summarize(record, active) {
   if (active !== undefined) return active
   if (record === null || record === undefined) return null
   return {
     runId: record.id,
+    id: record.id,
+    name: record.name,
     workflow: record.name,
     state: record.state,
     stage: record.state === 'completed' ? '已完成' : record.state === 'failed' ? '失败' : record.state,
@@ -113,6 +130,7 @@ function summarize(record, active) {
     seed: record.seed ?? null,
     prompt: record.prompt ?? '',
     files: Array.isArray(record.localFiles) ? record.localFiles : [],
+    localFiles: Array.isArray(record.localFiles) ? record.localFiles : [], // 兼容按记录字段消费的渲染层
     artifacts: Array.isArray(record.artifacts) ? record.artifacts : [],
     error: record.error ?? '',
     saved: record.form?.saved ?? null,

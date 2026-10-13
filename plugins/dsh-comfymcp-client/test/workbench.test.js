@@ -293,6 +293,76 @@ describe('workbench artifact removal', () => {
   })
 })
 
+describe('workbench artifact search and batch removal', () => {
+  const runA = {
+    id: 'r1', name: 'beach', state: 'completed', seed: 1, durationMs: 10,
+    prompts: { positive: 'sunset beach couple', negative: 'blurry' },
+    params: [{ node: '3', field: 'steps', value: '25' }],
+    localFiles: [{ path: 'C:\\a\\one.png', filename: 'one.png', kind: 'image', key: 'k1' }],
+  }
+  const runB = {
+    id: 'r2', name: 'night', state: 'completed', seed: 2, durationMs: 20,
+    prompts: { positive: 'night city', negative: '' },
+    params: [{ node: '3', field: 'steps', value: '50' }],
+    localFiles: [{ path: 'C:\\a\\two.png', filename: 'two.png', kind: 'image', key: 'k2' }],
+  }
+
+  it('queries by fuzzy prompt, tags, params and dynamic fields', async () => {
+    const bridge = await makeBridge({ listRuns: () => [runA, runB] })
+    const workbench = makeWorkbench(bridge)
+    await workbench.updateTags({ key: 'k1', patch: { tags: ['夕阳'], fields: { 尺寸: '768x512' } } })
+    await workbench.updateTags({ key: 'k2', patch: { tags: ['夜景'] } })
+
+    const byPrompt = await workbench.queryArtifacts({ text: 'sunset' })
+    expect(byPrompt.hits).toBe(1)
+    expect(byPrompt.html).toContain('one.png')
+    expect(byPrompt.html).not.toContain('two.png')
+    expect(byPrompt.queryText).toContain('模糊「sunset」')
+
+    expect((await workbench.queryArtifacts({ tags: '夜景' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ params: 'steps=50' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ fields: '尺寸=768' })).hits).toBe(1)
+    // AND：两条都满足才命中；OR：任一满足
+    expect((await workbench.queryArtifacts({ tags: '夕阳', params: 'steps=50' })).hits).toBe(0)
+    expect((await workbench.queryArtifacts({ tags: '夕阳', params: 'steps=50', mode: 'or' })).hits).toBe(2)
+    expect((await workbench.queryArtifacts({ text: '不存在' })).hits).toBe(0)
+  })
+
+  it('batch-removes picked artifacts and drops emptied groups', async () => {
+    const removed = []
+    const records = new Map([
+      ['r1', { id: 'r1', name: 'beach', localFiles: [{ path: 'C:\\a\\one.png' }] }],
+      ['r2', { id: 'r2', name: 'night', localFiles: [{ path: 'C:\\a\\two.png' }] }],
+    ])
+    const bridge = await makeBridge({
+      getRun: (id) => records.get(id) ?? null,
+      removeRun: (id) => {
+        removed.push(id)
+        records.delete(id)
+        return true
+      },
+    })
+    bridge.updateRun = (id, patch) => {
+      const next = { ...records.get(id), ...patch }
+      records.set(id, next)
+      return next
+    }
+    const workbench = makeWorkbench(bridge)
+    const outcome = await workbench.removeArtifactsBatch({
+      items: [
+        { runId: 'r1', path: 'C:\\a\\one.png' },
+        { runId: 'r2', path: 'C:\\a\\two.png' },
+        { runId: 'r2', path: 'C:\\a\\not-registered.png' },
+      ],
+      deleteFile: false,
+    })
+    expect(outcome).toMatchObject({ ok: true, deleted: 2, failed: 1 })
+    expect(removed).toEqual(['r1', 'r2']) // 产物清空 → 整组移除（无模态数据不入库）
+    expect(records.size).toBe(0)
+    await expect(workbench.removeArtifactsBatch({ items: [] })).resolves.toMatchObject({ ok: false })
+  })
+})
+
 describe('workbench tags', () => {
   it('updateTags persists via the tag store', async () => {
     const workbench = makeWorkbench(await makeBridge())
