@@ -1,8 +1,8 @@
-# comfy-mcp 对接协议（草案 v0.1.0-draft）
+# comfy-mcp 对接协议（v0.2.0）
 
 > 本文件是 `fux-plugin-mcp-comfy-client`（客户端通用插件）与 comfy-mcp 服务之间的**拟定协议**，
 > 也是 `projects/dsh-comfymcp/comfy-mcp-server`（参考实现）的实现依据。
-> 状态：**草案**（随真机联调修订；变更需同步实现与测试）。
+> 状态：**v0.2.0 封板**（页面协议 v1 + 运行工具契约按真机实测校准；变更需同步实现与测试）。
 
 ## 1. 传输层：MCP Streamable HTTP
 
@@ -88,7 +88,7 @@
 }
 ```
 
-推导规则（v0.1.0）：
+推导规则（v0.2.0）：
 
 | 节点类 | 字段 | kind |
 | --- | --- | --- |
@@ -109,7 +109,9 @@
 
 ## 5. 版本与兼容
 
-- 协议版本号跟随通用客户端插件 `manifest.version`（0.1.0）。
+- 协议版本号跟随通用客户端插件 `manifest.version`（0.2.0）。
+- 页面协议（`lib/wfpage.js` 描述符 v1：`{version:1, workflow, sections[{nodeId,classType,fields[]}], notes[]}`）在 v0.2.0 起视为稳定契约：新增字段只增不改，渲染器对未知字段忽略。
+- 运行工具契约以真机实测为准（`save_workflow(name,graph,overwrite)` / `run_workflow(graph,id,front,priority)` / `job_wait(promptId,timeoutMs)` / `job_progress(promptId)` / `fetch_outputs(promptId,outDir)` / `cancel_job` / `queue_manage{action}`），另见 [roadmap 适配表](roadmap.md)。
 - 服务端可以在 `initialize` 结果 `serverInfo.instructions` 里声明能力提示；
   DSH 侧据 `tools/list` 实际目录决定可用功能，**不做硬编码工具存在性假设**（缺失即禁用对应 UI）。
 - 兼容策略：客户端只依赖 §1/§2 的最小公约数；服务端工具集可增可减。

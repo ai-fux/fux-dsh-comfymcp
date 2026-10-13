@@ -1,6 +1,6 @@
 {
   "name": "dsh-comfymcp-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "DSH 插件：对接 comfy-mcp 服务（自然语言设计可运行工作流、定制表单、运行与成果物回显）。",

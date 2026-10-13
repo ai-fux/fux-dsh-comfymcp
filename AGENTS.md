@@ -17,9 +17,12 @@
 
 ## 分支与版本
 
-- 分支：`dev-snapshot-20261011-0.1.0`（从 `dev`/最近分支拉取）。
+- 当前版本：**0.2.0**（封板于 2026-10-13）。
+- 稳定分支：`snapshot-0.2.0`（汇聚点）；上一稳定分支 `snapshot-0.1.0`。
+- 开发分支：`dev-snapshot-20261011-0.2.0`（从 `dev`/最近分支拉取）。
 - 版本：三段 `X.Y.Z`（平台 SEMVER 限制），四段仅用于分支/`.workplace` 目录名。
-- 严禁推送 `main`/`master`；远程推送需用户二次确认。
+- 严禁推送 `main`/`master`；远程推送与分支合并需用户二次确认。
+- 本地验证补充：`node scripts/check-page-templates.mjs`（页面模板完整性）、`node scripts/check-page-scripts.mjs`（页面脚本语法与关键监听）。
 
 ## 本地验证
 

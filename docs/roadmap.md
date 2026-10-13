@@ -2,6 +2,28 @@
 
 > 版本规约：四段式 `主.较.常.快`；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
 
+## snapshot-0.2.0（稳定主分支，2026-10-13 封板）✅
+
+**交付主题：工作台（可视化工作流 → 静态页 → 执行 → 成果物库）成型。**
+源自 `dev-snapshot-20261011-0.2.0` 全部提交（含本期 12 个功能/修复提交）：
+
+| # | 能力 | 落位 |
+| --- | --- | --- |
+| 1 | 工作流按协议编排成静态页（描述符 v1 + 确定性渲染，DSH 简约风） | `lib/wfpage.js` |
+| 2 | 一个工作流一个页面；DSH 侧栏图标 → 中央面板；三 Tab 齐平：我的工作流 / 模板 / 成果物 | `client.js`、`/ui`、`/ui/library`、`/ui/artifacts` |
+| 3 | 官方节点解析适配（宿主包装解包、COMBO+options、object_info/rows 形状、UI→API 格式、内联子图展平、自动增长组双写） | `lib/nodecat.js`、`lib/wfgraph.js` |
+| 4 | 异步执行：进度（节点/步数/百分比）、loading、执行中禁用、手动中断、**单工作流最大运行时间**超时中断 | `lib/rund.js`、`lib/runcore.js` |
+| 5 | 成果物：一列卡片 / 瀑布流 / 两列平铺 / 重叠摊开四种样式；图片滚轮缩放、视频音频播放、Range 流 | `lib/wfpage.js`、`control-server /artifact` 206 |
+| 6 | 标签体系：标签、标签集合、动态字段、绑定提示词、使用来源；正/负提示词拆分与「⇢ 赋值」回填表单 | `lib/tags.js`、`lib/forms.js` |
+| 7 | 成果物库：无模态数据不入库、复合语法检索（字段限定 / 与或非 / 比较）、勾选批量删除、单次与整体导出 JSON（base64 内嵌） | `lib/artifactsearch.js`、`/api/artifacts/*` |
+| 8 | 快捷指令（抽卡＝仅重滚种子；种子策略 range/digits/timestamp）、成果物镜像目录、对象存储分发（local/MinIO/OSS） | `lib/quick.js`、`lib/runcore.js`、`lib/storage.js` |
+| 9 | 模板执行一次即落库「我的工作流」；已存在时打开即带出**上次运行的参数**（标「上次」） | `lib/workbench.js` |
+| 10 | 验证基线：插件 143 测试 + 服务端 13 + 宿主/存储等共 400+；页面模板/脚本双体检脚本 | `test/`、`scripts/check-page-*.mjs` |
+
+**封板校验**：`pnpm test` 全绿（16 个测试文件 143 用例）+ `pnpm typecheck` + 真机端到端（模板落库、种子重跑、超时中断、批量删除、导出 base64 与磁盘字节一致）。
+
+**下个迭代（v0.3.0 候选）**：节点连线式可视化画布、运行历史面板增强、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
+
 ## snapshot-0.1.0（稳定主分支，2026-10-11 固化）
 
 首个可交付闭环，源自 `dev-snapshot-20261011-0.1.0` 全部 12 个提交：
