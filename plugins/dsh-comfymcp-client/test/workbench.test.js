@@ -344,25 +344,38 @@ describe('workbench artifact search and batch removal', () => {
     localFiles: [{ path: 'C:\\a\\two.png', filename: 'two.png', kind: 'image', key: 'k2' }],
   }
 
-  it('queries by fuzzy prompt, tags, params and dynamic fields', async () => {
+  it('queries with the compound syntax (fuzzy, qualifiers, AND/OR/NOT, comparisons)', async () => {
     const bridge = await makeBridge({ listRuns: () => [runA, runB] })
     const workbench = makeWorkbench(bridge)
     await workbench.updateTags({ key: 'k1', patch: { tags: ['夕阳'], fields: { 尺寸: '768x512' } } })
     await workbench.updateTags({ key: 'k2', patch: { tags: ['夜景'] } })
 
-    const byPrompt = await workbench.queryArtifacts({ text: 'sunset' })
+    const byPrompt = await workbench.queryArtifacts({ query: 'sunset' })
     expect(byPrompt.hits).toBe(1)
     expect(byPrompt.html).toContain('one.png')
     expect(byPrompt.html).not.toContain('two.png')
-    expect(byPrompt.queryText).toContain('模糊「sunset」')
+    expect(byPrompt.queryText).toContain('检索「sunset」')
 
-    expect((await workbench.queryArtifacts({ tags: '夜景' })).hits).toBe(1)
-    expect((await workbench.queryArtifacts({ params: 'steps=50' })).hits).toBe(1)
-    expect((await workbench.queryArtifacts({ fields: '尺寸=768' })).hits).toBe(1)
-    // AND：两条都满足才命中；OR：任一满足
-    expect((await workbench.queryArtifacts({ tags: '夕阳', params: 'steps=50' })).hits).toBe(0)
-    expect((await workbench.queryArtifacts({ tags: '夕阳', params: 'steps=50', mode: 'or' })).hits).toBe(2)
-    expect((await workbench.queryArtifacts({ text: '不存在' })).hits).toBe(0)
+    // 字段限定 + 比较运算符
+    expect((await workbench.queryArtifacts({ query: 'tag:夜景' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'param:steps=50' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'param:steps>=30' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'param:steps<30' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'field:尺寸=768x512' })).hits).toBe(1) // = 相等
+    expect((await workbench.queryArtifacts({ query: 'field:尺寸~768' })).hits).toBe(1) // ~ 包含
+    expect((await workbench.queryArtifacts({ query: 'field:尺寸=768' })).hits).toBe(0)
+    expect((await workbench.queryArtifacts({ query: 'file:two.png' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'name:night' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'state:completed' })).hits).toBe(2)
+    expect((await workbench.queryArtifacts({ query: 'prompt:"night city"' })).hits).toBe(1)
+
+    // 与（空格并列）/ 或（`|`）/ 排除（`-`）
+    expect((await workbench.queryArtifacts({ query: 'tag:夕阳 param:steps=50' })).hits).toBe(0)
+    expect((await workbench.queryArtifacts({ query: 'tag:夕阳 | param:steps=50' })).hits).toBe(2)
+    expect((await workbench.queryArtifacts({ query: 'state:completed -tag:夜景' })).hits).toBe(1)
+    expect((await workbench.queryArtifacts({ query: 'sunset | night city' })).hits).toBe(2)
+    expect((await workbench.queryArtifacts({ query: '不存在的词' })).hits).toBe(0)
+    expect((await workbench.queryArtifacts({ query: '' })).hits).toBe(2) // 空查询＝全部
   })
 
   it('batch-removes picked artifacts and drops emptied groups', async () => {

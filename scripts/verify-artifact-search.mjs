@@ -28,19 +28,33 @@ try {
   console.log(`[1] 取样记录 → ${sample.name} · 种子 ${seed} · steps ${step} · 文件 ${(sample.files ?? []).length} 件`)
 
   const cases = [
-    ['模糊-提示词', { text: 'fashion' }],
-    ['模糊-文件名', { text: sample.localFiles[0].filename.split('.')[0] }],
-    ['参数-相等', { params: `steps=${step}` }],
-    ['参数-相等+模糊', { params: `steps=${step}`, text: sample.name }],
-    ['与：参数+不存在词', { params: `steps=${step}`, text: '不存在的关键词zzz' }],
-    ['或：参数+不存在词', { params: `steps=${step}`, text: '不存在的关键词zzz', mode: 'or' }],
-    ['标签（可能为空）', { tags: '夕阳' }],
+    ['模糊-提示词', 'fashion'],
+    ['模糊-或', 'fashion | 不存在的词zzz'],
+    ['模糊-文件名', `file:${sample.localFiles[0].filename.split('.')[0]}`],
+    ['参数-相等', `param:steps=${step}`],
+    ['参数-比较', `param:steps>=${step}`],
+    ['参数+提示词（与）', `param:steps=${step} fashion`],
+    ['参数+不存在（与）', `param:steps=${step} 不存在的关键词zzz`],
+    ['参数|不存在（或）', `param:steps=${step} | 不存在的关键词zzz`],
+    ['排除-不存在标签', 'state:completed -tag:不存在的标签'],
+    ['状态', 'state:completed'],
   ]
-  for (const [label, criteria] of cases) {
-    const outcome = await workbench.queryArtifacts(criteria)
+  for (const [label, query] of cases) {
+    const outcome = await workbench.queryArtifacts({ query })
     const first = (outcome.html.match(/class="fname" title="([^"]+)"/) ?? [])[1] ?? '-'
-    console.log(`[2] ${label.padEnd(14)} → 命中 ${outcome.hits} 条 · ${outcome.queryText} · 首个 ${first}`)
+    console.log(`[2] ${label.padEnd(16)} → 命中 ${String(outcome.hits).padStart(2)} 条 · ${outcome.queryText} · 首个 ${first}`)
   }
+
+  // 三种卡片样式下的渲染检查（同一份 HTML，样式由前端切换）
+  const page = await workbench.pageArtifacts({ token: 'demo' })
+  const checks = {
+    '瀑布流': page.html.includes('id="runs" class="style-masonry"') && page.html.includes('style-masonry{column-count:2'),
+    '两列平铺': page.html.includes('style-grid2{display:grid;grid-template-columns:repeat(2'),
+    '重叠摊开': page.html.includes('.fan .mediacard'),
+    '语法帮助': page.html.includes('id="q-help"') && page.html.includes('param:steps'),
+    '竖向卡片': page.html.includes('#runs.style-masonry .mediacard .thumb'),
+  }
+  console.log('[3] 渲染检查 →', Object.entries(checks).map(([label, ok]) => `${label}${ok ? '✓' : '✗'}`).join(' · '))
 } catch (error) {
   console.log('[!] 失败：', error instanceof Error ? error.message : String(error))
 } finally {

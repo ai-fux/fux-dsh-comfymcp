@@ -862,19 +862,43 @@ function renderRuns(payload) {
   refreshPickCount();
 }
 function searchPayload() {
-  return {
-    text: document.getElementById('q-text').value,
-    tags: document.getElementById('q-tags').value,
-    params: document.getElementById('q-params').value,
-    fields: document.getElementById('q-fields').value,
-    mode: document.getElementById('q-mode').value,
-  };
+  return { query: document.getElementById('q').value, style: currentStyle() };
+}
+function currentStyle() {
+  var box = document.getElementById('runs');
+  var style = box && box.getAttribute('data-style');
+  return style || 'masonry';
+}
+function applyStyle(style) {
+  var box = document.getElementById('runs');
+  if (!box) return;
+  var next = ['masonry', 'grid2', 'fan'].indexOf(style) >= 0 ? style : 'masonry';
+  box.classList.remove('style-masonry', 'style-grid2', 'style-fan');
+  box.classList.add('style-' + next);
+  box.setAttribute('data-style', next);
+  document.querySelectorAll('[data-style]').forEach(function (btn) {
+    btn.classList.toggle('dshmcp-on', btn.getAttribute('data-style') === next);
+  });
+  try { window.localStorage.setItem('comfymcp.artifactStyle', next); } catch (e) {}
 }
 function runSearch() {
   var payload = searchPayload();
-  return api('/api/artifacts/query', payload).then(function (result) { renderRuns(result); return result; })
+  return api('/api/artifacts/query', payload)
+    .then(function (result) {
+      renderRuns(result);
+      applyStyle(payload.style);
+      var help = document.getElementById('q-help');
+      if (help && result && result.hits > 0) help.hidden = true;
+      return result;
+    })
     .catch(function (error) { alert('检索失败：' + error.message); });
 }
+document.addEventListener('keydown', function (event) {
+  if (event.target && event.target.id === 'q' && event.key === 'Enter') {
+    event.preventDefault();
+    runSearch();
+  }
+});
 document.addEventListener('change', function (event) {
   var el = event.target;
   if (!el.classList) return;
@@ -889,9 +913,22 @@ document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
   if (el.id === 'q-run') { runSearch(); return; }
+  if (el.id === 'q-help-toggle') {
+    var help = document.getElementById('q-help');
+    help.hidden = !help.hidden;
+    el.classList.toggle('dshmcp-on', !help.hidden);
+    return;
+  }
+  var example = el.getAttribute && el.getAttribute('data-example');
+  if (example) {
+    document.getElementById('q').value = example;
+    runSearch();
+    return;
+  }
+  var stylePick = el.getAttribute && el.getAttribute('data-style');
+  if (stylePick) { applyStyle(stylePick); return; }
   if (el.id === 'q-reset') {
-    ['q-text', 'q-tags', 'q-params', 'q-fields'].forEach(function (id) { var input = document.getElementById(id); if (input) input.value = ''; });
-    document.getElementById('q-mode').value = 'and';
+    document.getElementById('q').value = '';
     runSearch();
     return;
   }
@@ -988,10 +1025,29 @@ document.addEventListener('click', function (event) {
 const ARTIFACTS_CSS = `
 .run{margin-bottom:18px}.run .head{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:8px}
 .run .head b{font-size:14px}
-/* 一列卡片：每个文件占满一行，缩略图在左、信息在右 */
+/* 一列/两列/瀑布流：卡片为竖向卡（图在上、信息在下） */
 .mediaList{display:flex;flex-direction:column;gap:10px}
 .mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
 .mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
+/* 卡片式样式：瀑布流 / 两列平铺（竖向卡：缩略图占满卡片宽度） */
+#runs.style-masonry{column-count:2;column-gap:12px}
+@media (min-width:1200px){#runs.style-masonry{column-count:3}}
+#runs.style-masonry .run,#runs.style-grid2 .run{break-inside:avoid;display:inline-block;width:100%;margin:0 0 12px}
+#runs.style-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+#runs.style-grid2 .run{margin:0}
+#runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{display:flex;flex-direction:column;gap:10px}
+#runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
+#runs.style-masonry .mediacard .thumb,#runs.style-grid2 .mediacard .thumb{flex:none;width:100%;height:auto;aspect-ratio:1/1;border-radius:0}
+#runs.style-masonry .mediacard .meta,#runs.style-grid2 .mediacard .meta{padding:10px 12px}
+#runs.style-fan .mediacard{flex-direction:row}
+.dshmcp-on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.exportBar .sep{width:1px;height:16px;background:var(--line);margin:0 2px}
+.qhelp{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);font-size:12px}
+.qhelp[hidden]{display:none}
+.qtable{border-collapse:collapse;width:100%}
+.qtable td{border-top:1px solid var(--line);padding:3px 6px;vertical-align:top}
+.qtable td:first-child{white-space:nowrap;width:1%}
+.qtable code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
 .mediacard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .mediacard .thumb .badge{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
 .mediacard .thumb .big{font-size:38px;color:var(--accent)}
@@ -1136,25 +1192,44 @@ ${workbenchTabs('artifacts', token)}
 <div class="sub" id="runs-summary">${summary}</div>
 <form id="search-form" onsubmit="return false" class="searchbar">
 <div class="srow">
-<input type="text" id="q-text" placeholder="模糊检索：提示词 / 文件名 / 标签 / 参数值">
-<select id="q-mode"><option value="and">全部条件（与）</option><option value="or">任一条件（或）</option></select>
+<input type="text" id="q" placeholder='复合检索：fashion | tag:夕阳 param:steps&gt;=25 -tag:废片 prompt:"sunset beach" file:.png'>
 <button type="submit" class="primary" id="q-run">检索</button>
 <button type="button" class="mini" id="q-reset">重置</button>
+<button type="button" class="mini" id="q-help-toggle" title="查看复合检索语法">? 语法</button>
 </div>
-<div class="srow">
-<input type="text" id="q-tags" placeholder="标签/集合（逗号分隔，如：夕阳,旅拍）">
-<input type="text" id="q-params" placeholder="参数条件（如 steps=25, sampler_name=euler）">
-<input type="text" id="q-fields" placeholder="动态字段（如 尺寸=768）">
+<div class="qhelp" id="q-help" hidden>
+<div class="muted" style="margin-bottom:6px">复合检索语法：空格＝<b>与</b>，<b>|</b>＝<b>或</b>，前缀 <b>-</b>＝<b>排除</b>；值默认「包含」匹配，可用 <code>= != ~ &gt; &gt;= &lt; &lt;=</code></div>
+<table class="qtable">
+<tr><td><code>fashion</code></td><td>模糊匹配：正/负提示词、文件名、标签/集合、动态字段名值、参数名值</td></tr>
+<tr><td><code>a | b</code></td><td>含 a <b>或</b> 含 b（<code>|</code> 分组，组内仍是与）</td></tr>
+<tr><td><code>tag:夕阳 tag:旅拍</code></td><td>同时带「夕阳」与「旅拍」标签/集合</td></tr>
+<tr><td><code>param:steps&gt;=25</code>、<code>param:sampler_name=euler</code></td><td>运行参数比较</td></tr>
+<tr><td><code>field:尺寸=768</code></td><td>动态字段（标签库里登记的自定义字段）</td></tr>
+<tr><td><code>prompt:"sunset beach"</code></td><td>只在提示词里找（含空格的值用引号）</td></tr>
+<tr><td><code>file:.png</code>、<code>name:image_z</code>、<code>state:completed</code>、<code>seed:123</code>、<code>kind:image</code></td><td>文件名 / 工作流名 / 状态 / 种子 / 类型</td></tr>
+<tr><td><code>-tag:废片</code></td><td>排除：不带该标签</td></tr>
+</table>
+<div class="muted" style="margin-top:6px">点示例直接填入：
+<button type="button" class="mini" data-example="fashion | night">fashion | night</button>
+<button type="button" class="mini" data-example="tag:夕阳 param:steps>=25">tag:夕阳 param:steps&gt;=25</button>
+<button type="button" class="mini" data-example="prompt:sunset -tag:废片">prompt:sunset -tag:废片</button>
+<button type="button" class="mini" data-example="file:.png state:completed">file:.png state:completed</button>
+</div>
 </div>
 </form>
 <div class="exportBar">
+<span class="muted">卡片样式</span>
+<button type="button" class="mini" data-style="masonry">瀑布流</button>
+<button type="button" class="mini" data-style="grid2">两列平铺</button>
+<button type="button" class="mini" data-style="fan">重叠摊开</button>
+<span class="sep"></span>
 <button type="button" class="mini" id="pick-all">全选</button>
 <button type="button" class="mini" id="pick-none">全不选</button>
 <button type="button" class="mini danger" id="remove-picked">🗑 删除选中（含磁盘文件）</button>
 <span class="muted" id="pick-count">已选 0 件</span>
 <button type="button" class="mini" id="export-all" title="导出当前列表全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
 </div>
-<div id="runs">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
+<div id="runs" class="style-masonry" data-style="masonry">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
 <div class="modal" id="preview" hidden><div class="box">
 <div class="bar2"><span id="preview-name"></span><span class="tools">
 <button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
@@ -1169,6 +1244,8 @@ window.__records = ${JSON.stringify(tags)};
 window.__runIds = ${JSON.stringify(runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0).map((run) => run.id ?? null).filter(Boolean))};
 bindPreviewEvents('preview');
 refreshPickCount();
+// 恢复上次选择的卡片样式（瀑布流 / 两列平铺 / 重叠摊开）
+try { applyStyle(window.localStorage.getItem('comfymcp.artifactStyle') || 'masonry'); } catch (e) { applyStyle('masonry'); }
 ${ARTIFACTS_JS}
 </script>`
   return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}` })

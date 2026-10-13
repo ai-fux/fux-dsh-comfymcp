@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { haystackOf, matchRun, parseConditions } from '../lib/artifactsearch.js'
+import { haystackOf, matchRun, matchRunQuery, parseConditions, parseQuery } from '../lib/artifactsearch.js'
 
 const TAG_RECORDS = {
   k1: { tags: ['夕阳', '旅拍'], collections: ['海边'], fields: { 尺寸: '768x512', 模型: 'z-image' }, prompt: '沙滩情侣', source: '项目A' },
@@ -23,6 +23,49 @@ const RUN = {
     { path: 'F:\\out\\b.png', filename: 'b.png', kind: 'image', key: 'k2' },
   ],
 }
+
+describe('compound query (single input box)', () => {
+  it('parses groups, negation, field qualifiers and operators', () => {
+    const parsed = parseQuery('fashion | tag:夕阳 param:steps>=25 -file:.txt')
+    expect(parsed.isEmpty).toBe(false)
+    expect(parsed.groups).toHaveLength(2)
+    expect(parsed.groups[0].terms).toEqual([{ negate: false, field: '', op: '~', value: 'fashion' }])
+    expect(parsed.groups[1].terms[0]).toEqual({ negate: false, field: 'tag', op: '~', value: '夕阳' })
+    // param/field 的比较运算符写在「参数名」之后，由匹配阶段解析（此处整体作为值）
+    expect(parsed.groups[1].terms[1]).toEqual({ negate: false, field: 'param', op: '~', value: 'steps>=25' })
+    expect(parsed.groups[1].terms[2]).toEqual({ negate: true, field: 'file', op: '~', value: '.txt' })
+    expect(parseQuery('').isEmpty).toBe(true)
+    expect(parseQuery('   ').isEmpty).toBe(true)
+    // 引号包裹含空格的值；别名归一
+    expect(parseQuery('prompt:"sunset beach"').groups[0].terms[0]).toMatchObject({ field: 'prompt', value: 'sunset beach' })
+    expect(parseQuery('tags:旅拍').groups[0].terms[0].field).toBe('tag')
+    expect(parseQuery('filename:a.png OR state:completed').groups).toHaveLength(2)
+  })
+
+  it('matches AND/OR/NOT and comparisons against real record shapes', () => {
+    const query = (text) => matchRunQuery(RUN, parseQuery(text), TAG_RECORDS)
+    expect(query('fashion').matched).toBe(true)
+    expect(query('prompt:"sunset beach"').matched).toBe(true)
+    expect(query('file:a.png').matched).toBe(true)
+    expect(query('file:b.png').matched).toBe(true)
+    expect(query('name:image_z').matched).toBe(true)
+    expect(query('state:completed').matched).toBe(true)
+    expect(query('seed:2000230530').matched).toBe(true)
+    expect(query('kind:image').matched).toBe(true)
+    expect(query('tag:夕阳').matched).toBe(true)
+    expect(query('param:steps=25').matched).toBe(true)
+    expect(query('param:steps>=20').matched).toBe(true)
+    expect(query('param:steps>30').matched).toBe(false)
+    expect(query('field:尺寸~768').matched).toBe(true)
+    // 与 / 或 / 排除
+    expect(query('tag:夕阳 param:steps=25').matched).toBe(true)
+    expect(query('tag:夕阳 param:steps=99').matched).toBe(false)
+    expect(query('tag:夕阳 | param:steps=99').matched).toBe(true)
+    expect(query('state:completed -tag:废片').matched).toBe(true) // 不含「废片」→ 排除条件成立
+    expect(query('state:completed -tag:夜景').matched).toBe(false) // 该记录第二件文件带「夜景」→ 排除失败
+    expect(query('-tag:夜景 -tag:夕阳').matched).toBe(false)
+  })
+})
 
 describe('parseConditions', () => {
   it('parses field=value / field!=value lists (boundary: empty)', () => {

@@ -19,7 +19,7 @@ import { parseQuickCommands, buildQuickRerun } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { createRunDaemon, summarizeRun } from './rund.js'
 import { normalizeNodeCatalog } from './nodecat.js'
-import { matchRun } from './artifactsearch.js'
+import { matchRun, matchRunQuery, parseQuery } from './artifactsearch.js'
 import { safeFileStem } from './bridge.js'
 import { apiGraphFromUi, hasSubgraphs, isUiWorkflow } from './wfgraph.js'
 const REMOTE_TTL_MS = 5 * 60 * 1000
@@ -543,37 +543,34 @@ export function createWorkbenchMethods({ bridge, config }) {
     },
 
     /**
-     * 成果物检索：模糊词（提示词/文件名/标签/参数值）+ 标签 + 参数 + 动态字段，
-     * 与/或由 mode 控制；返回渲染好的列表 HTML（与首屏同一份渲染逻辑）。
+     * 成果物检索：单输入框复合语法（字段限定 tag/param/field/prompt/file/name/state/seed/kind，
+     * 空格＝与、`|`＝或、`-`＝排除，值比较 = != ~ > >= < <=），另兼容旧的分类条件参数。
      */
-    async queryArtifacts({ text: fuzzy, tags: tagText, params: paramText, fields: fieldText, mode } = {}) {
+    async queryArtifacts({ query, text: fuzzy, tags: tagText, params: paramText, fields: fieldText, mode } = {}) {
       const records = bridge.listRuns(200)
       const tagRecords = tagStore.all()
-      const criteria = { text: fuzzy, tagText, paramText, fieldText, mode: mode === 'or' ? 'or' : 'and' }
       // 记录里的 params 由 summarize 从终图提取 —— 检索前先富化，否则参数条件永不命中
       const enriched = records.map((run) => summarizeRun(run))
       const withMedia = enriched.filter((run) => Array.isArray(run.files) && run.files.length > 0)
+      const parsed = parseQuery(query)
+      const usesLegacy = parsed.isEmpty && [fuzzy, tagText, paramText, fieldText].some((value) => typeof value === 'string' && value.trim().length > 0)
       const matched = withMedia
         .map((run) => {
-          const outcome = matchRun(run, criteria, tagRecords)
+          const outcome = usesLegacy
+            ? matchRun(run, { text: fuzzy, tagText, paramText, fieldText, mode: mode === 'or' ? 'or' : 'and' }, tagRecords)
+            : matchRunQuery(run, parsed, tagRecords)
           return { ...run, hits: outcome.hits, matched: outcome.matched }
         })
         .filter((run) => run.matched === true)
       const rendered = artifactsRunsHtml({ runs: matched, tags: tagRecords, token: '' })
-      const queryText = [
-        typeof fuzzy === 'string' && fuzzy.trim().length > 0 ? `模糊「${fuzzy.trim()}」` : '',
-        typeof tagText === 'string' && tagText.trim().length > 0 ? `标签「${tagText.trim()}」` : '',
-        typeof paramText === 'string' && paramText.trim().length > 0 ? `参数「${paramText.trim()}」` : '',
-        typeof fieldText === 'string' && fieldText.trim().length > 0 ? `字段「${fieldText.trim()}」` : '',
-        criteria.mode === 'or' ? '（或）' : '（与）',
-      ].filter((part) => part.length > 0).join(' + ')
       return {
         ok: true,
         html: rendered.html,
         summary: `${rendered.shown} 条命中 · 共 ${withMedia.length} 条有产物记录`,
-        queryText,
+        queryText: parsed.isEmpty ? '' : `检索「${parsed.raw}」`,
         runIds: matched.map((run) => run.id).filter(Boolean),
         hits: matched.length,
+        groups: parsed.groups.length,
       }
     },
 

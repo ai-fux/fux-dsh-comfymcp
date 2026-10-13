@@ -238,15 +238,21 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     }
     const html = renderArtifactsHtml({ runs: [run], tags: { k1: { tags: ['夕阳'], fields: { 尺寸: '768' } } }, token: 'tk' })
     const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
-    // 检索表单：模糊词 / 标签 / 参数 / 动态字段 + 与或
-    expect(html).toContain('id="q-text"')
-    expect(html).toContain('id="q-tags"')
-    expect(html).toContain('id="q-params"')
-    expect(html).toContain('id="q-fields"')
-    expect(html).toContain('<option value="and">')
-    expect(html).toContain('<option value="or">')
+    // 单输入框复合检索 + 语法帮助 + 示例
+    expect(html).toContain('id="q"')
+    expect(html).toContain('id="q-help"')
+    expect(html).toContain('id="q-help-toggle"')
+    expect(html).toContain('data-example=')
+    expect(html).toContain('param:steps')
     expect(code).toContain("api('/api/artifacts/query'")
     expect(code).toContain('function renderRuns(')
+    // 卡片样式选择：瀑布流 / 两列平铺 / 重叠摊开（记住选择）
+    expect(html).toContain('data-style="masonry"')
+    expect(html).toContain('data-style="grid2"')
+    expect(html).toContain('data-style="fan"')
+    expect(html).toContain('id="runs" class="style-masonry"')
+    expect(code).toContain('function applyStyle(')
+    expect(code).toContain('comfymcp.artifactStyle')
     // 勾选与批量删除
     expect(html).toContain('class="rowpick"')
     expect(html).toContain('class="runpick"')
