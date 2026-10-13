@@ -1,7 +1,11 @@
-# dsh-comfymcp — DSH ⇄ comfy-mcp 对接（MVP 0.1.0）
+# dsh-comfymcp — DSH ⇄ comfy-mcp 对接（v0.2.0）
 
 把 DSH（DeepSeek Harness）接入 ComfyUI 生成链路：大模型基于自然语言设计可运行工作流 →
-定制表单向用户确认 → 强制保存后运行 → 成果物回显到会话。
+定制表单向用户确认 → 强制保存后运行 → 成果物回显到会话；并内置**图形工作台**（工作流静态页、
+执行进度与中断、成果物库检索 / 标签 / 导出）。
+
+> v0.2.0 封板于 2026-10-13（稳定分支 `snapshot-0.2.0`，开发分支 `dev-snapshot-20261011-0.2.0`）；
+> 上一稳定版本 v0.1.0（`snapshot-0.1.0`）。本期交付清单见 [迭代记录](docs/roadmap.md)。
 
 ## 组件与端口
 
@@ -9,28 +13,47 @@
 | --- | --- | --- | --- |
 | comfy-mcp 参考服务端 | `comfy-mcp-server/` | Streamable HTTP :18800 | MCP HTTP ⇄ stdio 桥；`COMFY_MCP_BACKEND=mock` 内置 mock，`stdio` 接真实 ComfyUI MCP |
 | MCP 宿主 | `mcp/` | stdio | FUX runtime + `@fux-mcp/comfy-client`（通用客户端插件，capability `mcp-comfy:*`），由 DSH 插件 spawn |
-| DSH 插件 | `plugins/dsh-comfymcp-client/` | Host+Client 双半区 | Host：8 个 `comfymcp_*` 工具 + 技能 + 面板 RPC/产物路由；Client：设置页 + 运行产物卡 |
+| DSH 插件 | `plugins/dsh-comfymcp-client/` | Host+Client 双半区 | Host：`comfymcp_*` 工具 + 技能 + 工作台控制端点（环回 :18801+）；Client：侧栏工作台面板（三 Tab）+ 设置页 + 运行产物卡 |
 | FUX 通用客户端插件 | 工作区 `plugins/fux-plugin-mcp-comfy-client/` | 独立仓 | 四层链路的通用 MCP 客户端（Streamable HTTP only），被 MCP 宿主复用 |
 
 链路：**大模型 → dsh-comfymcp-client → MCP 宿主(stdio) → comfy-mcp(Streamable HTTP :18800) → ComfyUI MCP(stdio) → ComfyUI(:8000)**
+
+## 图形工作台（v0.2.0 新增）
+
+侧栏「ComfyUI 工作台」→ 中央面板，三个平价 Tab（浏览器亦可直开 `http://127.0.0.1:18801/ui`）：
+
+| Tab | 路由 | 能力 |
+| --- | --- | --- |
+| 我的工作流 | `/ui` | 本地工作流列表；模板执行过一次会自动落库到这里；打开即带出**上次运行的参数**（字段标「上次」） |
+| 模板 | `/ui/library` | 远端模板库；点开即渲染表单，执行一次自动保存到「我的工作流」 |
+| 成果物 | `/ui/artifacts` | 卡片库（瀑布流 / 两列平铺 / 重叠摊开）、复合语法检索、勾选批量删除、导出 JSON（base64 内嵌） |
+
+工作流页：按 `node_info` 解析成表单（提示词类为大域 textarea，可 `⤢ 展开` 全文编辑）→ 执行（异步 +
+进度 + 执行中禁用 + 手动中断 + 单工作流最大运行时间超时中断）→ 成果按运行分组展示（参数可展开 / 悬浮）。
+
+成果物库复合检索语法：空格＝与、`|`＝或、`-`＝排除，字段限定 `tag:` / `param:` / `field:` / `prompt:` /
+`file:` / `name:` / `state:` / `seed:` / `kind:`，比较 `= != ~ > >= < <=`（页面内「? 语法」有速查表与可点示例）。
 
 ## 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
 | [部署文档](docs/deployment.md) | 架构总览、前置条件、安装/挂载/重启、配置参考、真实模式切换、卸载回滚、CheckList |
-| [操作手册](docs/operations.md) | 日常自然语言生成流程、设置页操作、服务启停/热迭代、故障排查表、E2E 清单 |
-| [协议说明](docs/protocol.md) | MCP 协议细节、stdio 桥接、表单契约、卸载插桩设计 |
+| [操作手册](docs/operations.md) | 日常自然语言生成流程、工作台三 Tab 操作、设置页、服务启停/热迭代、故障排查表、E2E 清单 |
+| [协议说明](docs/protocol.md) | MCP 协议细节、stdio 桥接、表单契约、页面协议 v1、运行工具契约、卸载插桩设计 |
+| [迭代记录](docs/roadmap.md) | v0.2.0 交付清单与封板校验、v0.1.0 历史、下个迭代候选 |
 | [配置示例](config/comfymcp.env) | 环境变量样例（含真实模式与 Python 侧要求注释） |
 
 ## 本地验证
 
 ```powershell
 pnpm install
-pnpm test                                   # 全部 vitest（插件 37 + server 12 + host 5 + fux-client 26 + vendor 90）
+pnpm test                                   # 全部 vitest（插件 143 + server 13 + host/存储/协议等，共 400+）
 pnpm typecheck
 node comfy-mcp-server/bin/comfy-mcp-server.mjs --selftest
 node mcp/bin/fux-comfymcp-host.mjs --selftest
+node scripts/check-page-templates.mjs       # 页面模板完整性（防模板被截断）
+node scripts/check-page-scripts.mjs         # 页面脚本语法与关键监听
 ```
 
 ## Python 侧依赖（ComfyUI 链路）
