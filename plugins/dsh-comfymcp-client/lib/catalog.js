@@ -41,7 +41,16 @@ function text(value) {
 }
 
 function oneLine(value) {
-  return String(value ?? '').replaceAll(/\s+/g, ' ').slice(0, 400)
+  // 对象/数组必须先 JSON.stringify，否则 String() 产物是 "[object Object]"
+  let raw = value
+  if (typeof raw !== 'string') {
+    try {
+      raw = JSON.stringify(raw)
+    } catch {
+      raw = String(raw)
+    }
+  }
+  return String(raw ?? '').replaceAll(/\s+/g, ' ').slice(0, 400)
 }
 
 /** Build the comfymcp_* tool definitions; DI keeps tests free of the dsh runtime. */
@@ -195,7 +204,7 @@ export function createTools({ define, bridge, askUser }) {
       name: 'comfymcp_push_form',
       description:
         'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). Seeds were randomized once at push time; every seed question offers use/re-roll/fixed options. ' +
-        'If the plugin config enables autoAcceptForm, a countdown starts: when it expires without user input the form auto-resolves to the recommended values (answers=[], seeds keep their randomized value) and the result is flagged `auto:true` — proceed with comfymcp_apply_form right away. ' +
+        'If the plugin config enables autoAcceptForm, a countdown runs on the question card: when it expires without user input the form auto-resolves to the recommended values (answers=[], seeds keep their randomized value), flagged `auto:true` — proceed with comfymcp_apply_form right away; a late user answer arrives as a message afterwards. ' +
         'Answers { ok, answers: [{id, selected[], custom?}], fields } where ids are `field:<node>.<input>`. Follow with comfymcp_apply_form. Requires a live user session.',
       parameters: {
         graph: { type: 'json', required: true, description: 'The analyzed graph (unchanged).' },
@@ -227,21 +236,28 @@ export function createTools({ define, bridge, askUser }) {
         let timer = null
         let answer
         if (seconds > 0) {
-          answer = await Promise.race([
-            askUser({ questions }, exec),
-            new Promise((resolve) => {
-              timer = setTimeout(() => resolve({ autoTimeout: true }), seconds * 1000)
-            }),
-          ])
+          // 本地守卫计时器：与 seam 计时（askTimed）双保险——seam 正常时到期返回 pending；
+          // 旧版 stub/seam 挂起不返回时由本地守卫兜底触发自动采用。
+          const guard = new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ autoTimeout: true }), seconds * 1000)
+          })
+          try {
+            // 计时提问：DSH 卡片自带可见倒计时；到期返回 { pending: true }（问题仍可后答，
+            // 迟到回答会以用户消息送达）。askTimed 需要活跃根代理 + 工具调用 id。
+            answer = await Promise.race([askUser({ questions }, exec, seconds), guard])
+          } catch {
+            // askTimed 不可用（非根代理 / 旧版 seam / 重复等待）→ 退回阻塞式 ask + 本地守卫
+            answer = await Promise.race([askUser({ questions }, exec), guard])
+          }
         } else {
           answer = await askUser({ questions }, exec)
         }
         if (timer !== null) clearTimeout(timer)
-        if (answer !== null && typeof answer === 'object' && answer.autoTimeout === true) {
+        if (answer !== null && typeof answer === 'object' && (answer.autoTimeout === true || answer.pending === true)) {
           return {
             ok: true,
             auto: true,
-            autoReason: `倒计时 ${seconds} 秒未收到用户作答，已自动采用推荐参数（种子沿用随机值，其余保持推导值）`,
+            autoReason: `倒计时 ${seconds} 秒未收到用户作答，已自动采用推荐参数（种子沿用随机值，其余保持推导值）；用户的迟到回答将以消息送达，届时可按新选择调整`,
             answers: [],
             fields: prepared,
             answered: 0,

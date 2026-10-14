@@ -167,6 +167,63 @@ describe('createTools catalog', () => {
     }
   })
 
+  it('comfymcp_push_form uses the timed ask（卡片原生倒计时）and maps pending to auto', async () => {
+    const { define, definitions } = fakeDefine()
+    const calls = []
+    const bridge = fakeBridge()
+    bridge.config.autoAcceptForm = true
+    bridge.config.autoAcceptFormSec = 30
+    createTools({
+      define,
+      bridge,
+      askUser: async (request, exec, timedSeconds) => {
+        calls.push({ request, exec, timedSeconds })
+        expect(timedSeconds).toBe(30)
+        expect(exec.callId).toBe('call-1')
+        return { pending: true, callId: 'call-1' } // seam 到期返回 pending
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    const result = await tool.execute({ graph: GRAPH, fields }, { agent: 'agent-1', callId: 'call-1' })
+    expect(calls.length).toBe(1)
+    expect(result.ok).toBe(true)
+    expect(result.auto).toBe(true)
+    expect(result.autoReason).toMatch(/倒计时 30 秒.*推荐参数/)
+    expect(result.autoReason).toMatch(/迟到回答/)
+    expect(result.answers).toEqual([])
+    expect(result.fields.length).toBe(1)
+  })
+
+  it('comfymcp_push_form falls back to the local race when the timed ask throws（兼容旧 seam）', async () => {
+    vi.useFakeTimers()
+    try {
+      const { define, definitions } = fakeDefine()
+      let calls = 0
+      const bridge = fakeBridge()
+      bridge.config.autoAcceptForm = true
+      bridge.config.autoAcceptFormSec = 1
+      createTools({
+        define,
+        bridge,
+        askUser: async (request, exec, timedSeconds) => {
+          calls += 1
+          if (timedSeconds > 0) throw new Error('askTimed unavailable') // 非 root / 旧版 seam
+          return new Promise(() => {}) // 阻塞不作答
+        },
+      })
+      const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+      const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+      const promise = tool.execute({ graph: GRAPH, fields }, {})
+      await vi.advanceTimersByTimeAsync(1100)
+      const result = await promise
+      expect(calls).toBe(2) // 先试 timed → 失败 → 本地竞速
+      expect(result.auto).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('comfymcp_push_form keeps waiting and returns real answers when auto-accept is off（默认关闭）', async () => {
     const { define, definitions } = fakeDefine()
     let captured

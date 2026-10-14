@@ -49,16 +49,27 @@ export function apply(ctx, config) {
     const disposers = []
 
     // 1. 模型工具
-    const askUser = async (request, exec) => {
+    const askUser = async (request, exec, timedSeconds = 0) => {
       const userQuestions = ctx.get('userQuestions')
       if (userQuestions === undefined || typeof userQuestions.ask !== 'function') {
         throw new Error('userQuestions 服务不可用：无法推送表单（检查 dsh-user-questions 是否启用）')
       }
-      return userQuestions.ask({
+      const payload = {
         questions: request.questions,
         ...(exec?.agent !== undefined ? { agent: exec.agent } : {}),
         ...(exec?.signal !== undefined ? { signal: exec.signal } : {}),
-      })
+      }
+      // 计时提问：卡片自带可见倒计时；到期由 seam 返回 { pending: true }（问题仍可后答）。
+      // 需要活跃根代理 + 本次工具调用 id（卡片按 callId 配对）；不满足则回落阻塞式 ask。
+      if (
+        timedSeconds > 0 &&
+        exec?.agent !== undefined &&
+        typeof exec?.callId === 'string' && exec.callId.length > 0 &&
+        typeof userQuestions.askTimed === 'function'
+      ) {
+        return userQuestions.askTimed({ ...payload, agent: exec.agent }, exec.callId, Math.round(timedSeconds * 1000))
+      }
+      return userQuestions.ask(payload)
     }
     const tools = createTools({ define: defineTool, bridge, askUser })
     for (const tool of tools) {

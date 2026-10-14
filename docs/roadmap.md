@@ -28,6 +28,8 @@
 | 18 | **抽卡多生成数**（缺省 1）：指令新增 `count` + `batchMode`——`serial` 连续调 N 次（每次重滚种子，第 1 次即启，其余后台链式补跑）；`batch` 批次生成（直接改图中 `batch_size=N` 一次执行，无该字段则提示改用连续） | `lib/quick.js` `applyBatchSize`、`lib/workbench.js` `quickRun/chainSerialReruns` | ✅ |
 | 19 | 测试 +9：quick 指令解析钳制、批次改写与边界；串行链（3 次全启动且种子互异）、批次单跑、无批次字段回退提示、saveQuickCommands 归一化落盘、指令页渲染；页面体检补 commands 页 | `test/quick.test.js`、`test/workbench.test.js`、`scripts/check-page-templates.mjs` | ✅ |
 | 20 | **修「其他会话场景无倒计时」**：截图中无倒计时的对话框是模型自发的 ask_user_question 追问（页眉/正文为模型拟写），不经过插件、技术上不可安全劫持 → ①`comfymcp_status.config` 透出 `autoAcceptForm`+`autoAcceptFormSec`；②生成流技能硬性规约：策略开启时**禁止**独立追问对话框，一切澄清选择并入 push_form 表单（推荐项第一位）由倒计时兜底，`auto:true` 直接继续不重复提问 | `lib/bridge.js` `publicConfig`、`lib/skills.js`、`test/bridge.test.js`、`test/skills.test.js` | ✅ |
+| 21 | **倒计时全面可见化（读取 DSH 宿主源码定案）**：①push_form 改走 seam `askTimed(callId, N*1000)`——**提问卡片自带可见倒计时**，到期返回 pending（问题仍可后答，迟到回答以用户消息送达），旧 seam/非根代理回退本地竞速守卫（双保险）；②新增 preset 覆盖 bundle `dsh-preset-timed-ask`：把 shipped `preset-standard` 的 tool-ask-user 切 `mode: timed, timeout: 30`——**所有** ask_user_question 卡片 30 秒可见倒计时、到期 pending 不阻塞（`timeout:-1` 可阻塞）；③技能同步 timed 语义（pending=按推荐项继续；策略关闭时模型显式传 `timeout:-1`） | `lib/catalog.js`、`index.js`、`lib/skills.js`、`dsh-preset-timed-ask/`（新 bundle） | ✅ |
+| 22 | **卸载开关处置核验**：实测运行中进程 `autoUnloadModel=false` 已生效、`runCore` 关闭时摘除工作流自带 UnloadAllModels 节点逻辑本就存在（昨日记录为旧进程产物）——补 3 条 runcore 集成测试钉死「关＝保存的图真的没有卸载节点、开＝输出链插入卸载节点」；用户昨日所见「取消未生效」源于旧进程 + 旧记录，今日进程已正确 | `test/runcore.test.js` | ✅ |
 
 **下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 
