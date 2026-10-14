@@ -84,9 +84,17 @@ describe('ComfymcpBridge.embeddedServer', () => {
     expect(bridge.config.endpoint).toBe('http://127.0.0.1:41234/mcp')
     expect(bridge.publicConfig().embeddedServer).toBe(true)
     expect(bridge.publicConfig().embeddedUrl).toBe('http://127.0.0.1:41234/mcp')
+    expect(bridge.publicConfig().autoAcceptForm).toBe(false) // 默认关：表单一直等待
+    expect(bridge.publicConfig().autoAcceptFormSec).toBe(30)
     await bridge.close()
     expect(killed).toBe(1)
     expect(bridge.embedded).toBeNull()
+  })
+
+  it('publicConfig exposes the form auto-accept policy for the generation flow skill', async () => {
+    const bridge = makeBridge({ autoAcceptForm: true, autoAcceptFormSec: 45 })
+    expect(bridge.publicConfig()).toMatchObject({ autoAcceptForm: true, autoAcceptFormSec: 45 })
+    await bridge.close()
   })
 
   it('propagates a failed embedded start as a thrown error (boundary)', async () => {

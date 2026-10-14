@@ -27,6 +27,7 @@
 | 17 | **快捷指令 Tab（第 4 个 Tab）**：`/ui/commands` 结构化管理指令（名称/标签/生成数/模式/种子策略，增删行、保存即写回配置，就地「▶ 执行」），不再手写 JSON；DSH 面板同步为四 Tab | `lib/wfpage.js` `renderCommandsHtml`、`lib/workbench.js` `pageCommands/saveQuickCommands`、`lib/control-server.js`、`client.js` | ✅ |
 | 18 | **抽卡多生成数**（缺省 1）：指令新增 `count` + `batchMode`——`serial` 连续调 N 次（每次重滚种子，第 1 次即启，其余后台链式补跑）；`batch` 批次生成（直接改图中 `batch_size=N` 一次执行，无该字段则提示改用连续） | `lib/quick.js` `applyBatchSize`、`lib/workbench.js` `quickRun/chainSerialReruns` | ✅ |
 | 19 | 测试 +9：quick 指令解析钳制、批次改写与边界；串行链（3 次全启动且种子互异）、批次单跑、无批次字段回退提示、saveQuickCommands 归一化落盘、指令页渲染；页面体检补 commands 页 | `test/quick.test.js`、`test/workbench.test.js`、`scripts/check-page-templates.mjs` | ✅ |
+| 20 | **修「其他会话场景无倒计时」**：截图中无倒计时的对话框是模型自发的 ask_user_question 追问（页眉/正文为模型拟写），不经过插件、技术上不可安全劫持 → ①`comfymcp_status.config` 透出 `autoAcceptForm`+`autoAcceptFormSec`；②生成流技能硬性规约：策略开启时**禁止**独立追问对话框，一切澄清选择并入 push_form 表单（推荐项第一位）由倒计时兜底，`auto:true` 直接继续不重复提问 | `lib/bridge.js` `publicConfig`、`lib/skills.js`、`test/bridge.test.js`、`test/skills.test.js` | ✅ |
 
 **下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 

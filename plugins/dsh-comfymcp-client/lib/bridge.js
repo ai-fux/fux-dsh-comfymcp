@@ -488,6 +488,8 @@ export class ComfymcpBridge {
       workflowDirs: [...this.config.workflowDirs],
       artifactsDir: this.config.artifactsDir,
       autoUnloadModel: this.config.autoUnloadModel === true,
+      autoAcceptForm: this.config.autoAcceptForm === true,
+      autoAcceptFormSec: Number(this.config.autoAcceptFormSec) > 0 ? Number(this.config.autoAcceptFormSec) : 30,
       embeddedServer: this.config.embeddedServer === true,
       embeddedUrl: this.embedded !== null ? this.embedded.url : '',
       hostEntryConfigured:
