@@ -85,7 +85,11 @@ export function apply(ctx, config) {
       },
     })
     // 工作台（/ui 静态页 + /api 页面 API）：工作流编排静态页、手动执行、成果物标签、快捷指令
-    const workbench = createWorkbenchMethods({ bridge, config: effective })
+    const workbench = createWorkbenchMethods({
+      bridge,
+      config: effective,
+      persistWrite: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
+    })
     Object.assign(methods, workbench)
     const control = createControlServer({
       methods,

@@ -325,7 +325,7 @@ ${PAGE_RUN_JS}
   return pageShell(descriptor.title, body, { extraCss: PREVIEW_CSS })
 }
 
-/** 工作台顶部三 Tab（我的工作流 / 模板 / 成果物），三页共用，齐平展示。 */
+/** 工作台顶部 Tab（我的工作流 / 模板 / 成果物 / 指令），四页共用，齐平展示。 */
 export function workbenchTabs(active, token = '') {
   const enc = encodeURIComponent(token)
   const item = (key, label, href, count) => `<a class="wtab ${active === key ? 'active' : ''}" href="${href}?token=${enc}">${label}${typeof count === 'number' ? `（${count}）` : ''}</a>`
@@ -333,6 +333,7 @@ export function workbenchTabs(active, token = '') {
 ${item('mine', '我的工作流', '/ui', typeof active === 'object' ? active.mine : undefined)}
 ${item('library', '模板', '/ui/library', typeof active === 'object' ? active.library : undefined)}
 ${item('artifacts', '成果物', '/ui/artifacts', typeof active === 'object' ? active.artifacts : undefined)}
+${item('commands', '指令', '/ui/commands', typeof active === 'object' ? active.commands : undefined)}
 </nav>`
 }
 
@@ -1255,3 +1256,143 @@ ${ARTIFACTS_JS}
 </script>`
   return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}` })
 }
+
+/**
+ * 快捷指令页（第 4 个 Tab）：结构化管理指令（不再手写 JSON）。
+ * 每条指令：名称 / 标签 / 生成数 / 模式（连续＝每次重滚种子串行 N 次；批次＝改 batch_size 一次出 N 张）/
+ * 种子策略（范围 / 位数 / 时间戳）；支持增删行、保存（写回配置）与就地「▶ 执行」。
+ */
+export function renderCommandsHtml({ commands = [], lastRun = null, token = '' }) {
+  const rows = commands.map((command, index) => commandRowHtml(command, index)).join('')
+  const lastRunText = lastRun === null
+    ? '<span class="muted">还没有可复用的运行——先跑一次工作流，抽卡会沿用其参数</span>'
+    : `将复用最近一次运行：<b>${escapeHtml(lastRun.name)}</b>（种子 ${escapeHtml(String(lastRun.seed ?? '-'))}）`
+  const body = `
+<h1>ComfyUI 工作台</h1>
+${workbenchTabs('commands', token)}
+<div class="sub">${lastRunText}</div>
+<div class="card" style="padding:12px 14px">
+<table class="cmds" id="cmd-table"><thead><tr>
+<th style="width:120px">名称</th><th style="width:150px">标签</th><th style="width:80px">生成数</th>
+<th style="width:104px">模式</th><th style="width:96px">种子策略</th>
+<th>min / max（范围）</th><th>位数（digits）</th><th>补偿位（timestamp）</th>
+<th style="width:130px">操作</th></tr></thead>
+<tbody>${rows}</tbody></table>
+<div class="row" style="margin-top:10px">
+<button type="button" class="mini" id="cmd-add">＋ 新增指令</button>
+<span class="sep"></span>
+<button type="button" class="primary" id="cmd-save">保存指令</button>
+<span class="muted" id="cmd-note">生成数：连续＝连跑 N 次（每次重滚种子）；批次＝一次执行出 N 张（改 batch_size）；缺省 1</span>
+</div>
+</div>
+<script>
+var TOKEN = ${JSON.stringify(token)};
+function api(url, payload) {
+  return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
+}
+function rowValues(tr) {
+  var get = function (sel) { return tr.querySelector(sel); };
+  var mode = get('select[data-field="seedMode"]').value;
+  var seed = { mode: mode };
+  if (mode === 'range') {
+    if (get('input[data-field="min"]').value.trim().length > 0) seed.min = Number(get('input[data-field="min"]').value);
+    if (get('input[data-field="max"]').value.trim().length > 0) seed.max = Number(get('input[data-field="max"]').value);
+  }
+  if (mode === 'digits' && get('input[data-field="length"]').value.trim().length > 0) seed.length = Number(get('input[data-field="length"]').value);
+  if (mode === 'timestamp' && get('input[data-field="extra"]').value.trim().length > 0) seed.extraDigits = Number(get('input[data-field="extra"]').value);
+  return {
+    name: get('input[data-field="name"]').value.trim(),
+    label: get('input[data-field="label"]').value.trim() || get('input[data-field="name"]').value.trim(),
+    count: Number(get('input[data-field="count"]').value) || 1,
+    batchMode: get('select[data-field="batchMode"]').value,
+    seed: seed,
+  };
+}
+function collect() {
+  var out = [];
+  document.querySelectorAll('#cmd-table tbody tr').forEach(function (tr) {
+    var row = rowValues(tr);
+    if (row.name.length > 0) out.push(row);
+  });
+  return out;
+}
+function note(text, bad) {
+  var el = document.getElementById('cmd-note');
+  el.textContent = text;
+  el.style.color = bad ? 'var(--err)' : '';
+}
+document.getElementById('cmd-add').addEventListener('click', function () {
+  var blank = ${JSON.stringify(commandRowHtml({ name: '', label: '', count: 1, batchMode: 'serial', seed: { mode: 'range' } }, 'X'))};
+  document.querySelector('#cmd-table tbody').insertAdjacentHTML('beforeend', blank);
+  syncSeedColumns();
+});
+document.getElementById('cmd-table').addEventListener('click', function (event) {
+  var t = event.target;
+  if (t.getAttribute && t.hasAttribute('data-del')) { t.closest('tr').remove(); syncSeedColumns(); }
+  if (t.getAttribute && t.getAttribute('data-run')) {
+    t.disabled = true; t.textContent = '启动中…';
+    api('/api/quick', { command: t.getAttribute('data-run') }).then(function (value) {
+      t.disabled = false; t.textContent = '▶ 执行';
+      note(value && value.ok ? '已启动' + (value.count > 1 ? '（计划 ' + value.count + ' 次）' : '') + (value.detail ? '：' + value.detail : '') : '启动失败：' + ((value && value.reason) || '未知原因'), !(value && value.ok));
+    }).catch(function (error) { t.disabled = false; t.textContent = '▶ 执行'; note('启动失败：' + error, true); });
+  }
+});
+document.getElementById('cmd-table').addEventListener('change', function (event) {
+  if (event.target && event.target.getAttribute && event.target.getAttribute('data-field') === 'seedMode') syncSeedColumns();
+});
+document.getElementById('cmd-save').addEventListener('click', function () {
+  var button = this;
+  button.disabled = true;
+  api('/api/quick/save', { commands: collect() }).then(function (value) {
+    button.disabled = false;
+    if (value && value.ok) { note('已保存 ' + value.saved + ' 条指令（即时生效）'); setTimeout(function () { location.reload(); }, 600); }
+    else note('保存失败：' + ((value && value.reason) || '未知原因'), true);
+  }).catch(function (error) { button.disabled = false; note('保存失败：' + error, true); });
+});
+function syncSeedColumns() {
+  document.querySelectorAll('#cmd-table tbody tr').forEach(function (tr) {
+    var mode = tr.querySelector('select[data-field="seedMode"]').value;
+    var minmax = mode === 'range';
+    tr.querySelector('input[data-field="min"]').disabled = !minmax;
+    tr.querySelector('input[data-field="max"]').disabled = !minmax;
+    tr.querySelector('input[data-field="length"]').disabled = mode !== 'digits';
+    tr.querySelector('input[data-field="extra"]').disabled = mode !== 'timestamp';
+  });
+}
+syncSeedColumns();
+</script>`
+  return pageShell('快捷指令', body, { extraCss: `${TABS_CSS}${COMMANDS_CSS}` })
+}
+
+function commandRowHtml(command, index) {
+  const seed = command.seed ?? {}
+  const mode = String(seed.mode ?? 'range')
+  const safe = (value) => escapeHtml(String(value ?? ''))
+  return `<tr data-cmd="${safe(command.name)}">
+<td><input type="text" data-field="name" value="${safe(command.name)}" placeholder="抽卡"></td>
+<td><input type="text" data-field="label" value="${safe(command.label)}" placeholder="🎲 抽卡"></td>
+<td><input type="number" data-field="count" value="${safe(command.count ?? 1)}" min="1" max="64" style="width:64px"></td>
+<td><select data-field="batchMode">
+<option value="serial"${command.batchMode !== 'batch' ? ' selected' : ''}>连续 N 次</option>
+<option value="batch"${command.batchMode === 'batch' ? ' selected' : ''}>批次 1 次</option>
+</select></td>
+<td><select data-field="seedMode">
+<option value="range"${mode === 'range' ? ' selected' : ''}>范围</option>
+<option value="digits"${mode === 'digits' ? ' selected' : ''}>位数</option>
+<option value="timestamp"${mode === 'timestamp' ? ' selected' : ''}>时间戳</option>
+</select></td>
+<td><input type="number" data-field="min" value="${safe(seed.min)}" placeholder="1" style="width:84px"> <input type="number" data-field="max" value="${safe(seed.max)}" placeholder="4294967295" style="width:120px"></td>
+<td><input type="number" data-field="length" value="${safe(seed.length)}" placeholder="9" style="width:70px"></td>
+<td><input type="number" data-field="extra" value="${safe(seed.extraDigits)}" placeholder="3" style="width:70px"></td>
+<td><button type="button" class="mini" data-run="${safe(command.name)}" title="立即执行该指令（沿用最近一次运行参数）"${command.name ? '' : ' disabled'}>▶ 执行</button>
+<button type="button" class="mini" data-del="${index}" title="删除该指令">✕</button></td>
+</tr>`
+}
+
+const COMMANDS_CSS = `
+.cmds{width:100%;border-collapse:collapse;font-size:13px}
+.cmds th,.cmds td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle}
+.cmds th{background:var(--bg);font-weight:600}
+.cmds input[type="text"],.cmds input[type="number"],.cmds select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px}
+.cmds input:disabled{opacity:.4}
+`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_QUICK_COMMANDS, buildQuickRerun, parseQuickCommands, rollSeed, seedStrategyFor } from '../lib/quick.js'
+import { DEFAULT_QUICK_COMMANDS, applyBatchSize, buildQuickRerun, parseQuickCommands, rollSeed, seedStrategyFor } from '../lib/quick.js'
 
 describe('rollSeed strategies', () => {
   it('range: uniform within [min,max]', () => {
@@ -80,5 +80,52 @@ describe('seedStrategyFor / buildQuickRerun', () => {
     )
     expect(noSeed.ok).toBe(false)
     expect(noSeed.reason).toContain('种子')
+  })
+})
+
+describe('parseQuickCommands 生成数与模式', () => {
+  it('parses count/batchMode with defaults and clamping（缺省 1，钳制 1..64）', () => {
+    const parsed = parseQuickCommands(JSON.stringify([
+      { name: '抽卡' },
+      { name: '批次', count: 4, batchMode: 'batch' },
+      { name: '超大', count: 999 },
+      { name: '非法', count: -3 },
+      { name: '假模式', batchMode: 'nope' },
+    ]))
+    expect(parsed.map((entry) => entry.count)).toEqual([1, 4, 64, 1, 1])
+    expect(parsed[0].batchMode).toBe('serial')
+    expect(parsed[1].batchMode).toBe('batch')
+    expect(parsed[4].batchMode).toBe('serial')
+  })
+
+  it('falls back to defaults carrying count/batchMode', () => {
+    for (const commands of [parseQuickCommands(''), parseQuickCommands('not-json'), parseQuickCommands('{}')]) {
+      expect(commands[0]).toMatchObject({ name: '抽卡', count: 1, batchMode: 'serial' })
+    }
+  })
+})
+
+describe('applyBatchSize（批次生成）', () => {
+  it('rewrites batch_size fields in graph and values', () => {
+    const graph = {
+      '3': { class_type: 'KSampler', inputs: { seed: 1, batch_size: 1 } },
+      '7': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512, batch_size: 1 } },
+    }
+    const result = applyBatchSize(graph, { '3:seed': 1, '3:batch_size': 1, '7:batch_size': 1 }, 5)
+    expect(result.ok).toBe(true)
+    expect(result.fields.sort()).toEqual(['3:batch_size', '7:batch_size'])
+    expect(result.graph['3'].inputs.batch_size).toBe(5)
+    expect(result.graph['7'].inputs.batch_size).toBe(5)
+    expect(result.values['3:batch_size']).toBe(5)
+    expect(result.values['7:batch_size']).toBe(5)
+    expect(result.graph['3'].inputs.seed).toBe(1) // 其余字段不动
+  })
+
+  it('reports ok:false when the graph has no batch field（含链接引用不动）', () => {
+    const graph = { '3': { class_type: 'KSampler', inputs: { seed: 1, batch_size: ['9', 0] } } }
+    const result = applyBatchSize(graph, {}, 4)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/没有可改的 batch_size/)
+    expect(graph['3'].inputs.batch_size).toEqual(['9', 0])
   })
 })

@@ -2,7 +2,7 @@
  * 页面模板体检：确保所有页面渲染函数里的 HTML 模板没有「游离反引号」被提前截断
  * （典型来源：在 HTML 里写 markdown 反引号），并顺带核对关键元素是否存在。
  */
-import { renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, buildPageDescriptor } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, buildPageDescriptor } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
 
 const GRAPH = { '3': { class_type: 'KSampler', inputs: { seed: 1 } } }
 const cases = {
@@ -12,6 +12,11 @@ const cases = {
   artifacts: renderArtifactsHtml({
     runs: [{ id: 'r1', name: 'a', state: 'completed', localFiles: [{ path: 'C:/a.png', filename: 'a.png', kind: 'image' }] }],
     tags: {},
+    token: 'tk',
+  }),
+  commands: renderCommandsHtml({
+    commands: [{ name: '抽卡', label: '🎲 抽卡', count: 1, batchMode: 'serial', seed: { mode: 'range', min: 1, max: 4294967295 } }],
+    lastRun: { name: 'a', seed: 1 },
     token: 'tk',
   }),
 }

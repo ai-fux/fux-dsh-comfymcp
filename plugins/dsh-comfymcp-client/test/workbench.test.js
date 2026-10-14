@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -103,10 +103,11 @@ afterAll(async () => {
   await rm(workdir, { recursive: true, force: true }).catch(() => {})
 })
 
-function makeWorkbench(bridge, config = {}) {
+function makeWorkbench(bridge, config = {}, extra = {}) {
   return createWorkbenchMethods({
     bridge,
     config: { workflowDirs: [workflowDir], homeDir: join(workdir, 'comfymcp-test-workflows'), dataDir: join(workdir, 'data'), ...config },
+    ...extra,
   })
 }
 
@@ -538,5 +539,88 @@ describe('workbench UI-format adaptation', () => {
     expect(page.html).toContain('data-field="3:seed"') // 本地兜底转换仍出表单
     expect(page.html).toContain('已本地转换')
     expect(page.html).toContain('value="7"') // seed 值经隐藏控件修正后对齐
+  })
+})
+
+describe('quickRun 多生成数（连续 / 批次）与指令页', () => {
+  const appliedGraph = {
+    '3': { class_type: 'KSampler', inputs: { seed: 42, steps: 20, batch_size: 1 } },
+    '6': { class_type: 'CLIPTextEncode', inputs: { text: '旧词' } },
+  }
+  // 预置一条可复用运行（走桥接桩的真实 runs 存储，后续 reroll 记录也会进同一存储）
+  async function bridgeWithLastRun(graph = appliedGraph) {
+    const bridge = await makeBridge()
+    bridge.recordRun({ id: 'r0', name: 'beach-01', state: 'completed', finishedAt: Date.now(), form: { values: { '3:seed': 42, '3:batch_size': graph['3'].inputs.batch_size ?? 1, '6:text': '旧词' }, graph } })
+    return bridge
+  }
+
+  it('batch mode rewrites batch_size and runs once', async () => {
+    const bridge = await bridgeWithLastRun()
+    const workbench = makeWorkbench(bridge, { quickCommands: JSON.stringify([{ name: '抽卡', batchMode: 'batch', count: 4, seed: { mode: 'range', min: 7, max: 7 } }]) })
+    const started = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
+    expect(started).toMatchObject({ ok: true, mode: 'batch', count: 4 })
+    const record = bridge.getRun(started.runId)
+    expect(record.form.graph['3'].inputs.batch_size).toBe(4)
+    expect(record.form.values['3:batch_size']).toBe(4)
+    expect(record.form.graph['3'].inputs.seed).toBe(7)
+    expect(record.form.graph['6'].inputs.text).toBe('旧词')
+  })
+
+  it('batch mode without a batch field explains the fallback (boundary)', async () => {
+    const noBatchGraph = { '3': { class_type: 'KSampler', inputs: { seed: 42, steps: 20 } }, '6': { class_type: 'CLIPTextEncode', inputs: { text: '旧词' } } }
+    const bridge = await bridgeWithLastRun(noBatchGraph)
+    const workbench = makeWorkbench(bridge, { quickCommands: JSON.stringify([{ name: '抽卡', batchMode: 'batch', count: 3 }]) })
+    const result = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/批次生成不可用/)
+  })
+
+  it('serial mode chains extra reruns after each finishes（连跑 N 次，每次重滚种子）', { timeout: 30000 }, async () => {
+    const bridge = await bridgeWithLastRun()
+    const workbench = makeWorkbench(bridge, { quickCommands: JSON.stringify([{ name: '抽卡', batchMode: 'serial', count: 3, seed: { mode: 'digits', length: 3 } }]) })
+    const started = await workbench.quickRun({ workflow: 'beach', command: '抽卡' })
+    expect(started).toMatchObject({ ok: true, mode: 'serial', planned: 3 })
+    await vi.waitFor(() => {
+      const rerolls = bridge.listRuns(50).filter((run) => run.name === 'beach-01-reroll')
+      expect(rerolls.length).toBe(3)
+    }, { timeout: 25000, interval: 400 })
+    const rerolls = bridge.listRuns(50).filter((run) => run.name === 'beach-01-reroll')
+    const seeds = rerolls.map((run) => run.form.graph['3'].inputs.seed)
+    expect(new Set(seeds).size).toBe(3) // 每次都是新种子
+    expect(seeds.every((seed) => Number.isInteger(seed) && seed >= 100 && seed <= 999)).toBe(true)
+  })
+
+  it('saveQuickCommands normalizes entries and writes the overlay', async () => {
+    const writes = []
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge, {}, {
+      persistWrite: (patch) => {
+        writes.push(patch)
+        return true
+      },
+    })
+    const saved = await workbench.saveQuickCommands({
+      commands: [
+        { name: '抽卡', label: '🎲 抽卡', count: 5, batchMode: 'batch', seed: { mode: 'digits', length: 5, junk: 'x' } },
+        { name: '', count: 2 },
+      ],
+    })
+    expect(saved.ok).toBe(true)
+    expect(saved.saved).toBe(1)
+    expect(writes.length).toBe(1)
+    expect(writes[0].quickCommands).toContain('"batchMode":"batch"')
+    expect(saved.commands[0]).toMatchObject({ name: '抽卡', count: 5, batchMode: 'batch', seed: { mode: 'digits', length: 5 } })
+    expect(await workbench.saveQuickCommands({ commands: [{ name: '  ' }] })).toMatchObject({ ok: false })
+  })
+
+  it('pageCommands renders the structured editor with the 4th tab', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge, { quickCommands: JSON.stringify([{ name: '抽卡', count: 2, batchMode: 'serial' }]) })
+    const page = await workbench.pageCommands({ token: 'tk' })
+    expect(page.html).toContain('/ui/commands?token=tk')
+    expect(page.html).toContain('data-field="batchMode"')
+    expect(page.html).toContain('/api/quick/save')
+    expect(page.html).toContain('data-run="抽卡"')
+    expect(page.html).toContain('生成数')
   })
 })

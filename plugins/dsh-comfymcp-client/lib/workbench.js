@@ -13,9 +13,9 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, artifactsRunsHtml } from './wfpage.js'
+import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
-import { parseQuickCommands, buildQuickRerun } from './quick.js'
+import { parseQuickCommands, buildQuickRerun, applyBatchSize } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { createRunDaemon, summarizeRun } from './rund.js'
 import { normalizeNodeCatalog } from './nodecat.js'
@@ -200,7 +200,35 @@ function applyValues(graph, values) {
  * @param deps { bridge, config }
  * @returns 控制端点方法：pageIndex/pageWorkflow/pageArtifacts/listWorkflows/getPage/runPage/quickRun/listArtifacts/updateTags
  */
-export function createWorkbenchMethods({ bridge, config }) {
+/**
+ * 连续抽卡的后台链：等上一次跑完（status 不再是 running）再补跑下一次。
+ * 火后不理（页面可关闭）；总等待上限取单次运行预算 + 60s，防止链卡死。
+ */
+async function chainSerialReruns({ daemon, lastRun, entry, count, name, subdir, runTimeoutMin = 30, log, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  const perRunWaitMs = (Number(runTimeoutMin) > 0 ? Number(runTimeoutMin) : 30) * 60 * 1000 + 60 * 1000
+  for (let i = 1; i < count; i++) {
+    let waited = 0
+    while (waited < perRunWaitMs) {
+      const status = daemon.status(name)
+      if (status?.ok !== true || status.value === null || status.value.state !== 'running') break
+      await sleep(1500)
+      waited += 1500
+    }
+    const next = buildQuickRerun(lastRun, entry)
+    if (next.ok !== true) {
+      log(`连续抽卡第 ${i + 1}/${count} 次中止：${next.reason}`)
+      return
+    }
+    const start = daemon.start({ workflow: next.name, name: next.name, graph: next.graph, values: next.values, subdir })
+    if (start.ok !== true) {
+      log(`连续抽卡第 ${i + 1}/${count} 次启动失败：${start.reason ?? ''}`)
+      return
+    }
+    log(`连续抽卡 ${i + 1}/${count} 已启动（seed=${next.seed}）`)
+  }
+}
+
+export function createWorkbenchMethods({ bridge, config, persistWrite = null }) {
   const executeRun = createRunExecutor({ bridge })
   const daemon = createRunDaemon({ bridge, executeRun })
   const tagStore = createTagStore({ dataDir: config.dataDir })
@@ -337,6 +365,21 @@ export function createWorkbenchMethods({ bridge, config }) {
     async pageLibrary({ token = '' } = {}) {
       const groups = tabGroups(await remote.remoteList())
       return { html: renderLibraryHtml({ library: groups.library, mine: groups.mine, token }) }
+    },
+
+    /** 快捷指令页（第 4 个 Tab）：结构化管理指令 + 就地执行。 */
+    async pageCommands({ token = '' } = {}) {
+      const commands = parseQuickCommands(config.quickCommands)
+      const lastRun = bridge
+        .listRuns(50)
+        .find((run) => run.state === 'completed' && run.form?.graph !== undefined) ?? null
+      return {
+        html: renderCommandsHtml({
+          token,
+          commands,
+          lastRun: lastRun === null ? null : { name: lastRun.name, seed: lastRun.seed ?? null },
+        }),
+      }
     },
 
     async pageWorkflow(name, { token = '' } = {}) {
@@ -496,17 +539,71 @@ export function createWorkbenchMethods({ bridge, config }) {
       return daemon.clear(workflow)
     },
 
-    /** 快捷指令（如抽卡）：复用上次成功运行的参数，仅重滚种子；同样异步执行。 */
-    async quickRun({ workflow, command } = {}) {
+    /**
+     * 快捷指令（如抽卡）：复用上次成功运行的参数，仅重滚种子；支持多生成数。
+     * - batchMode='serial'（默认）：连续调 count 次，每次重滚种子；第 1 次立即启动，
+     *   其余在上一次结束后由后台链式补跑（页面可关闭，链路在插件进程内继续）。
+     * - batchMode='batch'：工作流批次生成 —— 直接把图里的 batch_size 改为 count，一次执行。
+     * 生成数缺省 1（未提及默认 1 即单次）。
+     */
+    async quickRun({ workflow, command, count: countOverride } = {}) {
       const commands = parseQuickCommands(config.quickCommands)
       const entry = commands.find((item) => item.name === command) ?? commands[0]
       if (entry === undefined) return { ok: false, reason: '没有可用的快捷指令' }
+      const requested = Number(countOverride ?? entry.count ?? 1)
+      const count = Number.isFinite(requested) && requested >= 1 ? Math.min(64, Math.round(requested)) : 1
       const lastRun = bridge
         .listRuns(50)
         .find((run) => run.state === 'completed' && run.form?.graph !== undefined && (workflow === undefined || workflow === null || run.name === workflow || String(run.name).startsWith(String(workflow))))
       const rerun = buildQuickRerun(lastRun ?? null, entry)
       if (rerun.ok !== true) return { ok: false, reason: rerun.reason }
-      return daemon.start({ workflow: rerun.name, name: rerun.name, graph: rerun.graph, values: rerun.values, subdir: config.saveSubdir })
+      if (entry.batchMode === 'batch' && count > 1) {
+        const batched = applyBatchSize(rerun.graph, rerun.values, count)
+        if (batched.ok !== true) {
+          return { ok: false, reason: `批次生成不可用：${batched.reason}；可改用「连续」模式` }
+        }
+        const start = daemon.start({ workflow: rerun.name, name: rerun.name, graph: batched.graph, values: batched.values, subdir: config.saveSubdir })
+        return start.ok === true
+          ? { ok: true, mode: 'batch', count, runId: start.runId, detail: batched.reason }
+          : start
+      }
+      const start = daemon.start({ workflow: rerun.name, name: rerun.name, graph: rerun.graph, values: rerun.values, subdir: config.saveSubdir })
+      if (start.ok !== true) return start
+      if (count > 1) {
+        void chainSerialReruns({ daemon, lastRun, entry, count, name: rerun.name, subdir: config.saveSubdir, runTimeoutMin: config.runTimeoutMin, log: (line) => (typeof bridge.log === 'function' ? bridge.log(line) : console.log(`[dsh-comfymcp-client] ${line}`)) })
+      }
+      return { ok: true, mode: 'serial', count, runId: start.runId, planned: count }
+    },
+
+    /** 指令页保存：结构化指令列表 → quickCommands 配置（覆盖层持久化 + 即时生效）。 */
+    async saveQuickCommands({ commands } = {}) {
+      if (!Array.isArray(commands)) return { ok: false, reason: 'commands 需要是数组' }
+      const clean = []
+      for (const entry of commands) {
+        if (entry === null || typeof entry !== 'object') continue
+        const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+        if (name.length === 0) continue
+        const mode = String(entry.batchMode ?? 'serial').toLowerCase() === 'batch' ? 'batch' : 'serial'
+        const command = { name, count: Math.min(64, Math.max(1, Math.round(Number(entry.count) || 1))), batchMode: mode }
+        if (typeof entry.label === 'string' && entry.label.trim().length > 0) command.label = entry.label.trim()
+        if (entry.seed !== null && typeof entry.seed === 'object') {
+          const seed = { mode: String(entry.seed.mode ?? 'range').toLowerCase() }
+          for (const key of ['min', 'max', 'length', 'extraDigits']) {
+            if (entry.seed[key] !== undefined && Number.isFinite(Number(entry.seed[key]))) seed[key] = Number(entry.seed[key])
+          }
+          command.seed = seed
+        }
+        clean.push(command)
+      }
+      if (clean.length === 0) return { ok: false, reason: '至少需要一条指令（保留名称非空的条目）' }
+      const json = JSON.stringify(clean)
+      if (typeof persistWrite === 'function') {
+        const written = persistWrite({ quickCommands: json })
+        if (written !== true) return { ok: false, reason: '覆盖层写入失败，指令未保存' }
+      }
+      config.quickCommands = json
+      bridge.applyOverlay?.({ quickCommands: json })
+      return { ok: true, commands: parseQuickCommands(config.quickCommands), saved: clean.length }
     },
 
     /**

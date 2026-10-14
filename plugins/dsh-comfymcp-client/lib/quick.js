@@ -51,28 +51,37 @@ export function rollSeed(strategy = {}, random = Math.random, now = Date.now) {
   return Math.min(low + Math.floor(random() * (high - low + 1)), SEED_MAX_SAFE)
 }
 
+/** 指令条目形状：{ name, label?, workflow?, seed?, count?, batchMode? }
+ *  count     生成数（默认 1；「一般未提及默认 1」）
+ *  batchMode 'serial'（默认，连续调 count 次，每次重滚种子）| 'batch'（工作流批次：直接改 batch_size=count 一次执行）
+ */
+
 /** 解析配置里的快捷指令 JSON；非法条目跳过，非法整体回退缺省。 */
 export function parseQuickCommands(raw) {
+  const fallback = () => DEFAULT_QUICK_COMMANDS.map((entry) => ({ ...entry, seed: { ...entry.seed }, count: 1, batchMode: 'serial' }))
   if (raw === undefined || raw === null || String(raw).trim().length === 0) {
-    return DEFAULT_QUICK_COMMANDS.map((entry) => ({ ...entry, seed: { ...entry.seed } }))
+    return fallback()
   }
   let parsed
   try {
     parsed = JSON.parse(String(raw))
   } catch {
-    return DEFAULT_QUICK_COMMANDS.map((entry) => ({ ...entry, seed: { ...entry.seed } }))
+    return fallback()
   }
-  if (!Array.isArray(parsed)) return DEFAULT_QUICK_COMMANDS.map((entry) => ({ ...entry, seed: { ...entry.seed } }))
+  if (!Array.isArray(parsed)) return fallback()
   const commands = []
   for (const entry of parsed) {
     if (entry === null || typeof entry !== 'object') continue
     const name = typeof entry.name === 'string' && entry.name.trim().length > 0 ? entry.name.trim() : ''
     if (name.length === 0) continue
+    const mode = String(entry.batchMode ?? 'serial').toLowerCase()
     commands.push({
       name,
       label: typeof entry.label === 'string' && entry.label.trim().length > 0 ? entry.label.trim() : name,
       ...(entry.workflow !== undefined && typeof entry.workflow === 'string' ? { workflow: entry.workflow } : {}),
       ...(entry.seed !== null && typeof entry.seed === 'object' ? { seed: { ...entry.seed } } : {}),
+      count: clampInt(entry.count, 1, 1, 64),
+      batchMode: mode === 'batch' ? 'batch' : 'serial',
     })
   }
   return commands
@@ -125,5 +134,36 @@ export function buildQuickRerun(lastRun, command, deps = {}) {
     values: valuesNext,
     seed,
     reason: replaced > 0 ? `替换 ${replaced} 个种子字段` : '图中没有识别到种子字段',
+  }
+}
+
+/**
+ * 批次模式：把图里的批次字段（batch_size / batchSize）直接改为 count，values 同步更新。
+ * 一般工作流只有 KSampler 的 batch_size；改不到时返回 ok:false 让上层回退提示。
+ */
+export function applyBatchSize(graph, values = {}, count = 1, deps = {}) {
+  const clone = deps.clone ?? ((value) => structuredClone(value))
+  const safeCount = clampInt(count, 1, 1, 64)
+  const next = clone(graph)
+  const valuesNext = { ...values }
+  const touched = []
+  for (const [nodeId, node] of Object.entries(next)) {
+    if (node === null || typeof node !== 'object' || node.inputs === null || typeof node.inputs !== 'object') continue
+    for (const field of Object.keys(node.inputs)) {
+      if (!/^batch_?size$/i.test(field)) continue
+      const current = node.inputs[field]
+      if (typeof current !== 'number' || !Number.isInteger(current)) continue // 链接引用等非标量不动
+      node.inputs[field] = safeCount
+      valuesNext[`${nodeId}:${field}`] = safeCount
+      touched.push(`${nodeId}:${field}`)
+    }
+  }
+  return {
+    ok: touched.length > 0,
+    graph: next,
+    values: valuesNext,
+    count: safeCount,
+    fields: touched,
+    reason: touched.length > 0 ? `批次字段改为 ${safeCount}（${touched.join('、')}）` : '图中没有可改的 batch_size 字段',
   }
 }

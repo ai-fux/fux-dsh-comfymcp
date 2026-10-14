@@ -216,7 +216,13 @@ export function createTools({ define, bridge, askUser }) {
           : 0
         if (seconds > 0 && questions.length > 0) {
           const first = questions[0]
-          questions[0] = { ...first, detail: `${first.detail ?? ''} · ⏱ ${seconds} 秒内未作答将自动采用推荐参数` }
+          // 对话框只渲染 question 与 options —— 提示必须写进 question 文本才可见
+          const note = `⏱ ${seconds} 秒内未作答将自动采用推荐参数并继续执行`
+          questions[0] = {
+            ...first,
+            question: `${first.question}（${note}；本框可留空）`,
+            detail: `${first.detail ?? ''} · ${note}`,
+          }
         }
         let timer = null
         let answer

@@ -145,7 +145,8 @@ describe('createTools catalog', () => {
         bridge,
         askUser: (request) => {
           askCount += 1
-          expect(request.questions[0].detail).toMatch(/⏱ 1 秒内未作答将自动采用推荐参数/)
+          expect(request.questions[0].question).toMatch(/⏱ 1 秒内未作答将自动采用推荐参数并继续执行/);
+          expect(request.questions[0].question).toMatch(/本框可留空/)
           return new Promise(() => {}) // 用户一直不作答
         },
       })
@@ -180,7 +181,7 @@ describe('createTools catalog', () => {
     const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
     const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
     const result = await tool.execute({ graph: GRAPH, fields }, {})
-    expect(captured.questions[0].detail).not.toMatch(/⏱/)
+    expect(captured.questions[0].question).not.toMatch(/⏱/)
     expect(result.auto).toBeUndefined()
     expect(result.answers[0].custom).toBe('answered')
   })
@@ -230,7 +231,7 @@ describe('createTools catalog', () => {
         const promise = tool.execute({ graph: GRAPH, fields }, {})
         await vi.advanceTimersByTimeAsync(30100)
         const result = await promise
-        expect(captured.questions[0].detail).toMatch(/⏱ 30 秒内未作答将自动采用推荐参数/)
+        expect(captured.questions[0].question).toMatch(/⏱ 30 秒内未作答将自动采用推荐参数并继续执行/)
         expect(result.autoReason).toMatch(/倒计时 30 秒/)
       }
     } finally {

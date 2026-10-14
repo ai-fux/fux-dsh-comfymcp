@@ -22,8 +22,11 @@
 | 11 | 测试：HTTP 客户端 6 例（JSON/SSE、会话头、Bearer、连接失败/超时/无端点、门面翻译）+ 桥接 4 例（传输选择、远程探测、切换重建） | `test/mcp-http.test.js`、`test/bridge.test.js` | ✅ |
 | 12 | **表单倒计时自动确认**：新增 `autoAcceptForm`（默认关）+ `autoAcceptFormSec`（默认 30s）；开启后推送参数表单即启动倒计时，首题标注「⏱ N 秒内未作答将自动采用推荐参数」，超时未作答自动以推荐参数完成（空 answers＝种子沿用推送时随机值、其余保持推导值），结果标 `auto:true` 与 `autoReason`；关闭则一直等待用户作答 | `lib/catalog.js` `comfymcp_push_form`、`lib/config.js`、`lib/persist.js` | ✅ |
 | 13 | **卸载开关语义落地强化**（目的定稿：开启＝跨工作流生成方便重新加载模型；关闭＝同一工作流连续生成抽卡时模型热加载加速）：设置页说明改写为该语义；运行摘要透出 `autoUnload` 与 `form.unload`，运行卡片新增「⏏ 卸载：…（开关＝开/关）」处置行 | `client.js`、`lib/rund.js` `summarize`、`lib/wfpage.js` `groupHtml` | ✅ |
-| 14 | 秒数输入框常显（无需先开开关即可预配），非法值（0/负数/非数字/缺省）回退 30 秒并有测试钉住 |
 | 15 | 测试 +6：倒计时超时自动确认（fake timers，验证提示注入/auto 标记/空答案）、关闭时正常等待、先答先胜（计时器清理）；`summarizeRun` 卸载透出与旧记录兼容 | `test/catalog.test.js`、`test/rund.test.js` | ✅ |
+| 16 | **修倒计时「开启后未生效」**：提示原先写在 ask 对话框不渲染的 `detail` 字段 → 移入首题 `question` 文本（「⏱ N 秒内未作答将自动采用推荐参数并继续执行；本框可留空」）；重装插件后需重启 DSH 才加载新逻辑 | `lib/catalog.js` | ✅ |
+| 17 | **快捷指令 Tab（第 4 个 Tab）**：`/ui/commands` 结构化管理指令（名称/标签/生成数/模式/种子策略，增删行、保存即写回配置，就地「▶ 执行」），不再手写 JSON；DSH 面板同步为四 Tab | `lib/wfpage.js` `renderCommandsHtml`、`lib/workbench.js` `pageCommands/saveQuickCommands`、`lib/control-server.js`、`client.js` | ✅ |
+| 18 | **抽卡多生成数**（缺省 1）：指令新增 `count` + `batchMode`——`serial` 连续调 N 次（每次重滚种子，第 1 次即启，其余后台链式补跑）；`batch` 批次生成（直接改图中 `batch_size=N` 一次执行，无该字段则提示改用连续） | `lib/quick.js` `applyBatchSize`、`lib/workbench.js` `quickRun/chainSerialReruns` | ✅ |
+| 19 | 测试 +9：quick 指令解析钳制、批次改写与边界；串行链（3 次全启动且种子互异）、批次单跑、无批次字段回退提示、saveQuickCommands 归一化落盘、指令页渲染；页面体检补 commands 页 | `test/quick.test.js`、`test/workbench.test.js`、`scripts/check-page-templates.mjs` | ✅ |
 
 **下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 
