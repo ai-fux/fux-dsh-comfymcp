@@ -868,6 +868,7 @@ function renderRuns(payload) {
     summary.innerHTML = (payload.summary || '') + (payload.queryText ? ' · 检索：' + payload.queryText : '') + ' · <a href="/ui?token=' + encodeURIComponent(TOKEN || '') + '">← 工作台</a>';
   }
   if (payload && payload.runIds) window.__runIds = payload.runIds;
+  layoutMasonry();
   refreshPickCount();
 }
 function searchPayload() {
@@ -878,6 +879,78 @@ function currentStyle() {
   var style = box && box.getAttribute('data-style');
   return style || 'masonry';
 }
+var masonryTimer = null;
+function byRunOrder(a, b) {
+  return Number(a.getAttribute('data-order') || 0) - Number(b.getAttribute('data-order') || 0);
+}
+/** 非瀑布流样式：把卡片从列容器里搬回来（保持原顺序）。 */
+function unwrapMasonry(box) {
+  var columns = box.querySelectorAll('.mcol');
+  if (columns.length === 0) return;
+  var runs = Array.prototype.slice.call(box.querySelectorAll('.run')).sort(byRunOrder);
+  runs.forEach(function (run) { box.appendChild(run); });
+  Array.prototype.slice.call(columns).forEach(function (column) { column.remove(); });
+}
+/**
+ * 真瀑布流：按顺序把每组塞进当前最短的列（并列取最左），列宽固定、列数随窗口，
+ * 保证每列从同一条顶线开始、整体左对齐且不留大片空白。
+ */
+function layoutMasonry() {
+  var box = document.getElementById('runs');
+  if (box === null) return;
+  if (box.getAttribute('data-style') !== 'masonry') { unwrapMasonry(box); return; }
+  var runs = Array.prototype.slice.call(box.querySelectorAll('.run'));
+  if (runs.length === 0) return;
+  // 常量写死在函数里：本脚本拼在 bootstrap 之后，模块级 var 赋值早于它执行时还是 undefined
+  var gap = 12;
+  var target = 300;
+  runs.forEach(function (run, index) {
+    if (run.getAttribute('data-order') === null) run.setAttribute('data-order', String(index));
+  });
+  runs.sort(byRunOrder);
+  var width = box.clientWidth || box.offsetWidth || 0;
+  var columns = Math.max(1, Math.floor((width + gap) / (target + gap)));
+  var list = [];
+  var heights = [];
+  for (var i = 0; i < columns; i++) {
+    var column = box.querySelector('.mcol[data-col="' + i + '"]');
+    if (column === null) {
+      column = document.createElement('div');
+      column.className = 'mcol';
+      column.setAttribute('data-col', String(i));
+      box.appendChild(column);
+    }
+    list.push(column);
+    heights.push(0);
+  }
+  Array.prototype.slice.call(box.querySelectorAll('.mcol')).forEach(function (column) {
+    if (Number(column.getAttribute('data-col')) >= columns) column.remove();
+  });
+  runs.forEach(function (run) {
+    var pick = 0;
+    for (var i = 1; i < heights.length; i++) {
+      if (heights[i] < heights[pick] - 1) pick = i; // 明显更矮才换列 → 并列时偏向左侧
+    }
+    if (list[pick] === undefined) return;
+    list[pick].appendChild(run);
+    heights[pick] += (run.offsetHeight || 0) + gap;
+  });
+  watchMasonryImages();
+}
+/** 图片懒加载完成后高度才准，重排一次以免列高判断失真。 */
+function watchMasonryImages() {
+  document.querySelectorAll('#runs img').forEach(function (img) {
+    if (img.getAttribute('data-masonry-watched') === '1') return;
+    img.setAttribute('data-masonry-watched', '1');
+    img.addEventListener('load', scheduleMasonry);
+    img.addEventListener('error', scheduleMasonry);
+  });
+}
+function scheduleMasonry() {
+  if (masonryTimer !== null) clearTimeout(masonryTimer);
+  masonryTimer = setTimeout(function () { masonryTimer = null; layoutMasonry(); }, 120);
+}
+window.addEventListener('resize', scheduleMasonry);
 function applyStyle(style) {
   var box = document.getElementById('runs');
   if (!box) return;
@@ -888,6 +961,7 @@ function applyStyle(style) {
   document.querySelectorAll('[data-style]').forEach(function (btn) {
     btn.classList.toggle('dshmcp-on', btn.getAttribute('data-style') === next);
   });
+  layoutMasonry();
   try { window.localStorage.setItem('comfymcp.artifactStyle', next); } catch (e) {}
 }
 function runSearch() {
@@ -1039,11 +1113,13 @@ const ARTIFACTS_CSS = `
 .mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
 .mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
 /* 卡片式样式：瀑布流 / 两列平铺（竖向卡：缩略图占满卡片宽度） */
-/* 瀑布流用 column-width 自适应列数：无论窗口多宽都从左侧起排，单卡片也贴左（不再被居中容器推到中间） */
-#runs.style-masonry{column-width:300px;column-gap:12px;text-align:left}
-#runs.style-masonry .run,#runs.style-grid2 .run{break-inside:avoid;display:inline-block;width:100%;margin:0 0 12px}
+/* 瀑布流：列容器 + JS 最短列装填（真瀑布流）——CSS 多列在卡片高度差异大时会平衡失败，
+   留下大片空白；这里固定列宽 300px 自适应列数，按顺序把每组塞进当前最短的列，从左侧起排。 */
+#runs.style-masonry{display:flex;align-items:flex-start;gap:12px;justify-content:flex-start;text-align:left}
+#runs.style-masonry .mcol{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:12px}
+#runs.style-masonry .run{break-inside:avoid;display:block;width:100%;margin:0}
 #runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;justify-content:start}
-#runs.style-grid2 .run{margin:0}
+#runs.style-grid2 .run{break-inside:avoid;width:100%;margin:0}
 #runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{display:flex;flex-direction:column;gap:10px}
 #runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
 #runs.style-masonry .mediacard .thumb,#runs.style-grid2 .mediacard .thumb{flex:none;width:100%;height:auto;aspect-ratio:1/1;border-radius:0}

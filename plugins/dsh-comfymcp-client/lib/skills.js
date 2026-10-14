@@ -34,8 +34,9 @@ export const GENERATION_FLOW_CONTENT = `# comfy-mcp 工作流生成流程
 
 ## 4. 表单确认（必经）
 - \`comfymcp_analyze_workflow\`：得到 fields（提示词预设、缺省参数、随机种子）。
-- \`comfymcp_push_form\`：把表单推给用户。种子已在推送时随机一次，用户可选使用/重随/手输固定值。autoAcceptForm 开启时把第 1 步攒下的所有选择也一并做成 fields 推进同一张表单，**不要**另发追问。
+- \`comfymcp_push_form\`：把表单推给用户，**必须传 \`title\`** 说明用途（例如「白色机甲 · 生成参数」）——它会出现在每题的 header「title · 1/N」上。每题选项首位已标【推荐】，题面写明不答会采用哪个推荐值，倒计时规则也写在题面上（30 秒未答 → 自动用【推荐】值继续）。种子已在推送时随机一次，用户可选使用/重随/手输固定值。autoAcceptForm 开启时把第 1 步攒下的所有选择也一并做成 fields 推进同一张表单，**不要**另发追问。
 - 结果 \`auto:true\`（autoReason 含「倒计时」）＝倒计时到点未收到作答、已自动采用推荐参数：不要等待、不要重复推送表单，直接 \`comfymcp_apply_form\` 继续；用户迟到补答会以消息送达，届时按新选择调整。
+- 结果 \`cancelled:true\`＝用户主动关掉了这次确认：**不要执行**，先问用户要改什么；重新推送新表单即可（每次推送都带新的倒计时，取消过一次不影响下一次）。
 - \`comfymcp_apply_form\`：回填并校验。validation.valid=false 时修复后重新校验。
 
 ## 5. 运行（先保存，强制）

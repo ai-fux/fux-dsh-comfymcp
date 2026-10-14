@@ -266,15 +266,27 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(code).toContain("api('/api/artifacts/remove'")
   })
 
-  it('瀑布流从左侧起排：全宽 wrap + column-width 自适应列（单卡片也贴左）', () => {
+  it('瀑布流从左侧起排：全宽 wrap + JS 最短列装填（单卡片也贴左、无居中空洞）', () => {
     const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
     // 页面容器全宽左对齐（不再被 860px 居中容器推到中间）
     expect(html).toContain('class="wrap wide"')
     expect(html).toContain('.wrap.wide{max-width:none;margin:0')
-    // 瀑布流按列宽自适应（column-width 而非固定 column-count）
-    expect(html).toContain('#runs.style-masonry{column-width:300px')
-    expect(html).not.toContain('column-count:2')
-    expect(html).toContain('text-align:left')
+    // 瀑布流＝列容器 + 最短列装填（CSS 多列在卡高差异大时会平衡失败留下空洞）
+    expect(html).toContain('#runs.style-masonry{display:flex;align-items:flex-start;gap:12px;justify-content:flex-start')
+    expect(html).toContain('#runs.style-masonry .mcol{flex:1 1 0;min-width:0')
+    expect(html).not.toContain('column-width:300px')
+    expect(html).not.toContain('column-count')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function layoutMasonry()')
+    expect(code).toContain('function unwrapMasonry(')
+    expect(code).toContain('heights[i] < heights[pick] - 1')
+    expect(code).toContain('data-order')
+    // 常量必须在函数内：页面脚本的 bootstrap 先于模块级 var 赋值执行（否则列数算出 NaN）
+    expect(code).not.toContain('MASONRY_TARGET')
+    expect(code).toContain('var target = 300;')
+    // 图片加载完成/窗口变化后重排，避免列高失真
+    expect(code).toContain('function scheduleMasonry()')
+    expect(code).toContain("window.addEventListener('resize', scheduleMasonry)")
     // 两列平铺同样从左侧起排、按最小卡宽自适应
     expect(html).toContain('#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))')
     expect(html).toContain('justify-content:start')

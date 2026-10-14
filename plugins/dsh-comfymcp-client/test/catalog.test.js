@@ -145,8 +145,11 @@ describe('createTools catalog', () => {
         bridge,
         askUser: (request) => {
           askCount += 1
-          expect(request.questions[0].question).toMatch(/⏱ 1 秒内未作答将自动采用推荐参数并继续执行/);
+          // 每页都写明：推荐值 + 倒计时规则 + 该干什么
+          expect(request.questions[0].question).toMatch(/⏱ 1 秒未答 → 自动采用【推荐】值继续/)
           expect(request.questions[0].question).toMatch(/本框可留空/)
+          expect(request.questions[0].question).toMatch(/推荐（预设）/)
+          expect(request.questions[0].header).toMatch(/生成参数确认 · 1\/1/)
           return new Promise(() => {}) // 用户一直不作答
         },
       })
@@ -195,7 +198,7 @@ describe('createTools catalog', () => {
     expect(result.fields.length).toBe(1)
   })
 
-  it('comfymcp_push_form falls back to the local race when the timed ask throws（兼容旧 seam）', async () => {
+  it('comfymcp_push_form falls back to the local race when the timed ask hits a precondition error（兼容旧 seam）', async () => {
     vi.useFakeTimers()
     try {
       const { define, definitions } = fakeDefine()
@@ -208,7 +211,12 @@ describe('createTools catalog', () => {
         bridge,
         askUser: async (request, exec, timedSeconds) => {
           calls += 1
-          if (timedSeconds > 0) throw new Error('askTimed unavailable') // 非 root / 旧版 seam
+          if (timedSeconds > 0) {
+            // 真实前置失败形状：非活跃根代理（旧 seam / 子代理里调用）
+            const error = new Error('timed questions require a live agent')
+            error.code = 'DELEGATED_CALLER'
+            throw error
+          }
           return new Promise(() => {}) // 阻塞不作答
         },
       })
@@ -217,11 +225,53 @@ describe('createTools catalog', () => {
       const promise = tool.execute({ graph: GRAPH, fields }, {})
       await vi.advanceTimersByTimeAsync(1100)
       const result = await promise
-      expect(calls).toBe(2) // 先试 timed → 失败 → 本地竞速
+      expect(calls).toBe(2) // 先试 timed → 前置失败 → 本地竞速（倒计时仍然生效）
       expect(result.auto).toBe(true)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('comfymcp_push_form never re-prompts after the user dismisses the form（取消后不重弹）', async () => {
+    const { define, definitions } = fakeDefine()
+    let calls = 0
+    const bridge = fakeBridge()
+    bridge.config.autoAcceptForm = true
+    bridge.config.autoAcceptFormSec = 30
+    createTools({
+      define,
+      bridge,
+      askUser: async () => {
+        calls += 1
+        const error = new Error('the user cancelled ask_user_question')
+        error.code = 'ASK_CANCELLED'
+        throw error
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    const result = await tool.execute({ graph: GRAPH, fields }, { agent: 'a', callId: 'c1' })
+    expect(calls).toBe(1) // 取消只发生一次：不会再弹一个没有倒计时的阻塞对话框
+    expect(result).toMatchObject({ ok: true, cancelled: true })
+    expect(result.reason).toMatch(/取消/)
+    expect(result.answers).toEqual([])
+  })
+
+  it('comfymcp_push_form reports the same cancellation when auto-accept is off（默认关闭也要识别取消）', async () => {
+    const { define, definitions } = fakeDefine()
+    const bridge = fakeBridge() // autoAcceptForm 默认关
+    createTools({
+      define,
+      bridge,
+      askUser: async () => {
+        const error = new Error('the user cancelled ask_user_question')
+        error.code = 'ASK_CANCELLED'
+        throw error
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    expect(await tool.execute({ graph: GRAPH, fields }, {})).toMatchObject({ ok: true, cancelled: true })
   })
 
   it('comfymcp_push_form keeps waiting and returns real answers when auto-accept is off（默认关闭）', async () => {
@@ -288,7 +338,7 @@ describe('createTools catalog', () => {
         const promise = tool.execute({ graph: GRAPH, fields }, {})
         await vi.advanceTimersByTimeAsync(30100)
         const result = await promise
-        expect(captured.questions[0].question).toMatch(/⏱ 30 秒内未作答将自动采用推荐参数并继续执行/)
+        expect(captured.questions[0].question).toMatch(/⏱ 30 秒未答 → 自动采用【推荐】值继续/)
         expect(result.autoReason).toMatch(/倒计时 30 秒/)
       }
     } finally {

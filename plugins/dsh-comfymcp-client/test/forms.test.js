@@ -149,6 +149,34 @@ describe('seed policy', () => {
     expect(resolveAnswer(field, { id: 'x', selected: ['使用当前值 20'] })).toBeUndefined()
     expect(() => resolveAnswer(field, { id: 'x', selected: [], custom: '999' })).toThrow(/最大/)
   })
+
+  it('题面说人话：header 带用途与序号、推荐值置顶标【推荐】', () => {
+    const fields = deriveFields(SAMPLE_GRAPH, NODE_INFOS, [])
+    const { questions } = buildQuestions(fields, () => 0.25, { title: '白色机甲 · 生成参数' })
+    const total = questions.length
+    // 用途 + 序号（对话框只渲染 header/question/options，这两处必须自带说明）
+    expect(questions[0].header).toBe(`白色机甲 · 生成参数 · 1/${total}`)
+    expect(questions.every((entry) => entry.header.startsWith('白色机甲 · 生成参数 · '))).toBe(true)
+    // 中文名，技术类名退到括号
+    const text = questions.find((entry) => entry.id === 'field:6.text')
+    expect(text.question).toContain('提示词')
+    expect(text.question).toMatch(/推荐（预设）：a girl in the rain/)
+    const seed = questions.find((entry) => entry.id === 'field:3.seed')
+    expect(seed.options[0].label).toMatch(/^使用随机种子 \d+（推荐）$/)
+    const steps = questions.find((entry) => entry.id === 'field:3.steps')
+    expect(steps.question).toMatch(/不答将采用推荐值 20/)
+    expect(steps.options[0].label).toBe('使用当前值 20（推荐）')
+    // 默认 title
+    expect(buildQuestions(fields, () => 0.25).questions[0].header).toMatch(/^生成参数确认 · 1\//)
+  })
+
+  it('推荐后缀只是给人看的：不会写进图里（enum/boolean 边界）', () => {
+    expect(resolveAnswer({ kind: 'enum', value: 'euler', label: '采样器' }, { selected: ['euler（推荐）'] })).toBe('euler')
+    expect(resolveAnswer({ kind: 'boolean', value: true, label: '开关' }, { selected: ['true（推荐）'] })).toBe(true)
+    expect(resolveAnswer({ kind: 'boolean', value: false, label: '开关' }, { selected: ['false（推荐）'] })).toBe(false)
+    const booleanQuestion = buildQuestions([{ id: 'f.flag', nodeId: 'f', field: 'flag', kind: 'boolean', value: true, label: '开关' }]).questions[0]
+    expect(booleanQuestion.options[0].label).toBe('true（推荐）')
+  })
 })
 
 describe('applyAnswers', () => {
