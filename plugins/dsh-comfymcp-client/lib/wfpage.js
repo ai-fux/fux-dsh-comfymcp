@@ -130,6 +130,8 @@ const PAGE_CSS = `
 @media (prefers-color-scheme:dark){:root{--bg:#141517;--surface:#1d1f23;--text:#e8eaed;--muted:#9aa1ab;--line:#2e3238;--accent:#6f96ff;--accent-weak:#22304d}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}
 .wrap{max-width:860px;margin:0 auto;padding:20px 16px 48px}
+/* 宽版页面（成果物画廊 / 指令编辑器）：全宽左对齐，卡片从左侧起排 */
+.wrap.wide{max-width:none;margin:0;padding:20px 24px 48px}
 h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-bottom:16px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
 .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
@@ -198,14 +200,15 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .history .empty{color:var(--muted);font-size:13px}
 `
 
-function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
+function pageShell(title, body, { extraScript = '', extraCss = '', wrapClass = '' } = {}) {
   const styles = extraCss.length > 0 ? `${PAGE_CSS}${extraCss}` : PAGE_CSS
+  const wrap = wrapClass.length > 0 ? `wrap ${wrapClass}` : 'wrap'
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${styles}</style></head>
-<body><div class="wrap">${body}</div>
+<body><div class="${wrap}">${body}</div>
 <script>${extraScript}</script></body></html>
 `
 }
@@ -1036,10 +1039,10 @@ const ARTIFACTS_CSS = `
 .mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
 .mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
 /* 卡片式样式：瀑布流 / 两列平铺（竖向卡：缩略图占满卡片宽度） */
-#runs.style-masonry{column-count:2;column-gap:12px}
-@media (min-width:1200px){#runs.style-masonry{column-count:3}}
+/* 瀑布流用 column-width 自适应列数：无论窗口多宽都从左侧起排，单卡片也贴左（不再被居中容器推到中间） */
+#runs.style-masonry{column-width:300px;column-gap:12px;text-align:left}
 #runs.style-masonry .run,#runs.style-grid2 .run{break-inside:avoid;display:inline-block;width:100%;margin:0 0 12px}
-#runs.style-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;justify-content:start}
 #runs.style-grid2 .run{margin:0}
 #runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{display:flex;flex-direction:column;gap:10px}
 #runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
@@ -1254,16 +1257,16 @@ refreshPickCount();
 try { applyStyle(window.localStorage.getItem('comfymcp.artifactStyle') || 'masonry'); } catch (e) { applyStyle('masonry'); }
 ${ARTIFACTS_JS}
 </script>`
-  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}` })
+  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}`, wrapClass: 'wide' })
 }
 
 /**
- * 快捷指令页（第 4 个 Tab）：结构化管理指令（不再手写 JSON）。
- * 每条指令：名称 / 标签 / 生成数 / 模式（连续＝每次重滚种子串行 N 次；批次＝改 batch_size 一次出 N 张）/
- * 种子策略（范围 / 位数 / 时间戳）；支持增删行、保存（写回配置）与就地「▶ 执行」。
+ * 快捷指令页（第 4 个 Tab）：卡片式结构化编辑（不再手写 JSON，也不再有横向表格溢出）。
+ * 每条指令一张卡：名称 / 标签 / 生成数 / 模式（连续 N 次＝串行重滚种子；批次＝改 batch_size 一次出 N 张）/
+ * 种子策略（范围 / 位数 / 时间戳——按策略只显示相关参数）；支持新增、删除、保存（写回配置）与就地「▶ 执行」。
  */
 export function renderCommandsHtml({ commands = [], lastRun = null, token = '' }) {
-  const rows = commands.map((command, index) => commandRowHtml(command, index)).join('')
+  const cards = commands.map((command, index) => commandCardHtml(command, index)).join('\n')
   const lastRunText = lastRun === null
     ? '<span class="muted">还没有可复用的运行——先跑一次工作流，抽卡会沿用其参数</span>'
     : `将复用最近一次运行：<b>${escapeHtml(lastRun.name)}</b>（种子 ${escapeHtml(String(lastRun.seed ?? '-'))}）`
@@ -1271,48 +1274,48 @@ export function renderCommandsHtml({ commands = [], lastRun = null, token = '' }
 <h1>ComfyUI 工作台</h1>
 ${workbenchTabs('commands', token)}
 <div class="sub">${lastRunText}</div>
-<div class="card" style="padding:12px 14px">
-<table class="cmds" id="cmd-table"><thead><tr>
-<th style="width:120px">名称</th><th style="width:150px">标签</th><th style="width:80px">生成数</th>
-<th style="width:104px">模式</th><th style="width:96px">种子策略</th>
-<th>min / max（范围）</th><th>位数（digits）</th><th>补偿位（timestamp）</th>
-<th style="width:130px">操作</th></tr></thead>
-<tbody>${rows}</tbody></table>
-<div class="row" style="margin-top:10px">
+<div class="cmdtoolbar">
 <button type="button" class="mini" id="cmd-add">＋ 新增指令</button>
-<span class="sep"></span>
 <button type="button" class="primary" id="cmd-save">保存指令</button>
-<span class="muted" id="cmd-note">生成数：连续＝连跑 N 次（每次重滚种子）；批次＝一次执行出 N 张（改 batch_size）；缺省 1</span>
+<span class="muted" id="cmd-note">生成数缺省 1：连续 N 次＝每次重滚种子串行跑 N 次；批次＝一次执行出 N 张（改 batch_size）</span>
 </div>
-</div>
+<div id="cmd-list">${cards || '<div class="card muted">还没有指令。点「＋ 新增指令」建一条，保存后可在聊天里直接用，或在这里「▶ 执行」。</div>'}</div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 function api(url, payload) {
   return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
 }
-function rowValues(tr) {
-  var get = function (sel) { return tr.querySelector(sel); };
+function cardValues(card) {
+  var get = function (sel) { return card.querySelector(sel); };
+  function number(field) {
+    var el = get('input[data-field="' + field + '"]');
+    if (el === null || el.value.trim().length === 0) return undefined;
+    var value = Number(el.value);
+    return Number.isFinite(value) ? value : undefined;
+  }
   var mode = get('select[data-field="seedMode"]').value;
   var seed = { mode: mode };
   if (mode === 'range') {
-    if (get('input[data-field="min"]').value.trim().length > 0) seed.min = Number(get('input[data-field="min"]').value);
-    if (get('input[data-field="max"]').value.trim().length > 0) seed.max = Number(get('input[data-field="max"]').value);
+    var min = number('min'); var max = number('max');
+    if (min !== undefined) seed.min = min;
+    if (max !== undefined) seed.max = max;
   }
-  if (mode === 'digits' && get('input[data-field="length"]').value.trim().length > 0) seed.length = Number(get('input[data-field="length"]').value);
-  if (mode === 'timestamp' && get('input[data-field="extra"]').value.trim().length > 0) seed.extraDigits = Number(get('input[data-field="extra"]').value);
+  if (mode === 'digits') { var length = number('length'); if (length !== undefined) seed.length = length; }
+  if (mode === 'timestamp') { var extra = number('extra'); if (extra !== undefined) seed.extraDigits = extra; }
+  var name = get('input[data-field="name"]').value.trim();
   return {
-    name: get('input[data-field="name"]').value.trim(),
-    label: get('input[data-field="label"]').value.trim() || get('input[data-field="name"]').value.trim(),
-    count: Number(get('input[data-field="count"]').value) || 1,
+    name: name,
+    label: get('input[data-field="label"]').value.trim() || name,
+    count: number('count') || 1,
     batchMode: get('select[data-field="batchMode"]').value,
     seed: seed,
   };
 }
 function collect() {
   var out = [];
-  document.querySelectorAll('#cmd-table tbody tr').forEach(function (tr) {
-    var row = rowValues(tr);
-    if (row.name.length > 0) out.push(row);
+  document.querySelectorAll('#cmd-list .cmdcard').forEach(function (card) {
+    var value = cardValues(card);
+    if (value.name.length > 0) out.push(value);
   });
   return out;
 }
@@ -1321,14 +1324,34 @@ function note(text, bad) {
   el.textContent = text;
   el.style.color = bad ? 'var(--err)' : '';
 }
+function syncSeedFields(card) {
+  var mode = card.querySelector('select[data-field="seedMode"]').value;
+  card.querySelectorAll('.seedfields').forEach(function (group) {
+    group.hidden = group.getAttribute('data-seed') !== mode;
+  });
+}
+function syncAll() {
+  document.querySelectorAll('#cmd-list .cmdcard').forEach(syncSeedFields);
+}
 document.getElementById('cmd-add').addEventListener('click', function () {
-  var blank = ${JSON.stringify(commandRowHtml({ name: '', label: '', count: 1, batchMode: 'serial', seed: { mode: 'range' } }, 'X'))};
-  document.querySelector('#cmd-table tbody').insertAdjacentHTML('beforeend', blank);
-  syncSeedColumns();
+  var list = document.getElementById('cmd-list');
+  var empty = list.querySelector('.card.muted');
+  if (empty !== null) empty.remove();
+  list.insertAdjacentHTML('beforeend', ${JSON.stringify(commandCardHtml({ name: '', label: '', count: 1, batchMode: 'serial', seed: { mode: 'range' } }, 'X'))});
+  var cards = list.querySelectorAll('.cmdcard');
+  syncSeedFields(cards[cards.length - 1]);
+  var input = cards[cards.length - 1].querySelector('input[data-field="name"]');
+  if (input !== null) input.focus();
 });
-document.getElementById('cmd-table').addEventListener('click', function (event) {
+document.getElementById('cmd-list').addEventListener('click', function (event) {
   var t = event.target;
-  if (t.getAttribute && t.hasAttribute('data-del')) { t.closest('tr').remove(); syncSeedColumns(); }
+  if (t.getAttribute && t.hasAttribute('data-del')) {
+    var card = t.closest('.cmdcard');
+    if (card !== null) card.remove();
+    if (document.querySelectorAll('#cmd-list .cmdcard').length === 0) {
+      document.getElementById('cmd-list').innerHTML = '<div class="card muted">还没有指令。点「＋ 新增指令」建一条，保存后可在聊天里直接用，或在这里「▶ 执行」。</div>';
+    }
+  }
   if (t.getAttribute && t.getAttribute('data-run')) {
     t.disabled = true; t.textContent = '启动中…';
     api('/api/quick', { command: t.getAttribute('data-run') }).then(function (value) {
@@ -1337,8 +1360,22 @@ document.getElementById('cmd-table').addEventListener('click', function (event) 
     }).catch(function (error) { t.disabled = false; t.textContent = '▶ 执行'; note('启动失败：' + error, true); });
   }
 });
-document.getElementById('cmd-table').addEventListener('change', function (event) {
-  if (event.target && event.target.getAttribute && event.target.getAttribute('data-field') === 'seedMode') syncSeedColumns();
+document.getElementById('cmd-list').addEventListener('change', function (event) {
+  if (event.target && event.target.getAttribute && event.target.getAttribute('data-field') === 'seedMode') {
+    var card = event.target.closest('.cmdcard');
+    if (card !== null) syncSeedFields(card);
+  }
+});
+document.getElementById('cmd-list').addEventListener('input', function (event) {
+  var t = event.target;
+  if (t === null || t.getAttribute === undefined || t.getAttribute('data-field') !== 'name') return;
+  var card = t.closest('.cmdcard');
+  if (card === null) return;
+  var name = t.value.trim();
+  var title = card.querySelector('.cmdname');
+  if (title !== null) title.textContent = name.length > 0 ? name : '未命名指令';
+  var run = card.querySelector('[data-run]');
+  if (run !== null) { run.setAttribute('data-run', name); run.disabled = name.length === 0; }
 });
 document.getElementById('cmd-save').addEventListener('click', function () {
   var button = this;
@@ -1349,50 +1386,66 @@ document.getElementById('cmd-save').addEventListener('click', function () {
     else note('保存失败：' + ((value && value.reason) || '未知原因'), true);
   }).catch(function (error) { button.disabled = false; note('保存失败：' + error, true); });
 });
-function syncSeedColumns() {
-  document.querySelectorAll('#cmd-table tbody tr').forEach(function (tr) {
-    var mode = tr.querySelector('select[data-field="seedMode"]').value;
-    var minmax = mode === 'range';
-    tr.querySelector('input[data-field="min"]').disabled = !minmax;
-    tr.querySelector('input[data-field="max"]').disabled = !minmax;
-    tr.querySelector('input[data-field="length"]').disabled = mode !== 'digits';
-    tr.querySelector('input[data-field="extra"]').disabled = mode !== 'timestamp';
-  });
-}
-syncSeedColumns();
+syncAll();
 </script>`
-  return pageShell('快捷指令', body, { extraCss: `${TABS_CSS}${COMMANDS_CSS}` })
+  return pageShell('快捷指令', body, { extraCss: `${TABS_CSS}${COMMANDS_CSS}`, wrapClass: 'wide' })
 }
 
-function commandRowHtml(command, index) {
+function commandCardHtml(command, index) {
   const seed = command.seed ?? {}
   const mode = String(seed.mode ?? 'range')
   const safe = (value) => escapeHtml(String(value ?? ''))
-  return `<tr data-cmd="${safe(command.name)}">
-<td><input type="text" data-field="name" value="${safe(command.name)}" placeholder="抽卡"></td>
-<td><input type="text" data-field="label" value="${safe(command.label)}" placeholder="🎲 抽卡"></td>
-<td><input type="number" data-field="count" value="${safe(command.count ?? 1)}" min="1" max="64" style="width:64px"></td>
-<td><select data-field="batchMode">
-<option value="serial"${command.batchMode !== 'batch' ? ' selected' : ''}>连续 N 次</option>
-<option value="batch"${command.batchMode === 'batch' ? ' selected' : ''}>批次 1 次</option>
-</select></td>
-<td><select data-field="seedMode">
-<option value="range"${mode === 'range' ? ' selected' : ''}>范围</option>
-<option value="digits"${mode === 'digits' ? ' selected' : ''}>位数</option>
+  return `<section class="cmdcard">
+<div class="cmdhead">
+<span class="cmdname">${command.name ? safe(command.name) : '未命名指令'}</span>
+<span class="grow"></span>
+<button type="button" class="mini" data-run="${safe(command.name)}" title="立即执行该指令（沿用最近一次运行参数）"${command.name ? '' : ' disabled'}>▶ 执行</button>
+<button type="button" class="mini danger" data-del="${index}" title="删除该指令">✕ 删除</button>
+</div>
+<div class="cmdfields">
+<label class="f"><span>名称</span><input type="text" data-field="name" value="${safe(command.name)}" placeholder="抽卡"></label>
+<label class="f"><span>标签（聊天里显示）</span><input type="text" data-field="label" value="${safe(command.label)}" placeholder="🎲 抽卡"></label>
+<label class="f narrow"><span>生成数</span><input type="number" data-field="count" value="${safe(command.count ?? 1)}" min="1" max="64"></label>
+<label class="f"><span>模式</span><select data-field="batchMode">
+<option value="serial"${command.batchMode !== 'batch' ? ' selected' : ''}>连续 N 次（重滚种子）</option>
+<option value="batch"${command.batchMode === 'batch' ? ' selected' : ''}>批次 1 次（改 batch_size）</option>
+</select></label>
+<label class="f"><span>种子策略</span><select data-field="seedMode">
+<option value="range"${mode === 'range' ? ' selected' : ''}>随机范围</option>
+<option value="digits"${mode === 'digits' ? ' selected' : ''}>固定位数</option>
 <option value="timestamp"${mode === 'timestamp' ? ' selected' : ''}>时间戳</option>
-</select></td>
-<td><input type="number" data-field="min" value="${safe(seed.min)}" placeholder="1" style="width:84px"> <input type="number" data-field="max" value="${safe(seed.max)}" placeholder="4294967295" style="width:120px"></td>
-<td><input type="number" data-field="length" value="${safe(seed.length)}" placeholder="9" style="width:70px"></td>
-<td><input type="number" data-field="extra" value="${safe(seed.extraDigits)}" placeholder="3" style="width:70px"></td>
-<td><button type="button" class="mini" data-run="${safe(command.name)}" title="立即执行该指令（沿用最近一次运行参数）"${command.name ? '' : ' disabled'}>▶ 执行</button>
-<button type="button" class="mini" data-del="${index}" title="删除该指令">✕</button></td>
-</tr>`
+</select></label>
+<span class="seedfields" data-seed="range">
+<label class="f narrow"><span>最小值</span><input type="number" data-field="min" value="${safe(seed.min)}" placeholder="1"></label>
+<label class="f narrow"><span>最大值</span><input type="number" data-field="max" value="${safe(seed.max)}" placeholder="4294967295"></label>
+</span>
+<span class="seedfields" data-seed="digits">
+<label class="f narrow"><span>位数</span><input type="number" data-field="length" value="${safe(seed.length)}" placeholder="9"></label>
+</span>
+<span class="seedfields" data-seed="timestamp">
+<label class="f narrow"><span>补偿位</span><input type="number" data-field="extra" value="${safe(seed.extraDigits)}" placeholder="3"></label>
+</span>
+</div>
+<div class="cmdhelp muted">连续 N 次＝每次重滚种子串行跑 N 次；批次＝一次运行出 N 张（工作流里改 <code>batch_size</code>，无该字段时提示改用连续）</div>
+</section>`
 }
 
 const COMMANDS_CSS = `
-.cmds{width:100%;border-collapse:collapse;font-size:13px}
-.cmds th,.cmds td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle}
-.cmds th{background:var(--bg);font-weight:600}
-.cmds input[type="text"],.cmds input[type="number"],.cmds select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px}
-.cmds input:disabled{opacity:.4}
+.cmdtoolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px}
+.cmdtoolbar .muted{flex:1;min-width:240px}
+#cmd-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:12px;align-items:start;justify-content:start}
+#cmd-list .card.muted{grid-column:1/-1}
+.cmdcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.cmdhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.cmdhead .cmdname{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdhead .grow{flex:1}
+.cmdfields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px}
+.cmdfields .f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cmdfields .f>span{font-size:12px;color:var(--muted)}
+.cmdfields .f.narrow{max-width:170px}
+.cmdfields input,.cmdfields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:13px}
+.seedfields{display:contents}
+.seedfields[hidden]{display:none}
+.cmdhelp{margin-top:10px;font-size:12px;line-height:1.5}
+.cmdhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
 `

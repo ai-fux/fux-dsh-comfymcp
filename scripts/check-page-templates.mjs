@@ -22,7 +22,7 @@ const cases = {
 }
 let failed = false
 for (const [name, html] of Object.entries(cases)) {
-  const bodyLength = (html.match(/class="wrap">([\s\S]*?)<script/) ?? [])[1]?.length ?? 0
+  const bodyLength = (html.match(/class="wrap[^"]*">([\s\S]*?)<script/) ?? [])[1]?.length ?? 0
   const ok = bodyLength > 200
   if (!ok) failed = true
   console.log(`${name.padEnd(9)} body ${String(bodyLength).padStart(6)} 字符 · ${ok ? '完整 ✓' : '疑似被模板截断 ✗'}`)

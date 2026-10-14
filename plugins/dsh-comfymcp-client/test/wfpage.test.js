@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageDescriptor, renderArtifactsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
+import { buildPageDescriptor, renderArtifactsHtml, renderCommandsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
 
 const NODE_INFOS = {
   KSampler: {
@@ -264,5 +264,55 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     // 单件删除
     expect(html).toContain('data-remove-file=')
     expect(code).toContain("api('/api/artifacts/remove'")
+  })
+
+  it('瀑布流从左侧起排：全宽 wrap + column-width 自适应列（单卡片也贴左）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 页面容器全宽左对齐（不再被 860px 居中容器推到中间）
+    expect(html).toContain('class="wrap wide"')
+    expect(html).toContain('.wrap.wide{max-width:none;margin:0')
+    // 瀑布流按列宽自适应（column-width 而非固定 column-count）
+    expect(html).toContain('#runs.style-masonry{column-width:300px')
+    expect(html).not.toContain('column-count:2')
+    expect(html).toContain('text-align:left')
+    // 两列平铺同样从左侧起排、按最小卡宽自适应
+    expect(html).toContain('#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))')
+    expect(html).toContain('justify-content:start')
+  })
+})
+
+describe('指令页（卡片式结构化编辑）', () => {
+  it('按卡片渲染 + 种子策略只显示相关参数，不再用横向表格', () => {
+    const html = renderCommandsHtml({
+      commands: [{ name: '抽卡', label: '🎲 抽卡', count: 2, batchMode: 'serial', seed: { mode: 'digits', length: 9 } }],
+      lastRun: { name: 'fox-tiger-forest-02', seed: 1728453906 },
+      token: 'tk',
+    })
+    expect(html).toContain('class="wrap wide"') // 全宽左对齐，避免表格溢出
+    expect(html).toContain('class="cmdcard"')
+    expect(html).toContain('id="cmd-list"')
+    expect(html).not.toContain('<table class="cmds"')
+    // 三种种子策略各有独立参数组（JS 按策略显隐，不再并排展示 + 禁用）
+    expect(html).toContain('data-seed="range"')
+    expect(html).toContain('data-seed="digits"')
+    expect(html).toContain('data-seed="timestamp"')
+    expect(html).toContain('data-field="min"')
+    expect(html).toContain('data-field="length"')
+    expect(html).toContain('data-field="extra"')
+    // 保存 / 执行 / 删除入口保留
+    expect(html).toContain('/api/quick/save')
+    expect(html).toContain('data-run="抽卡"')
+    expect(html).toContain('data-del=')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function syncSeedFields(')
+    expect(code).toContain("document.querySelectorAll('#cmd-list .cmdcard')")
+    expect(code).toContain("api('/api/quick'")
+  })
+
+  it('空列表与无历史时给出引导文案（边界）', () => {
+    const html = renderCommandsHtml({ commands: [], lastRun: null, token: '' })
+    expect(html).toContain('还没有指令')
+    expect(html).toContain('还没有可复用的运行')
+    expect(html).toContain('生成数缺省 1')
   })
 })

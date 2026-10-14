@@ -5,7 +5,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildPageDescriptor, renderPageHtml, renderArtifactsHtml, renderIndexHtml } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { buildPageDescriptor, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderIndexHtml } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(root, 'tmp'), { recursive: true })
@@ -30,6 +30,40 @@ const pages = {
     token: 'tk',
   }),
   index: renderIndexHtml({ mine: [{ name: 'demo', title: 'demo', origin: 'local' }], library: [{ name: 'library:x.json', title: 'x', origin: 'remote' }], token: 'tk' }),
+  commands: renderCommandsHtml({
+    commands: [{ name: '抽卡', label: '🎲 抽卡', count: 2, batchMode: 'serial', seed: { mode: 'range', min: 1, max: 4294967295 } }],
+    lastRun: { name: 'demo', seed: 1 },
+    token: 'tk',
+  }),
+}
+
+/** 每页各自的关键监听（不做跨页统一断言，避免用表单页的检查去评判画廊页）。 */
+const PAGE_CHECKS = {
+  workflow: {
+    'run-form submit 监听': /getElementById\('run-form'\)\.addEventListener\('submit'/,
+    '提交时 preventDefault': /preventDefault\(\)/,
+    '取消按钮处理': /cancel-btn/,
+    '展开编辑器处理': /data-expand/,
+    '页面加载恢复状态': /api\/run\/status\?workflow=/,
+    '提示词赋值取回': /api\/prompt\/take/,
+  },
+  artifacts: {
+    '预览事件绑定': /bindPreviewEvents\('preview'\)/,
+    '样式切换与记忆': /function applyStyle\([\s\S]*comfymcp\.artifactStyle/,
+    '复合检索请求': /api\/artifacts\/query/,
+    '批量删除请求': /api\/artifacts\/remove-batch/,
+  },
+  commands: {
+    '种子策略显隐': /function syncSeedFields\(/,
+    '卡片取值归一': /function cardValues\(/,
+    '保存指令监听': /api\/quick\/save/,
+    '立即执行监听': /api\/quick'/,
+    '卡片集合查询': /#cmd-list \.cmdcard/,
+  },
+  index: {
+    'Tab 切换处理': /data-tab/,
+    '拉取模板请求': /api\/workflows\/pull/,
+  },
 }
 
 let failed = false
@@ -46,17 +80,11 @@ for (const [name, html] of Object.entries(pages)) {
     syntax = `✗ ${error.message}`
     failed = true
   }
-  const checks = {
-    'run-form submit 监听': /getElementById\('run-form'\)\.addEventListener\('submit'/.test(code),
-    '提交时 preventDefault': /preventDefault\(\)/.test(code),
-    '取消按钮处理': /cancel-btn/.test(code),
-    '展开编辑器处理': /data-expand/.test(code),
-    '页面加载恢复状态': /api\/run\/status\?workflow=/.test(code),
-    '提示词赋值取回': /api\/prompt\/take/.test(code),
-  }
+  const checks = PAGE_CHECKS[name] ?? {}
   console.log(`${name.padEnd(9)} 脚本 ${code.length} 字符 · 语法 ${syntax}`)
-  for (const [label, ok] of Object.entries(checks)) {
-    if (name !== 'workflow' && !label.includes('run') && !label.includes('cancel') && !label.includes('expand')) continue
+  for (const [label, pattern] of Object.entries(checks)) {
+    const ok = pattern.test(code)
+    if (!ok) failed = true
     console.log(`  ${ok ? '✓' : '✗'} ${label}`)
   }
 }
