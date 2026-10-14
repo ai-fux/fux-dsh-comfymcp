@@ -71,6 +71,8 @@ export const OVERLAY_KEYS = [
   'quickCommands',
   'downloadDir',
   'runTimeoutMin',
+  'autoAcceptForm',
+  'autoAcceptFormSec',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

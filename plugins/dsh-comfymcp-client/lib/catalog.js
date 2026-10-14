@@ -195,6 +195,7 @@ export function createTools({ define, bridge, askUser }) {
       name: 'comfymcp_push_form',
       description:
         'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). Seeds were randomized once at push time; every seed question offers use/re-roll/fixed options. ' +
+        'If the plugin config enables autoAcceptForm, a countdown starts: when it expires without user input the form auto-resolves to the recommended values (answers=[], seeds keep their randomized value) and the result is flagged `auto:true` — proceed with comfymcp_apply_form right away. ' +
         'Answers { ok, answers: [{id, selected[], custom?}], fields } where ids are `field:<node>.<input>`. Follow with comfymcp_apply_form. Requires a live user session.',
       parameters: {
         graph: { type: 'json', required: true, description: 'The analyzed graph (unchanged).' },
@@ -209,12 +210,37 @@ export function createTools({ define, bridge, askUser }) {
       },
       async execute(args, exec) {
         const { questions, prepared } = buildQuestions(args.fields)
-        const answer = await askUser(
-          {
-            questions,
-          },
-          exec,
-        )
+        // 倒计时自动确认：开启后超时未作答 → 自动采用推荐参数（空 answers＝种子沿用随机值、其余保持推导值）
+        const seconds = bridge.config?.autoAcceptForm === true
+          ? Math.max(1, Number(bridge.config?.autoAcceptFormSec) > 0 ? Number(bridge.config.autoAcceptFormSec) : 30)
+          : 0
+        if (seconds > 0 && questions.length > 0) {
+          const first = questions[0]
+          questions[0] = { ...first, detail: `${first.detail ?? ''} · ⏱ ${seconds} 秒内未作答将自动采用推荐参数` }
+        }
+        let timer = null
+        let answer
+        if (seconds > 0) {
+          answer = await Promise.race([
+            askUser({ questions }, exec),
+            new Promise((resolve) => {
+              timer = setTimeout(() => resolve({ autoTimeout: true }), seconds * 1000)
+            }),
+          ])
+        } else {
+          answer = await askUser({ questions }, exec)
+        }
+        if (timer !== null) clearTimeout(timer)
+        if (answer !== null && typeof answer === 'object' && answer.autoTimeout === true) {
+          return {
+            ok: true,
+            auto: true,
+            autoReason: `倒计时 ${seconds} 秒未收到用户作答，已自动采用推荐参数（种子沿用随机值，其余保持推导值）`,
+            answers: [],
+            fields: prepared,
+            answered: 0,
+          }
+        }
         const items = Array.isArray(answer?.answers) ? answer.answers : []
         return {
           ok: true,

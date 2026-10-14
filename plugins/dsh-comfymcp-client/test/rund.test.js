@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRunDaemon } from '../lib/rund.js'
+import { createRunDaemon, summarizeRun } from '../lib/rund.js'
 
 let workdir
 let runs
@@ -231,5 +231,26 @@ describe('run daemon timeout / cancel / self-heal', () => {
     expect(status.value.state).toBe('failed')
     expect(status.value.error).toContain('中断')
     expect(bridge.getRun('ghost-1').state).toBe('failed')
+  })
+})
+
+describe('summarizeRun 卸载处置透出', () => {
+  it('exposes autoUnload and form.unload for the run cards', () => {
+    const record = {
+      id: 'r1',
+      name: 'wf',
+      state: 'completed',
+      autoUnload: false,
+      form: { unload: { requested: false, applied: false, reason: '已按配置移除工作流自带的 1 个卸载节点（94）' } },
+    }
+    const summary = summarizeRun(record)
+    expect(summary.autoUnload).toBe(false)
+    expect(summary.unload.reason).toMatch(/移除工作流自带的 1 个卸载节点/)
+  })
+
+  it('omits unload info for records without it（旧记录兼容）', () => {
+    const summary = summarizeRun({ id: 'r2', name: 'wf', state: 'completed' })
+    expect(summary.unload).toBe(null)
+    expect(summary.autoUnload).toBe(false)
   })
 })

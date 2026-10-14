@@ -136,6 +136,8 @@ function summarize(record, active) {
     saved: record.form?.saved ?? null,
     prompts: record.prompts ?? null,
     params: paramsOf(record),
+    autoUnload: record.autoUnload === true,
+    unload: record.form?.unload ?? null,
   }
 }
 

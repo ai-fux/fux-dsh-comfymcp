@@ -535,11 +535,16 @@ function groupHtml(run, index) {
       + '<button type="button" class="del" title="删除该成果物（含磁盘文件）" data-remove-file="' + esc(file.path || '') + '" data-remove-run="' + esc(run.runId || '') + '">✕</button></div>';
   }).join('');
   var body = media || '<div class="muted">（本次无成果物）</div>';
+  var unloadLine = ''
+  if (run.unload && run.unload.reason) {
+    unloadLine = '<div class="muted" title="自动卸载开关处置详情">⏏ 卸载：' + esc(run.unload.reason) + '（开关＝' + (run.autoUnload === true ? '开' : '关') + '）</div>';
+  }
   return '<section class="runGroup" title="' + esc(hover) + '">'
     + '<div class="rgHead"><span class="idx">#' + index + ' ' + esc(run.workflow || WORKFLOW) + '</span>'
     + '<span class="chip ' + chipClass + '">' + esc(state) + '</span>'
     + '<span class="muted">种子 ' + esc(run.seed === null || run.seed === undefined ? '-' : run.seed) + ' · 用时 ' + esc(fmtElapsed(run.durationMs || run.elapsedMs)) + (time ? ' · ' + esc(time) : '') + '</span></div>'
     + promptText
+    + unloadLine
     + (run.error ? '<div class="muted" style="color:var(--err)">' + esc(run.error) + '</div>' : '')
     + '<details class="params"><summary>参数（' + ((run.params || []).length) + '）· 鼠标移入亦可查看</summary><table class="pv">' + paramRows(run.params) + '</table></details>'
     + '<div class="mediaRow">' + body + '</div>'

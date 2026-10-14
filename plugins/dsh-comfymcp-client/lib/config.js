@@ -36,10 +36,12 @@ export const DEFAULTS = Object.freeze({
   quickCommands: '',
   downloadDir: '',
   runTimeoutMin: 30,
+  autoAcceptForm: false,
+  autoAcceptFormSec: 30,
 })
 
-const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin'])
-const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin', 'autoAcceptFormSec'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer', 'autoAcceptForm'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
 /**

@@ -336,7 +336,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var initial = react.useState({
           endpoint: '', authToken: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
           storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
-          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '',
+          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '', autoAcceptForm: false, autoAcceptFormSec: '30',
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -384,6 +384,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 homeDir: text(config.homeDir),
                 dataDir: text(config.dataDir),
                 quickCommands: text(config.quickCommands),
+                autoAcceptForm: config.autoAcceptForm === true,
+                autoAcceptFormSec: text(config.autoAcceptFormSec),
                 downloadDir: text(config.downloadDir),
                 runTimeoutMin: text(config.runTimeoutMin),
               }
@@ -406,7 +408,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         function isDirty() {
           return ['endpoint', 'authToken', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
             'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
-            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin'].some(function (key) {
+            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin', 'autoAcceptForm', 'autoAcceptFormSec'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -456,6 +458,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             storagePrefix: draft.storagePrefix,
             homeDir: draft.homeDir,
             quickCommands: draft.quickCommands,
+            autoAcceptForm: draft.autoAcceptForm === true,
+            autoAcceptFormSec: draft.autoAcceptFormSec,
             downloadDir: draft.downloadDir,
             runTimeoutMin: draft.runTimeoutMin,
           }
@@ -482,6 +486,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 homeDir: text(applied.homeDir),
                 dataDir: text(applied.dataDir),
                 quickCommands: text(applied.quickCommands),
+              autoAcceptForm: applied.autoAcceptForm === true,
+              autoAcceptFormSec: text(applied.autoAcceptFormSec),
                 downloadDir: text(applied.downloadDir),
                 runTimeoutMin: text(applied.runTimeoutMin),
               }
@@ -503,7 +509,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var unloadHint = !probeOk
           ? '未连接服务端，无法确认卸载插件是否可用'
           : (unloadAvailable
-            ? '服务端支持 UnloadAllModels 节点整合，运行时自动插桩释放显存'
+            ? '开启＝跨工作流生成时跑完释放显存，方便重新加载新模型；关闭＝同一工作流连续生成（抽卡）时模型热加载，已加载模型直接复用更快速'
             : '服务端未安装或未启用卸载模型插件（' + text(probe.unload && probe.unload.reason) + '）')
 
         var host = (probe && probe.host) || null
@@ -663,7 +669,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
           h(SettingsSection, {
             title: '模型卸载',
-            description: '开启＝运行后释放显存（工作流自带卸载节点则沿用，否则自动插桩）；关闭＝不卸载，并移除工作流里自带的卸载节点。服务端无该节点时开关置灰。',
+            description: '开启＝跨工作流生成时跑完释放显存（工作流自带卸载节点则沿用，否则自动插桩）；关闭＝同一工作流连续生成（抽卡）不卸载，模型热加载更快，并移除工作流里自带的卸载节点。服务端无该节点时开关置灰。',
           },
             h(SwitchRow, {
               label: '运行后自动卸载模型',
@@ -672,6 +678,21 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               onChange: function (value) { edit('autoUnloadModel', value) },
             }),
             h(Hint, { hint: unloadHint, always: true }),
+          ),
+
+          h(SettingsSection, {
+            title: '表单自动确认',
+            description: '开启后，推送创作参数表单时开始倒计时；超时未作答即自动采用推荐参数（种子沿用推送时随机值，其余保持推导值）直接进入执行。关闭则一直等待用户作答。',
+          },
+            h(SwitchRow, {
+              label: '倒计时自动采用推荐参数',
+              checked: draft.autoAcceptForm === true,
+              onChange: function (value) { edit('autoAcceptForm', value) },
+            }),
+            draft.autoAcceptForm === true
+              ? h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间（默认 30 秒，最少 1 秒）' },
+                h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } }))
+              : null,
           ),
 
           h('div', { className: 'dshmcp-row' },
