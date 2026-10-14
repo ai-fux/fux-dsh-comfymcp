@@ -22,7 +22,8 @@
 | 11 | 测试：HTTP 客户端 6 例（JSON/SSE、会话头、Bearer、连接失败/超时/无端点、门面翻译）+ 桥接 4 例（传输选择、远程探测、切换重建） | `test/mcp-http.test.js`、`test/bridge.test.js` | ✅ |
 | 12 | **表单倒计时自动确认**：新增 `autoAcceptForm`（默认关）+ `autoAcceptFormSec`（默认 30s）；开启后推送参数表单即启动倒计时，首题标注「⏱ N 秒内未作答将自动采用推荐参数」，超时未作答自动以推荐参数完成（空 answers＝种子沿用推送时随机值、其余保持推导值），结果标 `auto:true` 与 `autoReason`；关闭则一直等待用户作答 | `lib/catalog.js` `comfymcp_push_form`、`lib/config.js`、`lib/persist.js` | ✅ |
 | 13 | **卸载开关语义落地强化**（目的定稿：开启＝跨工作流生成方便重新加载模型；关闭＝同一工作流连续生成抽卡时模型热加载加速）：设置页说明改写为该语义；运行摘要透出 `autoUnload` 与 `form.unload`，运行卡片新增「⏏ 卸载：…（开关＝开/关）」处置行 | `client.js`、`lib/rund.js` `summarize`、`lib/wfpage.js` `groupHtml` | ✅ |
-| 14 | 测试 +5：倒计时超时自动确认（fake timers，验证提示注入/auto 标记/空答案）、关闭时正常等待、先答先胜（计时器清理）；`summarizeRun` 卸载透出与旧记录兼容 | `test/catalog.test.js`、`test/rund.test.js` | ✅ |
+| 14 | 秒数输入框常显（无需先开开关即可预配），非法值（0/负数/非数字/缺省）回退 30 秒并有测试钉住 |
+| 15 | 测试 +6：倒计时超时自动确认（fake timers，验证提示注入/auto 标记/空答案）、关闭时正常等待、先答先胜（计时器清理）；`summarizeRun` 卸载透出与旧记录兼容 | `test/catalog.test.js`、`test/rund.test.js` | ✅ |
 
 **下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
 

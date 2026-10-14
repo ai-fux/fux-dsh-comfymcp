@@ -208,6 +208,36 @@ describe('createTools catalog', () => {
     }
   })
 
+  it('comfymcp_push_form falls back to the default 30s countdown for invalid seconds（缺省 30 秒）', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const bad of [0, -5, 'abc', undefined]) {
+        const { define, definitions } = fakeDefine()
+        const bridge = fakeBridge()
+        bridge.config.autoAcceptForm = true
+        bridge.config.autoAcceptFormSec = bad
+        let captured
+        createTools({
+          define,
+          bridge,
+          askUser: (request) => {
+            captured = request
+            return new Promise(() => {})
+          },
+        })
+        const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+        const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+        const promise = tool.execute({ graph: GRAPH, fields }, {})
+        await vi.advanceTimersByTimeAsync(30100)
+        const result = await promise
+        expect(captured.questions[0].detail).toMatch(/⏱ 30 秒内未作答将自动采用推荐参数/)
+        expect(result.autoReason).toMatch(/倒计时 30 秒/)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('comfymcp_run_workflow saves first, integrates unload, runs, and records', async () => {
     const calls = []
     const { define, definitions } = fakeDefine()

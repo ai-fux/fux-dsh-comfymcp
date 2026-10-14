@@ -689,10 +689,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               checked: draft.autoAcceptForm === true,
               onChange: function (value) { edit('autoAcceptForm', value) },
             }),
-            draft.autoAcceptForm === true
-              ? h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间（默认 30 秒，最少 1 秒）' },
-                h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } }))
-              : null,
+            h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间；缺省 30 秒（最少 1 秒，非法值按 30 秒处理），仅开关开启时生效' },
+              h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } })),
           ),
 
           h('div', { className: 'dshmcp-row' },
