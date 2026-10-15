@@ -75,6 +75,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         '.dshmcp-section{display:flex;flex-direction:column;gap:6px}',
         '.dshmcp-section-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
         '.dshmcp-section-title{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:' + T.textSecondary + '}',
+        // 手风琴：标题行常显可点，正文只在展开时渲染；收起时用摘要说明当前取值
+        '.dshmcp-acc-head{cursor:pointer;user-select:none;margin:-2px 0}',
+        '.dshmcp-acc-arrow{width:12px;color:' + T.textSecondary + ';font-size:11px}',
+        '.dshmcp-acc-summary{font-size:12px;color:' + T.textSecondary + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46%}',
+        '.dshmcp-acc-body{display:flex;flex-direction:column;gap:8px;margin-top:6px}',
+        '.dshmcp-acc-open{border-color:' + (T.accent || T.brand) + '}',
         '.dshmcp-banner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-radius:8px;padding:6px 8px;background:' + T.surface2 + ';box-shadow:inset 3px 0 0 ' + T.error + '}',
         '.dshmcp-banner-info{box-shadow:inset 3px 0 0 ' + T.brand + '}',
         '.dshmcp-banner-warn{box-shadow:inset 3px 0 0 ' + T.warn + '}',
@@ -288,53 +294,50 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       }
 
       /** 一个设置块：标题 +（悬浮）描述 + 子元素。 */
+      /**
+       * 配置区域（手风琴）：标题行常显并可点击开合，正文只在展开时渲染；
+       * summary 让收起状态也能一眼看出该区当前取值，description 走 ⓘ 悬浮。
+       */
       function SettingsSection(props) {
-        return h('section', { className: 'dshmcp-section dshmcp-panel', id: props.id },
-          h('div', { className: 'dshmcp-section-head' },
+        var open = props.open !== false
+        return h('section', { className: 'dshmcp-section dshmcp-panel' + (open ? ' dshmcp-acc-open' : ''), id: props.id },
+          h('div', {
+            className: 'dshmcp-section-head dshmcp-acc-head',
+            role: 'button',
+            tabIndex: 0,
+            onClick: props.onToggle,
+            onKeyDown: function (event) {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                if (typeof props.onToggle === 'function') props.onToggle()
+              }
+            },
+          },
+            h('span', { className: 'dshmcp-acc-arrow' }, open ? '▾' : '▸'),
             h('span', { className: 'dshmcp-section-title' }, props.title),
-            h(Hint, { hint: props.description }),
+            props.summary ? h('span', { className: 'dshmcp-acc-summary' }, props.summary) : null,
             h('span', { className: 'dshmcp-spacer' }),
             props.extra || null,
+            h(Hint, { hint: props.description }),
           ),
-          props.children,
+          open ? h('div', { className: 'dshmcp-acc-body' }, props.children) : null,
         )
       }
 
-      /** 设置分区导航：一眼看清有哪些分区，点一下跳到对应分区（顺序即阅读顺序）。 */
-      const SETTINGS_GROUPS = [
-        { id: 'sec-connect', label: '① 连接与服务' },
-        { id: 'sec-workflows', label: '② 工作流目录' },
-        { id: 'sec-dirs', label: '③ 插件目录与产物' },
-        { id: 'sec-run', label: '④ 运行行为' },
-        { id: 'sec-quick', label: '⑤ 快捷指令' },
-        { id: 'sec-storage', label: '⑥ 文件存储' },
-        { id: 'sec-form', label: '⑦ 表单与交互' },
-        { id: 'sec-dev', label: '⑧ 开发模式' },
-      ]
-      function SettingsNav() {
-        return h('div', { className: 'dshmcp-section dshmcp-panel dshmcp-nav' },
-          h('div', { className: 'dshmcp-section-head' },
-            h('span', { className: 'dshmcp-section-title' }, '设置分区'),
-            h(Hint, { hint: '按「连接 → 宿主 → 目录 → 运行 → 交互 → 存储 → 开发」排列；点分区名跳转。改动后右下角「保存配置」写覆盖层并即时生效。' }),
-          ),
-          h('div', { className: 'dshmcp-row dshmcp-navrow' },
-            SETTINGS_GROUPS.map(function (group) {
-              return h('a', {
-                key: group.id,
-                className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost',
-                href: '#' + group.id,
-                onClick: function (event) {
-                  var target = document.getElementById(group.id)
-                  if (target === null) return
-                  event.preventDefault()
-                  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
-                },
-              }, group.label)
-            }),
-          ),
-        )
+      /** 每个区域的收起态摘要：扫一眼就知道现在配的是什么（值在渲染处按 draft 现算）。 */
+      const sectionSummary = {
+        connect: function (d) { return (d.embeddedServer === true ? '内置服务' : '远程') + (text(d.comfyuiUrl).length > 0 && d.embeddedServer === true ? ' · ' + d.comfyuiUrl : text(d.endpoint).length > 0 ? ' · ' + d.endpoint : '') },
+        workflows: function (d) { return text(d.workflowDirs).length > 0 ? d.workflowDirs : '缺省目录' },
+        dirs: function (d) { return layoutSummary(d) },
+        run: function (d) { return (d.autoUnloadModel === true ? '跑完卸载模型' : '不卸载（热加载）') + ' · ' + (text(d.runTimeoutMin).length > 0 ? d.runTimeoutMin + ' 分钟上限' : '不限时长') },
+        quick: function (d) { return text(d.quickCommands).length > 0 ? '已自定义' : '内置「抽卡」' },
+        storage: function (d) { var kind = text(d.storage).toLowerCase(); return kind === 'minio' ? 'MinIO（S3）' : kind === 'oss' ? '阿里云 OSS' : '本地目录' },
+        form: function (d) { return d.autoAcceptForm === true ? '倒计时 ' + (text(d.autoAcceptFormSec).length > 0 ? d.autoAcceptFormSec : '30') + ' 秒自动采用推荐值' : '一直等待作答' },
+        dev: function (d) { return d.devMode === true ? '已开启（允许改插件源码）' : '关闭（严禁改插件源码）' },
       }
 
+      /**
+       * 配置区域（手风琴）容器：一次只展开一个区域，避免整页太长。
       /** 开关行：switch + 标签 +（可选）状态说明。 */
       function SwitchRow(props) {
         return h('div', { className: 'dshmcp-switchrow' },
@@ -388,6 +391,18 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var uiState = react.useState({ loading: true, saving: false, testing: false, note: '' })
         var ui = uiState[0]
         var setUi = uiState[1]
+        // 手风琴：一次只展开一个配置区域（配置太长，默认只开第一区，其余收起来）
+        var openState = react.useState('sec-connect')
+        var openSection = openState[0]
+        var setOpenSection = openState[1]
+        /** 折叠区域包装：把 open / onToggle 注进去，8 个区域共用同一份开合状态。
+         *  用 useCallback 稳定组件身份——否则每次渲染都是新组件类型，输入框会被重挂载、打字丢焦点。 */
+        var Section = react.useCallback(function (sectionProps) {
+          return h(SettingsSection, Object.assign({}, sectionProps, {
+            open: openSection === sectionProps.id,
+            onToggle: function () { setOpenSection(openSection === sectionProps.id ? '' : sectionProps.id) },
+          }))
+        }, [openSection])
 
         function edit(key, value) {
           setDraft(function (previous) {
@@ -577,10 +592,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             retryLabel: '重新探测',
           }),
 
-          h(SettingsNav),
-
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-connect',
+            summary: sectionSummary.connect(draft),
             title: '① 连接与服务',
             description: '先定「服务从哪来」：内置＝插件自带 comfy-mcp 并自动启停（单机推荐）；远程＝Streamable HTTP 直连已部署端点。改完点下方「测试连接」验证。',
           },
@@ -620,8 +634,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
           ),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-workflows',
+            summary: sectionSummary.workflows(draft),
             title: '② 工作流目录',
             description: '模型检索模板与「必须先保存再运行」的落点；多个目录用分号分隔。保存子目录保证每次运行可回溯。',
           },
@@ -633,8 +648,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.artifactsDir, mono: true, placeholder: '', onChange: function (value) { edit('artifactsDir', value) } })),
           ),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-dirs',
+            summary: sectionSummary.dirs(draft),
             title: '③ 插件目录与产物',
             description: '插件主目录（缺省 $DSH_HOME/comfymcp）下派生 workflows / artifacts / data；留空即用缺省。产物可再镜像一份到指定子目录。',
           },
@@ -645,8 +661,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
           ),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-run',
+            summary: sectionSummary.run(draft),
             title: '④ 运行行为',
             description: '单次运行的时长上限，以及跑完是否释放显存（跨工作流生成建议开启；同一工作流连续抽卡建议关闭以便模型热加载）。',
           },
@@ -661,8 +678,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             h(Hint, { hint: unloadHint, always: true }),
           ),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-quick',
+            summary: sectionSummary.quick(draft),
             title: '⑤ 快捷指令',
             description: '工作台「指令」Tab 与聊天里的一键重跑（抽卡＝仅重滚种子）。页面可卡片式编辑，这里直接改 JSON。',
           },
@@ -690,8 +708,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
           (function () {
             var storageKind = text(draft.storage).toLowerCase()
-            return h(SettingsSection, {
+            return h(Section, {
               id: 'sec-storage',
+            summary: sectionSummary.storage(draft),
               title: '⑥ 文件存储',
               description: '成果物与受管文件的存放位置。非本地时，运行产物在下载后额外推送一份到对象存储。',
             },
@@ -723,8 +742,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             )
           })(),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-form',
+            summary: sectionSummary.form(draft),
             title: '⑦ 表单与交互',
             description: '推送创作参数表单时的等待策略：开启倒计时则超时自动采用推荐参数直接执行；关闭则一直等用户作答。',
           },
@@ -737,8 +757,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } })),
           ),
 
-          h(SettingsSection, {
+          h(Section, {
             id: 'sec-dev',
+            summary: sectionSummary.dev(draft),
             title: '⑧ 开发模式',
             description: '开启后允许大模型在交互中自主排查插件问题：读开发日志报告（记录工具异常/运行失败）、定位 plugins/dsh-comfymcp-client 源码并当场修复。关闭（默认）时严禁修改任何插件源码，必须遵循插件规则执行，只能把问题记录并转述给你。',
           },
