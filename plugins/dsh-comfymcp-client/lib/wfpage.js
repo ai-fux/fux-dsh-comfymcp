@@ -1882,11 +1882,6 @@ const BUSINESS_CSS = `
 .kindchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 6px 2px 10px;font-size:12px;background:var(--accent-weak);color:var(--accent)}
 .kindchip .kindx{border:0;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:2px 3px;border-radius:999px}
 .kindchip .kindx:hover{background:rgba(192,57,43,.18);color:var(--err)}
-.bizcands{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
-.bizcands[hidden]{display:none}
-.bizcands .candrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;font-size:12px;border-top:1px solid var(--line)}
-.bizcands .candrow:first-of-type{border-top:0}
-.bizcands .candrow .biz{font-weight:600;color:var(--text)}
 #biz-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px;align-items:start;justify-content:start}
 #biz-list .card.muted{grid-column:1/-1}
 .bizcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -1913,7 +1908,7 @@ const BUSINESS_CSS = `
  * 把「跑过/加载过」的工作流按业务类固定下来，后续会话用自然语言直接命中，
  * 不再每次去服务端捞模板、枚举模型挑最优解（省 token）。
  */
-export function renderBusinessHtml({ profiles = [], kinds = [], candidates = [], workflows = [], token = '' } = {}) {
+export function renderBusinessHtml({ profiles = [], kinds = [], workflows = [], hiddenRuns = 0, token = '' } = {}) {
   // 业务类来自存储（页面可动态增删）；卡片引用到清单外的 id 时也补进下拉，避免显示不了当前值
   const kindList = [...kinds]
   for (const profile of profiles) {
@@ -1950,6 +1945,7 @@ export function renderBusinessHtml({ profiles = [], kinds = [], candidates = [],
   const wfCountText = wfList.length === 0
     ? '还没发现任何工作流：先跑一次，或到「我的工作流 / 模板」里拉取一个再回来配置'
     : `可选工作流 ${wfList.length} 个（${wfOrigins.map((origin) => `${origin} ${wfList.filter((entry) => entry.origin === origin).length}`).join(' · ')}）`
+      + (Number(hiddenRuns) > 0 ? ` · 另有 ${hiddenRuns} 个仅有运行记录、没有对应工作流文件（已隐藏，避免选了打不开）` : '')
   const paramKeys = [
     ['steps', '采样步数'],
     ['width', '宽'],
@@ -1983,12 +1979,8 @@ ${paramKeys.map(([key, label]) => `<label class="f narrow"><span>${label}</span>
 </section>`
   }
   const cards = profiles.map((profile, index) => card(profile, index)).join('\n')
-  const candRows = candidates
-    .map((candidate) => `<div class="candrow"><span class="biz">${escapeHtml(candidate.label)}</span>
-<span>${escapeHtml(candidate.workflow)}</span><span class="muted">跑过 ${candidate.runs} 次${candidate.current === null ? '' : ` · 当前登记 ${escapeHtml(candidate.current)}`}</span>
-<span class="grow"></span>
-<button type="button" class="mini" data-biz-register="${escapeHtml(candidate.workflow)}" data-biz-kind="${escapeHtml(candidate.business)}">登记为「${escapeHtml(candidate.label)}」</button></div>`)
-    .join('')
+  // 不再渲染「已跑过但还没登记」历史栏：新增/编辑配置时工作流下拉已能直接选（候选合并了跑过的 /
+  // 本地文件 / 我的工作流 / 模板库），历史栏只是重复且噪音大；接口保留（工具侧 register 仍可用）。
   const body = `
 <div class="pagehead"><h1>ComfyUI 工作台</h1>
 ${workbenchTabs('business', token)}</div>
@@ -2004,10 +1996,6 @@ ${kindChips}
 <input type="text" id="kind-label" placeholder="新业务类名称，如 换脸" size="14">
 <input type="text" id="kind-keywords" placeholder="触发词，逗号分隔，如 换脸，faceswap" size="24">
 <button type="button" class="mini" id="kind-add">＋ 添加业务类</button>
-</div>
-<div class="bizcands" id="biz-cands"${candidates.length > 0 ? '' : ' hidden'}>
-<div class="muted">已跑过但还没登记的工作流（点「登记」即可成为该业务类的首选）：</div>
-${candRows}
 </div>
 <div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
 <div class="bizhelp muted">每条配置＝一个业务类（默认给文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频，可自行添加）。
@@ -2151,13 +2139,6 @@ document.addEventListener('click', function (event) {
     if (!confirm('删除这条业务配置？')) return;
     api('/api/business/remove', { id: removeId }).then(function () { location.reload(); });
     return;
-  }
-  var registerWorkflow = el.getAttribute && el.getAttribute('data-biz-register');
-  if (registerWorkflow) {
-    api('/api/business/register', { workflow: registerWorkflow, business: el.getAttribute('data-biz-kind') }).then(function (data) {
-      if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '登记失败');
-      location.reload();
-    }).catch(function (error) { bizNote('登记失败：' + error.message, true); });
   }
 });
 // 换了工作流 → 参数区跟着变（卡片里的下拉 change 事件冒泡到这里统一处理）

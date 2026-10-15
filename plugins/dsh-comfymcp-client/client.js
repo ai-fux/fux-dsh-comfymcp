@@ -36,6 +36,10 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         '.dshmcp-root{font-size:13px;line-height:1.5;color:' + T.text + ';display:flex;flex-direction:column;gap:8px}',
         '.dshmcp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
         '.dshmcp-row-tight{gap:6px}',
+        // 设置分区导航：一排小按钮，点一下跳到对应分区
+        '.dshmcp-nav{padding-bottom:6px}',
+        '.dshmcp-navrow{gap:6px}',
+        '.dshmcp-navrow a{text-decoration:none}',
         '.dshmcp-spacer{flex:1 1 auto}',
         '.dshmcp-field{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1}',
         '.dshmcp-label{font-size:11px;color:' + T.textSecondary + '}',
@@ -285,7 +289,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
       /** 一个设置块：标题 +（悬浮）描述 + 子元素。 */
       function SettingsSection(props) {
-        return h('section', { className: 'dshmcp-section dshmcp-panel' },
+        return h('section', { className: 'dshmcp-section dshmcp-panel', id: props.id },
           h('div', { className: 'dshmcp-section-head' },
             h('span', { className: 'dshmcp-section-title' }, props.title),
             h(Hint, { hint: props.description }),
@@ -293,6 +297,41 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             props.extra || null,
           ),
           props.children,
+        )
+      }
+
+      /** 设置分区导航：一眼看清有哪些分区，点一下跳到对应分区（顺序即阅读顺序）。 */
+      const SETTINGS_GROUPS = [
+        { id: 'sec-connect', label: '① 连接与服务' },
+        { id: 'sec-workflows', label: '② 工作流目录' },
+        { id: 'sec-dirs', label: '③ 插件目录与产物' },
+        { id: 'sec-run', label: '④ 运行行为' },
+        { id: 'sec-quick', label: '⑤ 快捷指令' },
+        { id: 'sec-storage', label: '⑥ 文件存储' },
+        { id: 'sec-form', label: '⑦ 表单与交互' },
+        { id: 'sec-dev', label: '⑧ 开发模式' },
+      ]
+      function SettingsNav() {
+        return h('div', { className: 'dshmcp-section dshmcp-panel dshmcp-nav' },
+          h('div', { className: 'dshmcp-section-head' },
+            h('span', { className: 'dshmcp-section-title' }, '设置分区'),
+            h(Hint, { hint: '按「连接 → 宿主 → 目录 → 运行 → 交互 → 存储 → 开发」排列；点分区名跳转。改动后右下角「保存配置」写覆盖层并即时生效。' }),
+          ),
+          h('div', { className: 'dshmcp-row dshmcp-navrow' },
+            SETTINGS_GROUPS.map(function (group) {
+              return h('a', {
+                key: group.id,
+                className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost',
+                href: '#' + group.id,
+                onClick: function (event) {
+                  var target = document.getElementById(group.id)
+                  if (target === null) return
+                  event.preventDefault()
+                  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
+                },
+              }, group.label)
+            }),
+          ),
         )
       }
 
@@ -538,9 +577,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             retryLabel: '重新探测',
           }),
 
+          h(SettingsNav),
+
           h(SettingsSection, {
-            title: '连接',
-            description: '内置＝插件自带服务端并自动启停（单机推荐）；远程＝用 Streamable HTTP 直连已部署的 comfy-mcp 端点。',
+            id: 'sec-connect',
+            title: '① 连接与服务',
+            description: '先定「服务从哪来」：内置＝插件自带 comfy-mcp 并自动启停（单机推荐）；远程＝Streamable HTTP 直连已部署端点。改完点下方「测试连接」验证。',
           },
             h(ModeSwitch, {
               label: '服务来源',
@@ -574,11 +616,14 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 ui.testing ? '探测中…' : '测试连接'),
               h('button', { className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost', onClick: refresh, disabled: ui.loading }, '重新加载'),
             ),
+            h(Field, { label: 'MCP 宿主入口（可选）', hint: 'DSH 与 comfy-mcp 之间的宿主进程；留空用环境变量 DSH_COMFYMCP_HOST_ENTRY' },
+              h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
           ),
 
           h(SettingsSection, {
-            title: '工作流空间',
-            description: '模板检索与强制保存的目录；多个目录用分号分隔。生成保存子目录保证每次运行可回溯。',
+            id: 'sec-workflows',
+            title: '② 工作流目录',
+            description: '模型检索模板与「必须先保存再运行」的落点；多个目录用分号分隔。保存子目录保证每次运行可回溯。',
           },
             h(Field, { label: '工作流目录（分号分隔）' },
               h(TextInput, { value: draft.workflowDirs, mono: true, placeholder: 'F:\\Comfy\\ComfyUI\\user\\default\\workflows', onChange: function (value) { edit('workflowDirs', value) } })),
@@ -589,22 +634,38 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           ),
 
           h(SettingsSection, {
-            title: '目录布局',
-            description: '插件主目录（缺省 $DSH_HOME/comfymcp）下派生 workflows / artifacts / data 三个子目录；留空即用缺省。',
+            id: 'sec-dirs',
+            title: '③ 插件目录与产物',
+            description: '插件主目录（缺省 $DSH_HOME/comfymcp）下派生 workflows / artifacts / data；留空即用缺省。产物可再镜像一份到指定子目录。',
           },
             h(Field, { label: '插件主目录', hint: '修改后保存即按新主目录重派生子目录；显式配置过的工作流/产物目录不受影响' },
               h(TextInput, { value: draft.homeDir, mono: true, placeholder: text(draft.dataDir).length > 0 ? draft.homeDir : '', onChange: function (value) { edit('homeDir', value) } })),
             h(LinkRow, { label: '当前布局', value: layoutSummary(draft) }),
+            h(Field, { label: '成果物镜像目录', hint: '相对主目录解析；配置后每次运行产物额外复制一份到该子目录' },
+              h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
           ),
 
           h(SettingsSection, {
-            title: '工作台与快捷指令',
-            description: '工作台静态页由环回控制端点提供（侧栏「ComfyUI 工作台」或浏览器直开）。快捷指令用于一键重跑，如抽卡＝仅重滚种子。',
+            id: 'sec-run',
+            title: '④ 运行行为',
+            description: '单次运行的时长上限，以及跑完是否释放显存（跨工作流生成建议开启；同一工作流连续抽卡建议关闭以便模型热加载）。',
           },
-            h(Field, { label: '成果物镜像目录', hint: '相对主目录解析；配置后每次运行产物额外复制一份到该子目录' },
-              h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
             h(Field, { label: '最大运行时间（分钟）', hint: '超过该时长自动中断并提示（0 或留空＝不限制）；页面也可手动「中断执行」' },
               h(TextInput, { value: draft.runTimeoutMin, mono: true, placeholder: '30', onChange: function (value) { edit('runTimeoutMin', value) } })),
+            h(SwitchRow, {
+              label: '运行后自动卸载模型',
+              checked: draft.autoUnloadModel === true,
+              disabled: unloadDisabled,
+              onChange: function (value) { edit('autoUnloadModel', value) },
+            }),
+            h(Hint, { hint: unloadHint, always: true }),
+          ),
+
+          h(SettingsSection, {
+            id: 'sec-quick',
+            title: '⑤ 快捷指令',
+            description: '工作台「指令」Tab 与聊天里的一键重跑（抽卡＝仅重滚种子）。页面可卡片式编辑，这里直接改 JSON。',
+          },
             h(Field, { label: '快捷指令（JSON）', hint: 'seed 策略：range(min/max)｜digits(length)｜timestamp(extraDigits)；留空用内置「抽卡」' },
               h('textarea', {
                 className: 'dshmcp-input dshmcp-mono',
@@ -629,9 +690,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
           (function () {
             var storageKind = text(draft.storage).toLowerCase()
-            var remoteStorage = storageKind === 'minio' || storageKind === 'oss'
             return h(SettingsSection, {
-              title: '文件存储',
+              id: 'sec-storage',
+              title: '⑥ 文件存储',
               description: '成果物与受管文件的存放位置。非本地时，运行产物在下载后额外推送一份到对象存储。',
             },
               h(ModeSwitch, {
@@ -663,29 +724,9 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           })(),
 
           h(SettingsSection, {
-            title: 'MCP 宿主',
-            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内置模式下宿主还会按需拉起 comfy-mcp 服务端。',
-          },
-            h(Field, { label: 'MCP 宿主入口（可选）' },
-              h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
-          ),
-
-          h(SettingsSection, {
-            title: '模型卸载',
-            description: '开启＝跨工作流生成时跑完释放显存（工作流自带卸载节点则沿用，否则自动插桩）；关闭＝同一工作流连续生成（抽卡）不卸载，模型热加载更快，并移除工作流里自带的卸载节点。服务端无该节点时开关置灰。',
-          },
-            h(SwitchRow, {
-              label: '运行后自动卸载模型',
-              checked: draft.autoUnloadModel === true,
-              disabled: unloadDisabled,
-              onChange: function (value) { edit('autoUnloadModel', value) },
-            }),
-            h(Hint, { hint: unloadHint, always: true }),
-          ),
-
-          h(SettingsSection, {
-            title: '表单自动确认',
-            description: '开启后，推送创作参数表单时开始倒计时；超时未作答即自动采用推荐参数（种子沿用推送时随机值，其余保持推导值）直接进入执行。关闭则一直等待用户作答。',
+            id: 'sec-form',
+            title: '⑦ 表单与交互',
+            description: '推送创作参数表单时的等待策略：开启倒计时则超时自动采用推荐参数直接执行；关闭则一直等用户作答。',
           },
             h(SwitchRow, {
               label: '倒计时自动采用推荐参数',
@@ -697,7 +738,8 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           ),
 
           h(SettingsSection, {
-            title: '开发模式',
+            id: 'sec-dev',
+            title: '⑧ 开发模式',
             description: '开启后允许大模型在交互中自主排查插件问题：读开发日志报告（记录工具异常/运行失败）、定位 plugins/dsh-comfymcp-client 源码并当场修复。关闭（默认）时严禁修改任何插件源码，必须遵循插件规则执行，只能把问题记录并转述给你。',
           },
             h(SwitchRow, {

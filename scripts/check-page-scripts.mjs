@@ -77,7 +77,6 @@ const PAGE_CHECKS = {
   business: {
     '保存业务配置': /api\/business\/save/,
     '删除业务配置': /api\/business\/remove/,
-    '候选登记': /api\/business\/register/,
     '业务类动态新增': /api\/business\/kind\/save/,
     '业务类动态删除': /api\/business\/kind\/remove/,
     '参数按所选工作流动态读取': /function bizLoadParams\(card, options\)[\s\S]*api\('\/api\/business\/schema'/,

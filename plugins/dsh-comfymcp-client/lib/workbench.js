@@ -271,22 +271,22 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
   const remote = createRemoteSource(bridge)
 
   /**
-   * 可选工作流候选（业务配置页用）：合并四个来源，避免「没有数据」——
-   * ① 跑过的（运行记录，最贴用户预期）② 本地工作流文件 ③ 服务端（我的工作流 / 模板库）
-   * ④ 已在业务配置里引用过的。每项带 origin，页面按来源分组展示。
+   * 可选工作流候选（业务配置页用）：合并多来源，避免「没有数据」——
+   * ① 本地工作流文件 ② 服务端（我的工作流 / 模板库）③ 跑过的（只保留**能真正打开**的名字，
+   * 否则选了读参数时会报「工作流不存在」）④ 已在业务配置里引用过的。
+   * 返回 { list, hiddenRuns }：hiddenRuns＝只有运行记录、没有对应文件/模板而被隐藏的数量（页面提示用）。
    */
   const knownWorkflows = async () => {
-    const seen = new Map()
-    const add = (name, origin) => {
+    const resolvable = new Map()
+    const addResolvable = (name, origin) => {
       const value = String(name ?? '').trim()
-      if (value.length === 0 || seen.has(value)) return
-      seen.set(value, origin)
+      if (value.length === 0 || resolvable.has(value)) return
+      resolvable.set(value, origin)
     }
-    for (const run of bridge.listRuns(80)) add(run?.name, '跑过的')
     for (const dir of config.workflowDirs ?? []) {
       try {
         for (const file of readdirSync(dir)) {
-          if (/\.json$/i.test(file)) add(file.replace(/\.json$/i, ''), '本地文件')
+          if (/\.json$/i.test(file)) addResolvable(file.replace(/\.json$/i, ''), '本地文件')
         }
       } catch {
         // 目录不存在/不可读：跳过
@@ -294,17 +294,33 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     }
     try {
       const groups = tabGroups(await remote.remoteList())
-      for (const page of groups.mine) add(page?.name, '我的工作流')
-      for (const page of groups.library) add(page?.name, '模板库')
+      for (const page of groups.mine) addResolvable(page?.name, '我的工作流')
+      for (const page of groups.library) addResolvable(page?.name, '模板库')
     } catch {
-      // 服务端不可达：至少还有「跑过的 / 本地文件」
+      // 服务端不可达：至少还有本地文件
     }
-    for (const profile of businessStore.all()) add(profile.workflow, '已配置')
+    const list = [...resolvable.entries()].map(([name, origin]) => ({ name, origin }))
+    let hiddenRuns = 0
+    for (const run of bridge.listRuns(80)) {
+      const name = String(run?.name ?? '').trim()
+      if (name.length === 0) continue
+      const hit = list.find((entry) => entry.name === name)
+      if (hit !== undefined) {
+        hit.origin = '跑过的'
+        hit.runs = (Number(hit.runs) || 0) + 1
+      } else if (businessStore.all().some((profile) => profile.workflow === name)) {
+        list.push({ name, origin: '已配置' })
+      } else {
+        hiddenRuns += 1
+      }
+    }
     const order = { 跑过的: 0, 我的工作流: 1, 本地文件: 2, 模板库: 3, 已配置: 4 }
-    return [...seen.entries()]
-      .map(([name, origin]) => ({ name, origin }))
-      .sort((a, b) => (order[a.origin] ?? 9) - (order[b.origin] ?? 9) || a.name.localeCompare(b.name))
-      .slice(0, 400)
+    return {
+      list: list
+        .sort((a, b) => (order[a.origin] ?? 9) - (order[b.origin] ?? 9) || a.name.localeCompare(b.name))
+        .slice(0, 400),
+      hiddenRuns,
+    }
   }
 
   /**
@@ -473,13 +489,14 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     async pageBusiness({ token = '' } = {}) {
       const profiles = businessStore.all()
       const kinds = businessStore.kinds()
+      const workflows = await knownWorkflows()
       return {
         html: renderBusinessHtml({
           token,
           profiles,
           kinds,
-          candidates: businessCandidates(bridge.listRuns(80), profiles, kinds),
-          workflows: await knownWorkflows(),
+          workflows: workflows.list,
+          hiddenRuns: workflows.hiddenRuns,
         }),
       }
     },
