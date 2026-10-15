@@ -154,13 +154,10 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .spinner{display:inline-block;width:12px;height:12px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
 .spinner[hidden]{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* 媒体预览弹层（图片放大 / 视频音频播放） */
+/* 文本弹窗基础样式（图片/视频预览已改为整屏遮罩灯箱，样式见 PREVIEW_CSS） */
 .modal{position:fixed;inset:0;background:rgba(12,14,17,.78);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
 .modal[hidden]{display:none}
 .modal .box{background:var(--surface);border-radius:10px;padding:12px;max-width:92vw;max-height:88vh;overflow:auto;position:relative}
-.modal img{max-width:88vw;max-height:74vh;display:block;border-radius:6px}
-.modal video{max-width:88vw;max-height:74vh;display:block;border-radius:6px;background:#000}
-.modal audio{width:min(560px,84vw);display:block}
 .modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;font-size:13px}
 .progress{margin-top:12px}.bar{height:8px;border-radius:99px;background:var(--accent-weak);overflow:hidden}
 .bar .fill{height:100%;width:0;background:var(--accent);transition:width .4s ease}
@@ -304,14 +301,21 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
   <button type="button" class="mini" id="clear-btn">清空展示</button></span></div>
   <div class="history" id="history"></div>
 </div>
-<div class="modal" id="preview2" hidden><div class="box">
-<div class="bar2"><span id="preview2-name"></span><span class="tools">
-<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
-<button type="button" class="mini" data-zoom="in">＋</button>
-<button type="button" class="mini" data-zoom="reset">重置</button>
-<button type="button" class="mini" id="preview2-close">关闭 ✕</button></span></div>
-<div id="preview2-body"></div>
-<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div>
+<div class="modal lightbox" id="preview2" role="dialog" aria-modal="true" hidden>
+<div class="lb-top"><span class="lb-name" id="preview2-name"></span>
+<button type="button" class="lb-close" id="preview2-close" title="关闭（Esc）">✕</button></div>
+<div class="lb-stage" id="preview2-body"></div>
+<div class="lb-bottom">
+<span class="lb-zoomtools">
+<button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
+<span class="lb-zoom" id="zoom-label">100%</span>
+<button type="button" class="mini" data-zoom="in" title="放大（+）">＋</button>
+<button type="button" class="mini" data-zoom="fit" title="适应窗口（0）">适应窗口</button>
+<button type="button" class="mini" data-zoom="one" title="原始尺寸（1）">1:1</button>
+</span>
+<a class="mini" id="preview2-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
+<a class="mini" id="preview2-save" href="#" download title="下载原文件">⬇ 下载</a>
+<span class="lb-hint" id="preview2-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · Esc 关闭</span>
 </div></div>
 <div class="modal" id="textmodal" hidden><div class="box wide">
 <div class="bar2"><span id="textmodal-name">编辑全文</span><span>
@@ -348,101 +352,227 @@ const TABS_CSS = `
 .wtabs .wtab:hover{color:var(--text)}
 `
 
-/** CSS：预览弹层（含缩放画布）。两页共用。 */
+/**
+ * CSS：整屏遮罩灯箱（成果物页与工作流页共用）。
+ * 遮罩铺满整个浏览器窗口（不含浏览器自身边框），图片在遮罩区域内缩放/平移，
+ * 上下浮层分别是文件名+关闭、缩放工具条；用 .modal.lightbox 提高优先级，
+ * 覆盖 PAGE_RUN_CSS 里给文本弹窗写的 .modal 规则。
+ */
 const PREVIEW_CSS = `
-.modal{position:fixed;inset:0;background:rgba(12,14,17,.82);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
-.modal[hidden]{display:none}
-.modal .box{background:var(--surface);border-radius:10px;padding:10px 12px;max-width:94vw;max-height:90vh;display:flex;flex-direction:column;gap:8px;position:relative}
-.modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}
-.modal .bar2 .tools{display:flex;gap:6px;align-items:center}
-.modal .stage{overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:8px;min-width:min(70vw,320px);min-height:200px}
-.modal .stage img{max-width:88vw;max-height:70vh;display:block;border-radius:6px;transform-origin:center center;cursor:grab;user-select:none}
-.modal .stage img.dragging{cursor:grabbing}
-.modal video{max-width:88vw;max-height:70vh;display:block;border-radius:6px;background:#000}
-.modal audio{width:min(560px,84vw);display:block;margin:24px auto}
-.modal .zoomHint{color:var(--muted);font-size:11px;text-align:right}
+html.lb-open,body.lb-open{overflow:hidden}
+.modal.lightbox{position:fixed;inset:0;background:rgba(6,7,9,.96);display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0;z-index:80}
+.modal.lightbox[hidden]{display:none}
+.modal.lightbox .lb-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;z-index:3;color:#e9ecef;font-size:13px;background:linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:74vw;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.modal.lightbox .lb-close{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.24);color:#f1f3f5;font-size:15px;line-height:1;cursor:pointer}
+.modal.lightbox .lb-close:hover{background:rgba(255,255,255,.24);color:#fff}
+/* 舞台铺满整个浏览器窗口，图片在其中缩放/平移（超出的部分被遮罩裁掉） */
+.modal.lightbox .lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab;touch-action:none}
+.modal.lightbox .lb-stage.grabbing{cursor:grabbing}
+.modal.lightbox .lb-stage img{display:block;max-width:none;max-height:none;transform-origin:center center;user-select:none;-webkit-user-drag:none;border-radius:2px;box-shadow:0 14px 44px rgba(0,0,0,.6)}
+.modal.lightbox .lb-stage video{max-width:100%;max-height:100%;display:block;background:#000;border-radius:6px}
+.modal.lightbox .lb-stage audio{width:min(560px,84vw);display:block}
+.modal.lightbox .lb-empty{color:#e9ecef;font-size:13px;max-width:80vw;word-break:break-all}
+.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 16px 14px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-bottom .mini{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2);color:#e9ecef}
+.modal.lightbox .lb-bottom .mini:hover{background:rgba(255,255,255,.2);color:#fff}
+.modal.lightbox .lb-bottom a.mini{text-decoration:none;display:inline-flex;align-items:center}
+.modal.lightbox .lb-zoom{min-width:54px;text-align:center;color:#fff;font-variant-numeric:tabular-nums}
+.modal.lightbox .lb-hint{color:rgba(255,255,255,.5);margin-left:8px}
+@media (max-width:760px){.modal.lightbox .lb-hint{display:none}}
 `
 
 /**
- * 预览器脚本：两页共用（图片滚轮缩放/拖拽平移/重置，视频音频就地播放）。
- * 需要调用方提供 openPreview(target) —— 由各页在自己的点击处理里按属性名分派。
+ * 灯箱脚本（两页共用）：整屏遮罩内查看图片——滚轮以光标为锚点缩放、拖拽平移、
+ * 双击「适应窗口 ↔ 1:1」、Esc/点空白关闭，视频音频就地播放。
+ * 调用方只需 showPreview(modalId, kind, url, name)（页面点击处理里按属性分派）。
  */
 const PREVIEW_JS = `
-var ZOOM = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 };
-function zoomApply(img) {
-  img.style.transform = 'translate(' + ZOOM.x + 'px,' + ZOOM.y + 'px) scale(' + ZOOM.scale + ')';
+var VIEW = { modalId: '', kind: 'file', natW: 1, natH: 1, scale: 1, fitScale: 1, x: 0, y: 0, dragging: false, moved: false, sx: 0, sy: 0 };
+function viewStage() { return document.getElementById(VIEW.modalId + '-body'); }
+function viewImg() { var stage = viewStage(); return stage ? stage.querySelector('img') : null; }
+function viewLabelSet() {
   var label = document.getElementById('zoom-label');
-  if (label) label.textContent = Math.round(ZOOM.scale * 100) + '%';
+  if (label) label.textContent = Math.round(VIEW.scale * 100) + '%';
 }
-function zoomReset() {
-  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
-  var img = document.querySelector('.modal .stage img');
-  if (img) zoomApply(img);
+/** 遮罩内可用于放图的空间：舞台铺满窗口，上下各留出浮层工具条的高度。 */
+function viewAvailable() {
+  var stage = viewStage();
+  var width = stage ? stage.clientWidth : 0;
+  var height = stage ? stage.clientHeight : 0;
+  return { w: Math.max(60, width - 36), h: Math.max(60, height - 116) };
 }
-function zoomBy(factor) {
-  var img = document.querySelector('.modal .stage img');
+function viewFitScale() {
+  var size = viewAvailable();
+  return Math.min(size.w / (VIEW.natW || 1), size.h / (VIEW.natH || 1));
+}
+function viewApply() {
+  var img = viewImg();
   if (!img) return;
-  ZOOM.scale = Math.max(0.1, Math.min(8, ZOOM.scale * factor));
-  zoomApply(img);
+  img.style.width = VIEW.natW + 'px';
+  img.style.height = VIEW.natH + 'px';
+  img.style.transform = 'translate(' + VIEW.x + 'px,' + VIEW.y + 'px) scale(' + VIEW.scale + ')';
+  viewLabelSet();
 }
+/** 别把图整个拖出视野：任何方向至少留 40px 可见。 */
+function viewClamp() {
+  var stage = viewStage();
+  if (!stage) return;
+  var maxX = Math.max(0, (VIEW.natW * VIEW.scale + stage.clientWidth) / 2 - 40);
+  var maxY = Math.max(0, (VIEW.natH * VIEW.scale + stage.clientHeight) / 2 - 40);
+  VIEW.x = Math.max(-maxX, Math.min(maxX, VIEW.x));
+  VIEW.y = Math.max(-maxY, Math.min(maxY, VIEW.y));
+}
+/** 以 (anchorX, anchorY)（默认遮罩中心）为锚点缩放到 scale。 */
+function viewZoomTo(scale, anchorX, anchorY) {
+  var stage = viewStage();
+  if (!stage) return;
+  var next = Math.max(0.05, Math.min(16, scale));
+  var rect = stage.getBoundingClientRect();
+  var cx = rect.left + rect.width / 2;
+  var cy = rect.top + rect.height / 2;
+  if (typeof anchorX !== 'number') { anchorX = cx; anchorY = cy; }
+  var ratio = next / (VIEW.scale || 1);
+  VIEW.x = anchorX - cx - (anchorX - cx - VIEW.x) * ratio;
+  VIEW.y = anchorY - cy - (anchorY - cy - VIEW.y) * ratio;
+  VIEW.scale = next;
+  viewClamp();
+  viewApply();
+}
+function viewZoomBy(factor, anchorX, anchorY) { viewZoomTo(VIEW.scale * factor, anchorX, anchorY); }
+function viewFit() {
+  VIEW.fitScale = viewFitScale();
+  VIEW.scale = VIEW.fitScale;
+  VIEW.x = 0;
+  VIEW.y = 0;
+  viewApply();
+}
+function viewActual() { VIEW.scale = 1; VIEW.x = 0; VIEW.y = 0; viewClamp(); viewApply(); }
+/* 旧调用点兼容 */
+function zoomBy(factor) { viewZoomBy(factor); }
+function zoomReset() { viewFit(); }
 function fillPreview(bodyId, kind, url, name) {
-  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
+  var modalId = String(bodyId).replace(/-body$/, '');
+  VIEW.modalId = modalId;
+  VIEW.kind = kind;
+  VIEW.natW = 1; VIEW.natH = 1; VIEW.scale = 1; VIEW.fitScale = 1; VIEW.x = 0; VIEW.y = 0;
+  VIEW.dragging = false; VIEW.moved = false;
   var body = document.getElementById(bodyId);
-  if (kind === 'video') body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>';
-  else if (kind === 'audio') body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>';
-  else if (kind === 'image') body.innerHTML = '<div class="stage"><img src="' + url + '" alt="" draggable="false"></div>';
-  else body.innerHTML = '<div class="muted">该类型不支持内嵌预览，请下载后查看。</div>';
-  var label = document.getElementById('zoom-label');
-  if (label) label.textContent = '100%';
-  var hint = document.getElementById('zoom-hint');
+  if (!body) return;
+  var modal = document.getElementById(modalId);
+  var blank = document.getElementById(modalId + '-blank');
+  var save = document.getElementById(modalId + '-save');
+  var tools = modal ? modal.querySelector('.lb-zoomtools') : null;
+  var hint = document.getElementById(modalId + '-hint');
+  if (tools) tools.hidden = kind !== 'image';
   if (hint) hint.hidden = kind !== 'image';
+  if (blank) blank.href = url;
+  if (save) { save.href = url; save.setAttribute('download', name || ''); }
+  if (kind === 'video') { body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>'; return; }
+  if (kind === 'audio') { body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>'; return; }
+  if (kind !== 'image') { body.innerHTML = '<div class="lb-empty">该类型不支持内嵌预览，可点「下载」或「新窗口」查看。</div>'; return; }
+  body.innerHTML = '<img src="' + url + '" alt="" draggable="false">';
+  var img = body.querySelector('img');
+  var ready = function () {
+    VIEW.natW = img.naturalWidth || img.width || 1;
+    VIEW.natH = img.naturalHeight || img.height || 1;
+    viewFit(); // 打开即「适应窗口」：整张图落在遮罩区域内
+    // 显示遮罩后布局会再稳定一帧（滚动条/浮层），补一次以免用到旧尺寸
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () { if (viewImg() === img && !VIEW.dragging) viewFit(); });
+    }
+  };
+  img.addEventListener('load', ready);
+  img.addEventListener('error', function () {
+    body.innerHTML = '<div class="lb-empty">图像加载失败（可用「下载」或「新窗口」打开）：' + url + '</div>';
+  });
+  if (img.complete && img.naturalWidth > 0) ready();
 }
-function bindPreviewEvents(modalId) {
+/** 打开灯箱：设文件名 → 填内容 → 显示遮罩 → 锁页面滚动。 */
+function showPreview(modalId, kind, url, name) {
   var modal = document.getElementById(modalId);
   if (!modal) return;
-  modal.addEventListener('wheel', function (event) {
-    var img = modal.querySelector('.stage img');
-    if (!img) return;
-    event.preventDefault();
-    zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15);
-  }, { passive: false });
-  modal.addEventListener('mousedown', function (event) {
-    var img = modal.querySelector('.stage img');
-    if (!img || event.target !== img) return;
-    ZOOM.dragging = true; ZOOM.startX = event.clientX - ZOOM.x; ZOOM.startY = event.clientY - ZOOM.y;
-    img.classList.add('dragging');
-    event.preventDefault();
-  });
-  window.addEventListener('mousemove', function (event) {
-    if (!ZOOM.dragging) return;
-    var img = modal.querySelector('.stage img');
-    if (!img) return;
-    ZOOM.x = event.clientX - ZOOM.startX; ZOOM.y = event.clientY - ZOOM.startY;
-    zoomApply(img);
-  });
-  window.addEventListener('mouseup', function () {
-    ZOOM.dragging = false;
-    var img = modal.querySelector('.stage img');
-    if (img) img.classList.remove('dragging');
-  });
-  modal.addEventListener('dblclick', function (event) {
-    if (event.target.tagName !== 'IMG') return;
-    ZOOM.scale = ZOOM.scale > 1.01 ? 1 : 2;
-    ZOOM.x = 0; ZOOM.y = 0;
-    zoomApply(event.target);
-  });
-  document.addEventListener('keydown', function (event) {
-    if (modal.hidden) return;
-    if (event.key === 'Escape') closePreviewModal(modalId);
-    else if (event.key === '+' || event.key === '=') zoomBy(1.2);
-    else if (event.key === '-') zoomBy(1 / 1.2);
-    else if (event.key === '0') zoomReset();
-  });
+  var nameEl = document.getElementById(modalId + '-name');
+  if (nameEl) nameEl.textContent = name || '';
+  fillPreview(modalId + '-body', kind, url, name);
+  modal.hidden = false;
+  document.documentElement.classList.add('lb-open');
 }
 function closePreviewModal(modalId) {
   var body = document.getElementById(modalId + '-body');
   if (body) body.innerHTML = ''; // 清空以停止播放
-  document.getElementById(modalId).hidden = true;
+  var modal = document.getElementById(modalId);
+  if (modal) modal.hidden = true;
+  document.documentElement.classList.remove('lb-open');
+  VIEW.dragging = false;
+}
+function bindPreviewEvents(modalId) {
+  var modal = document.getElementById(modalId);
+  var stage = document.getElementById(modalId + '-body');
+  if (!modal || !stage) return;
+  // 滚轮：以光标为锚点缩放（图在遮罩内放大，遮罩本身不动）
+  modal.addEventListener('wheel', function (event) {
+    if (modal.hidden || !viewImg()) return;
+    event.preventDefault();
+    viewZoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX, event.clientY);
+  }, { passive: false });
+  stage.addEventListener('pointerdown', function (event) {
+    if (!viewImg() || event.button !== 0) return;
+    VIEW.dragging = true; VIEW.moved = false;
+    VIEW.sx = event.clientX - VIEW.x; VIEW.sy = event.clientY - VIEW.y;
+    stage.classList.add('grabbing');
+    try { stage.setPointerCapture(event.pointerId); } catch (error) {}
+    event.preventDefault();
+  });
+  stage.addEventListener('pointermove', function (event) {
+    if (!VIEW.dragging) return;
+    var nx = event.clientX - VIEW.sx;
+    var ny = event.clientY - VIEW.sy;
+    if (Math.abs(nx - VIEW.x) > 3 || Math.abs(ny - VIEW.y) > 3) VIEW.moved = true;
+    VIEW.x = nx; VIEW.y = ny;
+    viewClamp();
+    viewApply();
+  });
+  var endDrag = function (event) {
+    if (!VIEW.dragging) return;
+    VIEW.dragging = false;
+    stage.classList.remove('grabbing');
+    try { stage.releasePointerCapture(event.pointerId); } catch (error) {}
+  };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  // 点遮罩空白（且没拖动过）关闭
+  stage.addEventListener('click', function (event) {
+    if (event.target === stage && !VIEW.moved) closePreviewModal(modalId);
+  });
+  stage.addEventListener('dblclick', function (event) {
+    if (!viewImg() || event.target.tagName !== 'IMG') return;
+    if (VIEW.scale > VIEW.fitScale * 1.02) viewFit(); else viewActual();
+  });
+  modal.addEventListener('click', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-zoom]') : null;
+    if (target) {
+      var action = target.getAttribute('data-zoom');
+      if (action === 'in') viewZoomBy(1.25);
+      else if (action === 'out') viewZoomBy(1 / 1.25);
+      else if (action === 'one') viewActual();
+      else viewFit();
+      return;
+    }
+    if (event.target && event.target.id === modalId + '-close') closePreviewModal(modalId);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (modal.hidden) return;
+    if (event.key === 'Escape') { closePreviewModal(modalId); return; }
+    if (!viewImg()) return;
+    if (event.key === '+' || event.key === '=') viewZoomBy(1.2);
+    else if (event.key === '-' || event.key === '_') viewZoomBy(1 / 1.2);
+    else if (event.key === '0') viewFit();
+    else if (event.key === '1') viewActual();
+  });
+  window.addEventListener('resize', function () {
+    if (!modal.hidden && viewImg()) viewFit();
+  });
 }
 `
 
@@ -640,17 +770,7 @@ function start(makeCall, label) {
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
-  if (t.id === 'preview2-close' || t.id === 'preview2') {
-    closePreviewModal('preview2');
-    return;
-  }
-  var zoomAction = t.getAttribute && t.getAttribute('data-zoom');
-  if (zoomAction) {
-    if (zoomAction === 'in') zoomBy(1.25);
-    else if (zoomAction === 'out') zoomBy(1 / 1.25);
-    else zoomReset();
-    return;
-  }
+  // 灯箱的关闭/缩放统一由 bindPreviewEvents('preview2') 处理，这里不再重复
   if (t.id === 'history-reload') { loadHistory(); return; }
   var historyExport = t.getAttribute && t.getAttribute('data-history-export');
   if (historyExport) {
@@ -680,9 +800,7 @@ document.addEventListener('click', function (event) {
     var kind2 = previewHost.getAttribute('data-kind') || 'file';
     var path2 = previewHost.getAttribute('data-preview2');
     var url2 = '/artifact?path=' + encodeURIComponent(path2) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
-    document.getElementById('preview2-name').textContent = previewHost.getAttribute('data-name') || '';
-    fillPreview('preview2-body', kind2, url2, previewHost.getAttribute('data-name') || '');
-    document.getElementById('preview2').hidden = false;
+    showPreview('preview2', kind2, url2, previewHost.getAttribute('data-name') || '');
     return;
   }
   if (t.id === 'textmodal-close' || t.id === 'textmodal') {
@@ -837,7 +955,6 @@ function api(path, body) {
 }
 function ask(label, current) { var v = prompt(label, current || ''); return v === null ? null : v.trim(); }
 function mediaUrl(path) { return '/artifact?path=' + encodeURIComponent(path) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : ''); }
-function closePreview() { closePreviewModal('preview'); }
 function picked() {
   return Array.prototype.slice.call(document.querySelectorAll('.rowpick:checked')).map(function (el) {
     return { runId: el.getAttribute('data-run') || '', path: el.getAttribute('data-path') || '' };
@@ -994,7 +1111,7 @@ document.addEventListener('change', function (event) {
 });
 document.addEventListener('click', function (event) {
   var el = event.target;
-  if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  // 灯箱的关闭/缩放统一由 bindPreviewEvents('preview') 处理，这里不再重复
   if (el.id === 'q-run') { runSearch(); return; }
   if (el.id === 'q-help-toggle') {
     var help = document.getElementById('q-help');
@@ -1041,13 +1158,6 @@ document.addEventListener('click', function (event) {
       .catch(function (error) { alert('删除失败：' + error.message); });
     return;
   }
-  var zoomAction = el.getAttribute && el.getAttribute('data-zoom');
-  if (zoomAction) {
-    if (zoomAction === 'in') zoomBy(1.25);
-    else if (zoomAction === 'out') zoomBy(1 / 1.25);
-    else zoomReset();
-    return;
-  }
   if (el.id === 'export-all') {
     var ids = (window.__runIds || []).join(',');
     if (!ids) { alert('没有可导出的运行'); return; }
@@ -1085,9 +1195,7 @@ document.addEventListener('click', function (event) {
     var kind = previewHost.getAttribute('data-kind') || 'file';
     var name = previewHost.getAttribute('data-name') || '';
     var url = mediaUrl(previewHost.getAttribute('data-preview'));
-    document.getElementById('preview-name').textContent = name;
-    fillPreview('preview-body', kind, url, name);
-    document.getElementById('preview').hidden = false;
+    showPreview('preview', kind, url, name);
     return;
   }
   var key = el.getAttribute('data-key'); if (!key) return;
@@ -1315,14 +1423,22 @@ ${workbenchTabs('artifacts', token)}
 <button type="button" class="mini" id="export-all" title="导出当前列表全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
 </div>
 <div id="runs" class="style-masonry" data-style="masonry">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
-<div class="modal" id="preview" hidden><div class="box">
-<div class="bar2"><span id="preview-name"></span><span class="tools">
-<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
-<button type="button" class="mini" data-zoom="in">＋</button>
-<button type="button" class="mini" data-zoom="reset">重置</button>
-<button type="button" class="mini" id="preview-close">关闭 ✕</button></span></div>
-<div id="preview-body"></div>
-<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div></div></div>
+<div class="modal lightbox" id="preview" role="dialog" aria-modal="true" hidden>
+<div class="lb-top"><span class="lb-name" id="preview-name"></span>
+<button type="button" class="lb-close" id="preview-close" title="关闭（Esc）">✕</button></div>
+<div class="lb-stage" id="preview-body"></div>
+<div class="lb-bottom">
+<span class="lb-zoomtools">
+<button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
+<span class="lb-zoom" id="zoom-label">100%</span>
+<button type="button" class="mini" data-zoom="in" title="放大（+）">＋</button>
+<button type="button" class="mini" data-zoom="fit" title="适应窗口（0）">适应窗口</button>
+<button type="button" class="mini" data-zoom="one" title="原始尺寸（1）">1:1</button>
+</span>
+<a class="mini" id="preview-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
+<a class="mini" id="preview-save" href="#" download title="下载原文件">⬇ 下载</a>
+<span class="lb-hint" id="preview-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · Esc 关闭</span>
+</div></div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};

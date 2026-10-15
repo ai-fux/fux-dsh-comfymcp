@@ -291,6 +291,56 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(html).toContain('#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))')
     expect(html).toContain('justify-content:start')
   })
+
+  it('点击图片放大＝整屏遮罩灯箱（遮罩铺满浏览器，图在遮罩内缩放）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 遮罩整屏 + 可访问性
+    expect(html).toContain('class="modal lightbox" id="preview"')
+    expect(html).toContain('role="dialog" aria-modal="true"')
+    expect(html).toContain('.modal.lightbox{position:fixed;inset:0;background:rgba(6,7,9,.96)')
+    // 舞台铺满窗口，图片在其中缩放平移（超出部分被遮罩裁掉）
+    expect(html).toContain('.modal.lightbox .lb-stage{position:absolute;inset:0;')
+    expect(html).toContain('id="preview-body"')
+    expect(html).toContain('overflow:hidden')
+    // 右上角圆形关闭 + 底部缩放工具条（含适应窗口/1:1/新窗口/下载）
+    expect(html).toContain('id="preview-close"')
+    expect(html).toContain('data-zoom="fit"')
+    expect(html).toContain('data-zoom="one"')
+    expect(html).toContain('id="preview-blank"')
+    expect(html).toContain('id="preview-save"')
+    expect(html).toContain('id="preview-hint"')
+    expect(html).not.toContain('id="zoom-hint"')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    // 打开/关闭（锁页面滚动）、以光标为锚点缩放、适应窗口、1:1、边界收敛
+    expect(code).toContain('function showPreview(modalId, kind, url, name)')
+    expect(code).toContain("document.documentElement.classList.add('lb-open')")
+    expect(code).toContain('function viewZoomTo(scale, anchorX, anchorY)')
+    expect(code).toContain('function viewFit()')
+    expect(code).toContain('function viewActual()')
+    expect(code).toContain('function viewClamp()')
+    expect(code).toContain('function viewAvailable()')
+    expect(code).toContain("stage.addEventListener('pointerdown'")
+    expect(code).toContain('setPointerCapture')
+    expect(code).toContain('{ passive: false }')
+    // 缩放在遮罩内完成，图片不自己滚动/不被拖动选中
+    expect(html).toContain('touch-action:none')
+    expect(html).toContain('user-select:none')
+    // 页面自身的点击处理不再重复处理灯箱按钮（避免缩放两次）
+    expect(code).not.toContain("el.id === 'preview-close'")
+  })
+
+  it('工作流页共用同一灯箱（preview2 也是整屏遮罩）', () => {
+    const html = renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' })
+    expect(html).toContain('class="modal lightbox" id="preview2"')
+    expect(html).toContain('id="preview2-body"')
+    expect(html).toContain('id="preview2-blank"')
+    expect(html).toContain('id="preview2-save"')
+    expect(html).toContain("bindPreviewEvents('preview2')")
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function showPreview(modalId, kind, url, name)')
+    expect(code).toContain("showPreview('preview2', kind2, url2")
+    expect(code).not.toContain("t.id === 'preview2-close'")
+  })
 })
 
 describe('指令页（卡片式结构化编辑）', () => {
