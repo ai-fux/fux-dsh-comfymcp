@@ -666,6 +666,8 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null }) 
         summary: `${rendered.shown} 条命中 · 共 ${withMedia.length} 条有产物记录`,
         queryText: parsed.isEmpty ? '' : `检索「${parsed.raw}」`,
         runIds: matched.map((run) => run.id).filter(Boolean),
+        // 多张收集卡要靠它开画廊逐张看：检索后前端要用同一份索引
+        galleries: rendered.galleries ?? {},
         hits: matched.length,
         groups: parsed.groups.length,
       }

@@ -52,6 +52,8 @@ const PAGE_CHECKS = {
     '灯箱整屏遮罩（打开/关闭/锁滚动）': /function showPreview\([\s\S]*lb-open[\s\S]*function closePreviewModal\(/,
     '灯箱内缩放（锚点+适应窗口+1:1）': /function viewZoomTo\([\s\S]*function viewFit\([\s\S]*function viewActual\(/,
     '卡片操作主次（⋯ 更多 就地展开）': /ops-more[\s\S]*more-open/,
+    '多张收集卡（逐张画廊 + 文件列表）': /showGallery\('preview'[\s\S]*data-toggle-files[\s\S]*layoutMasonry\(\)/,
+    '画廊 ← → 切换': /galleryStep\(-1\)[\s\S]*galleryStep\(1\)/,
     '瀑布流轮转填充（每排从最左开始）': /function layoutMasonry\([\s\S]*index % columns/,
     '样式切换与记忆': /function applyStyle\([\s\S]*comfymcp\.artifactStyle/,
     '复合检索请求': /api\/artifacts\/query/,

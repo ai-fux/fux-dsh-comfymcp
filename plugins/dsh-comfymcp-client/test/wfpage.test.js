@@ -382,6 +382,91 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(html).toContain('.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0')
   })
 
+  it('多图＝固定尺寸收集卡：最多 5 张小角度摊开 + 子级画廊 + 文件列表可展开', () => {
+    const files = Array.from({ length: 7 }, (_, index) => ({
+      path: `C:\\a\\shot${index}.png`, filename: `shot${index}.png`, kind: 'image', bytes: 1000 + index, key: `k${index}`,
+    }))
+    const html = renderArtifactsHtml({
+      runs: [{ id: 'r-multi', name: 'batch', state: 'completed', seed: 9, localFiles: files }],
+      tags: {},
+      token: 'tk',
+    })
+    // 卡片尺寸与单卡一致：复用同一个 .mediacard/.thumb/.meta 结构，媒体区仍是 1:1
+    expect(html).toContain('class="mediacard stackcard"')
+    expect(html).toContain('class="thumb stack"')
+    expect(html).toContain('class="stackitem"')
+    // 最多摊开 5 张，其余只在角标里提示
+    expect([...html.matchAll(/class="stackitem"/g)].length).toBe(5)
+    expect(html).toContain('>7 张 · 另 2<')
+    // 每张都可点进画廊对应位置
+    expect(html).toContain('data-gallery-index="0"')
+    expect(html).toContain('data-gallery-index="4"')
+    expect(html).not.toContain('data-gallery-index="5"')
+    // 收集卡主操作：逐张查看 / 文件列表 / 导出；完整文件列表默认收起（逐张操作都在里面）
+    expect(html).toContain('⤢ 逐张查看')
+    expect(html).toContain('data-toggle-files="r-multi"')
+    expect(html).toContain('class="filelist" hidden')
+    expect([...html.matchAll(/class="rowpick"/g)].length).toBe(7)
+    // 小角度摊开（±7° 内），角度由 CSS nth-child 给
+    expect(html).toContain('.stackcard .thumb.stack .stackitem:nth-child(1){transform:rotate(-7deg)')
+    expect(html).toContain('.stackcard .thumb.stack .stackitem:nth-child(5){transform:rotate(7deg)')
+    // 单张仍是 .mediaList（不受影响）
+    const single = renderArtifactsHtml({
+      runs: [{ id: 'r1', name: 'one', state: 'completed', localFiles: [files[0]] }],
+      tags: {},
+      token: 'tk',
+    })
+    expect(single).toContain('class="mediaList"')
+    expect(single).not.toContain('class="mediacard stackcard"')
+  })
+
+  it('视频用首帧、音频用固定封面（多张收集卡里同样生效）', () => {
+    const html = renderArtifactsHtml({
+      runs: [{
+        id: 'r-media', name: 'video-audio', state: 'completed',
+        localFiles: [
+          { path: 'C:\\a\\clip.mp4', filename: 'clip.mp4', kind: 'video', bytes: 5200000, key: 'v' },
+          { path: 'C:\\a\\song.mp3', filename: 'song.mp3', kind: 'audio', bytes: 3200000, key: 'a' },
+        ],
+      }],
+      tags: {},
+      token: 'tk',
+    })
+    // 视频：<video muted preload=metadata> 取 #t=0.1 首帧 + 播放角标
+    expect(html).toContain('class="vthumb"')
+    expect(html).toContain('#t=0.1" muted playsinline preload="metadata"')
+    expect(html).toContain('class="play">▶')
+    // 音频：不依赖磁盘缩略图的固定封面（渐变 + 波形条 + 音符）
+    expect(html).toContain('class="audiocover"')
+    expect(html).toContain('<span class="bars">')
+    expect(html).toContain('class="note">♪')
+    expect(html).toContain('.mediacard .thumb .audiocover{width:100%;height:100%')
+  })
+
+  it('画廊数据随结果下发，并在页面脚本里支持 ← → 切换', () => {
+    const html = renderArtifactsHtml({
+      runs: [{
+        id: 'r-multi', name: 'batch', state: 'completed',
+        localFiles: [
+          { path: 'C:\\a\\1.png', filename: '1.png', kind: 'image', bytes: 1, key: 'k1' },
+          { path: 'C:\\a\\2.png', filename: '2.png', kind: 'image', bytes: 2, key: 'k2' },
+        ],
+      }],
+      tags: {},
+      token: 'tk',
+    })
+    expect(html).toContain('window.__galleries = {')
+    expect(html).toContain('"name":"2.png"')
+    expect(html).toContain('id="preview-strip"')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function showGallery(modalId, runId, index)')
+    expect(code).toContain('function galleryShow(index)')
+    expect(code).toContain('function galleryStep(delta)')
+    expect(code).toContain("event.key === 'ArrowRight'")
+    expect(code).toContain('data-strip-index')
+    expect(code).toContain('function renderGalleryStrip(modalId)')
+  })
+
   it('工作流页共用同一灯箱（preview2 也是整屏遮罩）', () => {
     const html = renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' })
     expect(html).toContain('class="modal lightbox" id="preview2"')

@@ -306,6 +306,8 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <button type="button" class="lb-close" id="preview2-close" title="关闭（Esc）">✕</button></div>
 <div class="lb-stage" id="preview2-body"></div>
 <div class="lb-bottom">
+<div class="lb-strip" id="preview2-strip" hidden></div>
+<div class="lb-tools">
 <span class="lb-zoomtools">
 <button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
 <span class="lb-zoom" id="zoom-label">100%</span>
@@ -316,7 +318,7 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <a class="mini" id="preview2-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
 <a class="mini" id="preview2-save" href="#" download title="下载原文件">⬇ 下载</a>
 <span class="lb-hint" id="preview2-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · Esc 关闭</span>
-</div></div>
+</div></div></div>
 <div class="modal" id="textmodal" hidden><div class="box wide">
 <div class="bar2"><span id="textmodal-name">编辑全文</span><span>
 <button type="button" class="mini" id="textmodal-save">保存到表单</button>
@@ -374,7 +376,14 @@ html.lb-open,body.lb-open{overflow:hidden}
 .modal.lightbox .lb-stage video{max-width:100%;max-height:100%;display:block;background:#000;border-radius:6px}
 .modal.lightbox .lb-stage audio{width:min(560px,84vw);display:block}
 .modal.lightbox .lb-empty{color:#e9ecef;font-size:13px;max-width:80vw;word-break:break-all}
-.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px var(--lb-pad,16px) 16px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px var(--lb-pad,16px) 16px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-tools{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+/* 画廊缩略条：多张成果物逐张查看时用（点缩略图跳转，← → 也可切） */
+.modal.lightbox .lb-strip{display:flex;gap:6px;max-width:86vw;overflow-x:auto;padding:2px}
+.modal.lightbox .lb-strip[hidden]{display:none}
+.modal.lightbox .lb-strip .stripitem{flex:0 0 auto;width:52px;height:52px;border-radius:6px;overflow:hidden;border:2px solid transparent;background:rgba(255,255,255,.08);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#e9ecef;font-size:16px}
+.modal.lightbox .lb-strip .stripitem.on{border-color:#fff}
+.modal.lightbox .lb-strip .stripitem img{width:100%;height:100%;object-fit:cover;display:block}
 .modal.lightbox .lb-bottom .mini{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2);color:#e9ecef}
 .modal.lightbox .lb-bottom .mini:hover{background:rgba(255,255,255,.2);color:#fff}
 .modal.lightbox .lb-bottom a.mini{text-decoration:none;display:inline-flex;align-items:center}
@@ -493,20 +502,79 @@ function fillPreview(bodyId, kind, url, name) {
 function showPreview(modalId, kind, url, name) {
   var modal = document.getElementById(modalId);
   if (!modal) return;
+  GALLERY.items = []; // 单张模式：← → 不切图
+  GALLERY.modalId = modalId;
   var nameEl = document.getElementById(modalId + '-name');
   if (nameEl) nameEl.textContent = name || '';
   fillPreview(modalId + '-body', kind, url, name);
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) { strip.hidden = true; strip.innerHTML = ''; }
   modal.hidden = false;
   document.documentElement.classList.add('lb-open');
   // 若页面仍留着滚动条，给浮层补上等宽内边距，避免关闭按钮被压在滚动条下（看起来被切、不对称）
   var scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
   modal.style.setProperty('--lb-pad', (16 + scrollbar) + 'px');
 }
+/* ---- 画廊模式：一次运行多张时逐张查看（子级详情） ---- */
+var GALLERY = { items: [], index: 0, modalId: '' };
+/** 打开某次运行的画廊：第 index 张起（items 由页面渲染时写入 window.__galleries）。 */
+function showGallery(modalId, runId, index) {
+  var items = (window.__galleries || {})[runId] || [];
+  if (items.length === 0) return;
+  GALLERY.items = items;
+  GALLERY.modalId = modalId;
+  var modal = document.getElementById(modalId);
+  if (!modal) return;
+  renderGalleryStrip(modalId);
+  galleryShow(Number(index) || 0);
+  modal.hidden = false;
+  document.documentElement.classList.add('lb-open');
+  var scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+  modal.style.setProperty('--lb-pad', (16 + scrollbar) + 'px');
+}
+function renderGalleryStrip(modalId) {
+  var strip = document.getElementById(modalId + '-strip');
+  if (!strip) return;
+  strip.hidden = GALLERY.items.length < 2;
+  strip.innerHTML = GALLERY.items.map(function (item, index) {
+    var inner = item.kind === 'image'
+      ? '<img src="' + item.url + '" alt="" loading="lazy">'
+      : item.kind === 'video' ? '▶' : item.kind === 'audio' ? '♪' : '📄';
+    return '<span class="stripitem" data-strip-index="' + index + '" title="' + (item.name || '') + '">' + inner + '</span>';
+  }).join('');
+}
+/** 切到第 index 张（循环）：更新标题序号、舞台内容、缩略条高亮。 */
+function galleryShow(index) {
+  if (GALLERY.items.length === 0) return;
+  var total = GALLERY.items.length;
+  var next = ((index % total) + total) % total;
+  GALLERY.index = next;
+  var item = GALLERY.items[next];
+  var modalId = GALLERY.modalId;
+  var nameEl = document.getElementById(modalId + '-name');
+  if (nameEl) nameEl.textContent = (item.name || '') + ' · ' + (next + 1) + '/' + total;
+  fillPreview(modalId + '-body', item.kind, item.url, item.name);
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) {
+    Array.prototype.slice.call(strip.children).forEach(function (el, i) {
+      el.classList.toggle('on', i === next);
+    });
+  }
+  var hint = document.getElementById(modalId + '-hint');
+  if (hint) hint.hidden = false;
+}
+function galleryStep(delta) {
+  if (GALLERY.items.length < 2) return;
+  galleryShow(GALLERY.index + delta);
+}
 function closePreviewModal(modalId) {
   var body = document.getElementById(modalId + '-body');
   if (body) body.innerHTML = ''; // 清空以停止播放
   var modal = document.getElementById(modalId);
   if (modal) modal.hidden = true;
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) { strip.hidden = true; strip.innerHTML = ''; }
+  GALLERY.items = [];
   document.documentElement.classList.remove('lb-open');
   VIEW.dragging = false;
 }
@@ -563,11 +631,18 @@ function bindPreviewEvents(modalId) {
       else viewFit();
       return;
     }
+    var stripItem = event.target && event.target.closest ? event.target.closest('[data-strip-index]') : null;
+    if (stripItem) {
+      galleryShow(Number(stripItem.getAttribute('data-strip-index')) || 0);
+      return;
+    }
     if (event.target && event.target.id === modalId + '-close') closePreviewModal(modalId);
   });
   document.addEventListener('keydown', function (event) {
     if (modal.hidden) return;
     if (event.key === 'Escape') { closePreviewModal(modalId); return; }
+    if (event.key === 'ArrowLeft') { galleryStep(-1); return; }
+    if (event.key === 'ArrowRight') { galleryStep(1); return; }
     if (!viewImg()) return;
     if (event.key === '+' || event.key === '=') viewZoomBy(1.2);
     else if (event.key === '-' || event.key === '_') viewZoomBy(1 / 1.2);
@@ -989,6 +1064,8 @@ function renderRuns(payload) {
     summary.innerHTML = (payload.summary || '') + (payload.queryText ? ' · 检索：' + payload.queryText : '') + ' · <a href="/ui?token=' + encodeURIComponent(TOKEN || '') + '">← 工作台</a>';
   }
   if (payload && payload.runIds) window.__runIds = payload.runIds;
+  // 多张收集卡的画廊索引随结果一起换（否则检索后点「⤢ 逐张查看」会拿到旧列表）
+  if (payload && payload.galleries) window.__galleries = payload.galleries;
   layoutMasonry();
   refreshPickCount();
 }
@@ -1210,6 +1287,27 @@ document.addEventListener('click', function (event) {
     showPreview('preview', kind, url, name);
     return;
   }
+  // 多张收集卡：进入子级画廊逐张看 / 就地展开完整文件列表
+  var galleryHost = el.closest ? el.closest('[data-gallery-run]') : null;
+  if (galleryHost) {
+    var item = el.closest && el.closest('[data-gallery-index]');
+    var start = item ? Number(item.getAttribute('data-gallery-index')) || 0 : Number(galleryHost.getAttribute('data-gallery-index')) || 0;
+    showGallery('preview', galleryHost.getAttribute('data-gallery-run'), start);
+    return;
+  }
+  var toggleFiles = el.getAttribute && el.getAttribute('data-toggle-files');
+  if (toggleFiles) {
+    var run = document.querySelector('.runpick[data-run="' + toggleFiles + '"]');
+    var section = run ? (run.closest ? run.closest('.run') : null) : null;
+    var list = section ? section.querySelector('.filelist') : null;
+    if (list) {
+      list.hidden = !list.hidden;
+      el.classList.toggle('dshmcp-on', !list.hidden);
+      el.textContent = list.hidden ? '☰ 文件列表' : '☰ 收起文件';
+      layoutMasonry();
+    }
+    return;
+  }
   var key = el.getAttribute('data-key'); if (!key) return;
   var op = el.getAttribute('data-op');
   var patch = null;
@@ -1275,6 +1373,39 @@ const ARTIFACTS_CSS = `
 .mediacard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .mediacard .thumb .badge{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
 .mediacard .thumb .big{font-size:38px;color:var(--accent)}
+/* 多张收集卡：卡片尺寸与单张一致，内部把最多 5 张小角度扑克摊开 */
+.stackcard .thumb.stack{background:var(--bg);cursor:zoom-in}
+.stackcard .thumb.stack .stackitem{position:absolute;inset:13%;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.32);transition:transform .18s ease,box-shadow .18s ease}
+.stackcard .thumb.stack .stackitem img,.stackcard .thumb.stack .stackitem video{width:100%;height:100%;object-fit:cover;display:block}
+.stackcard .thumb.stack .stackitem:nth-child(1){transform:rotate(-7deg) translate(-13%, 3%)}
+.stackcard .thumb.stack .stackitem:nth-child(2){transform:rotate(-3.5deg) translate(-6.5%, 1.5%)}
+.stackcard .thumb.stack .stackitem:nth-child(3){transform:rotate(0deg) translate(0, 0)}
+.stackcard .thumb.stack .stackitem:nth-child(4){transform:rotate(3.5deg) translate(6.5%, 1.5%)}
+.stackcard .thumb.stack .stackitem:nth-child(5){transform:rotate(7deg) translate(13%, 3%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(1){transform:rotate(-10deg) translate(-17%, 3%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(2){transform:rotate(-5deg) translate(-8.5%, 1.5%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(4){transform:rotate(5deg) translate(8.5%, 1.5%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(5){transform:rotate(10deg) translate(17%, 3%)}
+.stackcard .thumb.stack .stackitem:hover{box-shadow:0 10px 26px rgba(0,0,0,.5);z-index:5}
+.stackcard .thumb.stack .stackitem:nth-child(3){z-index:3}
+.stackcard .thumb.stack .stackitem:nth-child(2),.stackcard .thumb.stack .stackitem:nth-child(4){z-index:2}
+.stackcard .thumb.stack .stackitem:nth-child(1),.stackcard .thumb.stack .stackitem:nth-child(5){z-index:1}
+/* 视频：首帧当封面 + 播放角标 */
+.mediacard .thumb .vthumb{pointer-events:none}
+.mediacard .thumb .play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;padding-left:3px}
+/* 音频：固定音乐封面（渐变 + 波形条 + 音符） */
+.mediacard .thumb .audiocover{width:100%;height:100%;display:flex;align-items:center;justify-content:center;position:relative;background:linear-gradient(135deg,#2b3a55,#4a3b63 55%,#7b4a63)}
+.mediacard .thumb .audiocover .bars{position:absolute;inset:auto 12% 16% 12%;height:34%;display:flex;align-items:flex-end;gap:6%}
+.mediacard .thumb .audiocover .bars i{flex:1;background:rgba(255,255,255,.5);border-radius:2px}
+.mediacard .thumb .audiocover .bars i:nth-child(1){height:38%}
+.mediacard .thumb .audiocover .bars i:nth-child(2){height:76%}
+.mediacard .thumb .audiocover .bars i:nth-child(3){height:52%}
+.mediacard .thumb .audiocover .bars i:nth-child(4){height:92%}
+.mediacard .thumb .audiocover .bars i:nth-child(5){height:60%}
+.mediacard .thumb .audiocover .note{position:relative;color:#fff;font-size:44px;text-shadow:0 2px 10px rgba(0,0,0,.45)}
+/* 多张时：完整文件列表默认收起，点「☰ 文件列表」就地展开 */
+.run .filelist{display:flex;flex-direction:column}
+.run .filelist[hidden]{display:none}
 .mediacard .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .mediacard .fname{font-size:13px;word-break:break-all;font-weight:600}
 .mediacard .ops{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
@@ -1332,14 +1463,34 @@ function promptBlock(run, token) {
   return `<div class="promptBox">${row('positive', '正', positive, prompts?.positiveField ?? '')}${row('negative', '负', negative, prompts?.negativeField ?? '')}</div>`
 }
 
-/** 成果物列表 HTML（首次渲染与检索结果复用同一份）。 */
+/** 音频固定封面（不依赖磁盘缩略图，风格统一）。 */
+function audioCoverHtml() {
+  return `<span class="audiocover" aria-hidden="true"><span class="bars"><i></i><i></i><i></i><i></i><i></i></span><span class="note">♪</span></span>`
+}
+
+/** 媒体缩略图内容：图像＝图；视频＝首帧（#t=0.1 让浏览器渲染到该帧）+ 播放角标；音频＝固定封面。 */
+function thumbInnerHtml(kind, src, name) {
+  if (kind === 'image') return `<img src="${src}" alt="${name}" loading="lazy">`
+  if (kind === 'video') return `<video class="vthumb" src="${src}#t=0.1" muted playsinline preload="metadata"></video><span class="play">▶</span>`
+  if (kind === 'audio') return audioCoverHtml()
+  return `<span class="big">📄</span>`
+}
+
+/**
+ * 成果物列表 HTML（首次渲染与检索结果复用同一份）。
+ * 同一次运行出多张时：卡片尺寸与单张一致，内部把最多 5 张按小角度扑克摊开（收集卡），
+ * 点击进入灯箱画廊逐张看（子级详情）；完整文件列表可就地展开，逐张的标签/删除等操作都在里面。
+ */
 export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
   const tagOf = (key) => tags[key] ?? null
+  const galleries = {}
   // 无模态数据不入库：丢弃没有任何产物的运行记录
   const withMedia = runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0)
   const runCards = withMedia
     .map((run) => {
-      const cards = (run.localFiles ?? [])
+      const files = Array.isArray(run.localFiles) ? run.localFiles : []
+      const mediaUrl = (file) => `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
+      const cards = files
         .map((file) => {
           const key = file.key ?? file.path ?? file.filename
           const meta = tagOf(key)
@@ -1362,18 +1513,15 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
           const bind = meta?.prompt || meta?.source
             ? `<div class="bind muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
             : ''
-          const src = `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
+          const src = mediaUrl(file)
           const name = escapeHtml(file.filename ?? key)
-          const kindLabel = file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : file.kind === 'audio' ? '音频' : '文件'
-          const big = file.kind === 'image' ? '' : file.kind === 'video' ? '▶' : file.kind === 'audio' ? '♪' : '📄'
-          const thumb = file.kind === 'image'
-            ? `<img src="${src}" alt="${name}" loading="lazy">`
-            : `<span class="big">${big}</span>`
+          const kind = file.kind ?? 'file'
+          const kindLabel = kind === 'image' ? '图片' : kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '文件'
           const sizeText = file.bytes ? `${Math.round(file.bytes / 1024)} KB` : ''
           // 操作分主次：常看的 3 个 + 「⋯ 更多」展开其余，避免 9 个按钮铺满卡片
           return `<div class="mediacard">
 <label class="pick" title="勾选后可批量删除"><input type="checkbox" class="rowpick" data-run="${escapeHtml(run.id ?? '')}" data-path="${escapeHtml(file.path ?? '')}"></label>
-<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
+<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(kind)}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumbInnerHtml(kind, src, name)}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
 <div class="meta"><span class="fname" title="${name}">${name}</span>${chipsHtml ? `<div class="chips">${chipsHtml}</div>` : ''}${bind}
 <div class="ops">
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add" title="给这张图加标签">＋标签</button>
@@ -1398,22 +1546,44 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
       const hits = Array.isArray(run.hits) && run.hits.length > 0
         ? `<span class="chip" title="${escapeHtml(run.hits.join(' / '))}">命中 ${run.hits.length}</span>`
         : ''
-      const files = Array.isArray(run.localFiles) ? run.localFiles : []
-      const fanned = files.length >= 4 // 同组多张 → 扑克牌摊开（重叠）样式
+      const multi = files.length >= 2
+      const runId = escapeHtml(run.id ?? '')
+      let stack = ''
+      if (multi) {
+        const shownFiles = files.slice(0, 5)
+        const rest = files.length - shownFiles.length
+        stack = `<div class="mediacard stackcard">
+<div class="thumb stack" data-gallery-run="${runId}" title="点击逐张查看（共 ${files.length} 张，← → 切换）">
+${shownFiles.map((file, index) => `<span class="stackitem" data-gallery-index="${index}">${thumbInnerHtml(file.kind ?? 'file', mediaUrl(file), escapeHtml(file.filename ?? ''))}</span>`).join('')}
+<span class="badge">${files.length} 张${rest > 0 ? ` · 另 ${rest}` : ''}</span>
+</div>
+<div class="meta"><span class="fname" title="${escapeHtml(files.map((file) => file.filename ?? '').join('、'))}">${escapeHtml(files[0]?.filename ?? '')} 等 ${files.length} 张</span>
+<div class="ops">
+<button type="button" class="mini" data-gallery-run="${runId}" data-gallery-index="0" title="在遮罩灯箱里逐张查看（← → 切换）">⤢ 逐张查看</button>
+<button type="button" class="mini" data-toggle-files="${runId}" title="就地展开全部文件（逐张的标签/下载/删除都在里面）">☰ 文件列表</button>
+<button type="button" class="mini" data-export-run="${runId}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
+</div></div></div>`
+        galleries[run.id ?? ''] = files.map((file) => ({
+          url: mediaUrl(file),
+          kind: file.kind ?? 'file',
+          name: file.filename ?? '',
+        }))
+      }
       // 卡片头：一行放完（勾选 + 工作流 + 状态 + 命中），元信息靠右单行省略 → 卡片高度稳定
       return `<section class="run"><div class="head">
-<label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${escapeHtml(run.id ?? '')}"></label>
+<label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${runId}"></label>
 <b title="${escapeHtml(run.name ?? 'workflow')}">${escapeHtml(run.name ?? 'workflow')}</b>
 <span class="chip">${escapeHtml(run.state ?? '')}</span>${hits}
-<span class="muted meta-line" title="种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件">种子 ${escapeHtml(String(run.seed ?? '-'))} · ${escapeHtml(duration)} · ${files.length} 件${fanned ? ' · 重叠' : ''}</span>
+<span class="muted meta-line" title="种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件">种子 ${escapeHtml(String(run.seed ?? '-'))} · ${escapeHtml(duration)} · ${files.length} 件</span>
 </div>
 ${promptBlock(run, token)}
-<div class="${fanned ? 'fan' : 'mediaList'}">${cards}</div></section>`
+${stack}
+<div class="${multi ? 'filelist' : 'mediaList'}"${multi ? ' hidden' : ''}>${cards}</div></section>`
     })
     .join('\n')
   const excluded = runs.length - withMedia.length
   const summary = `${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''}`
-  return { html: runCards, summary, shown: withMedia.length, total: runs.length }
+  return { html: runCards, summary, shown: withMedia.length, total: runs.length, galleries }
 }
 
 /**
@@ -1422,7 +1592,7 @@ ${promptBlock(run, token)}
  * 图片放大与缩放、视频音频播放、单次或整体导出 JSON（base64）。
  */
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
-  const { html: runCards, summary, shown } = artifactsRunsHtml({ runs, tags, token })
+  const { html: runCards, summary, shown, galleries } = artifactsRunsHtml({ runs, tags, token })
   const body = `
 <h1>ComfyUI 工作台</h1>
 ${workbenchTabs('artifacts', token)}
@@ -1472,6 +1642,8 @@ ${workbenchTabs('artifacts', token)}
 <button type="button" class="lb-close" id="preview-close" title="关闭（Esc）">✕</button></div>
 <div class="lb-stage" id="preview-body"></div>
 <div class="lb-bottom">
+<div class="lb-strip" id="preview-strip" hidden></div>
+<div class="lb-tools">
 <span class="lb-zoomtools">
 <button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
 <span class="lb-zoom" id="zoom-label">100%</span>
@@ -1481,12 +1653,13 @@ ${workbenchTabs('artifacts', token)}
 </span>
 <a class="mini" id="preview-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
 <a class="mini" id="preview-save" href="#" download title="下载原文件">⬇ 下载</a>
-<span class="lb-hint" id="preview-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · Esc 关闭</span>
-</div></div>
+<span class="lb-hint" id="preview-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · ← → 切换多张 · Esc 关闭</span>
+</div></div></div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
 window.__runIds = ${JSON.stringify(runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0).map((run) => run.id ?? null).filter(Boolean))};
+window.__galleries = ${JSON.stringify(galleries ?? {})};
 bindPreviewEvents('preview');
 refreshPickCount();
 // 恢复上次选择的卡片样式（瀑布流 / 两列平铺 / 重叠摊开）
