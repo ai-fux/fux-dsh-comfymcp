@@ -55,10 +55,15 @@ state=failed 时把 error 原文告诉用户。
 - 把 localFiles 路径列给用户；图像还会以卡片形式显示在会话中；
 - 需要单独下载时用 \`comfymcp_fetch_artifacts\`。
 
+## 开发模式（配置 devMode，默认关闭）
+- **关闭（默认）＝严禁修改任何插件源码**：插件目录（\`plugins/dsh-comfymcp-client/**\`）只读，必须严格按本技能与工具规则执行；遇到插件异常用 \`comfymcp_dev\`（action=note）记一条，并把报告要点转述给用户，由用户决定是否开启开发模式。
+- **开启＝允许自查自修**：遇到异常先 \`comfymcp_dev\`（action=report）读日志（工具异常、运行失败、控制端点错误都在里面）→ 定位到具体源码 → 直接修复 → 用 \`action=note\` 记下「问题/原因/改法」→ 提示用户重装 bundle 或重启 DSH 后复验。修完仍要符合版本/分支规约（严禁推 master/main）。
+
 ## 决策速记
 - 问连接/插件 → comfymcp_status
 - 问已有工作流 → comfymcp_discover
-- 要生成 → status → 分析 → 表单 → 运行 → 回显
+- 要生成 → **comfymcp_business(match)** → status → 分析 → 表单 → 运行 → 回显（未命中才 discover）
+- 插件报错/行为异常 → 开发模式开启：comfymcp_dev(report) 定位并修复；未开启：comfymcp_dev(note) 记录 + 转述用户
 - autoAcceptForm 开启 → 一切问题并入 push_form（推荐项第一位）；pending/auto:true → 按推荐项直接继续
 - autoAcceptForm 关闭 → ask_user_question 带 \`timeout: -1\` 阻塞等待
 - 专用工具覆盖不了的场景 → comfymcp_call_remote 直调远程工具

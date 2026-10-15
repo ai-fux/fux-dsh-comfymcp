@@ -126,25 +126,61 @@ export function inferBusiness(graph) {
   return 'text2img'
 }
 
+/** 参数键 → 人类可读名（业务配置页与表单共用同一套说法）。 */
+export const BUSINESS_PARAM_LABELS = {
+  steps: '采样步数',
+  cfg: '提示词强度 CFG',
+  width: '宽',
+  height: '高',
+  batch_size: '生成数',
+  denoise: '重绘幅度',
+  seed: '随机种子',
+  sampler_name: '采样器',
+  scheduler: '调度器',
+  model: '模型',
+  filename_prefix: '文件名前缀',
+}
+
+/**
+ * 逐个列出图里**实际存在**的可调参数（含当前值），供业务配置页按所选工作流动态渲染参数区。
+ * 与 extractBusinessParams 的区别：保留顺序与节点信息，页面用它生成输入框。
+ */
+export function extractBusinessParamFields(graph) {
+  const fields = []
+  if (graph === null || typeof graph !== 'object') return fields
+  const entries = Array.isArray(graph.nodes)
+    ? graph.nodes.map((item, index) => [String(index), item])
+    : Object.entries(graph)
+  const scalarKeys = ['steps', 'cfg', 'width', 'height', 'batch_size', 'denoise', 'seed', 'sampler_name', 'scheduler', 'filename_prefix']
+  const modelKeys = ['ckpt_name', 'unet_name', 'model', 'model_name']
+  for (const [nodeId, node] of entries) {
+    const inputs = node !== null && typeof node === 'object' ? node.inputs : null
+    if (inputs === null || typeof inputs !== 'object') continue
+    const classType = String(node.class_type ?? node.type ?? '')
+    for (const key of scalarKeys) {
+      const value = inputs[key]
+      if (value === undefined || value === null || typeof value === 'object') continue
+      if (fields.some((field) => field.key === key)) continue
+      fields.push({ key, label: BUSINESS_PARAM_LABELS[key] ?? key, value, nodeId, classType })
+    }
+    if (!fields.some((field) => field.key === 'model')) {
+      for (const key of modelKeys) {
+        const value = inputs[key]
+        if (typeof value !== 'string' || value.length === 0) continue
+        fields.push({ key: 'model', label: BUSINESS_PARAM_LABELS.model, value, nodeId, classType })
+        break
+      }
+    }
+  }
+  const order = ['steps', 'cfg', 'width', 'height', 'batch_size', 'denoise', 'seed', 'sampler_name', 'scheduler', 'model', 'filename_prefix']
+  return fields.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
+}
+
 /** 从图里摘出可复用的默认参数（找到了才带上，找不到不猜）。 */
 export function extractBusinessParams(graph) {
   const params = {}
-  if (graph === null || typeof graph !== 'object') return params
-  const source = Array.isArray(graph.nodes) ? graph.nodes : Object.values(graph)
-  const wanted = ['steps', 'width', 'height', 'batch_size', 'cfg', 'sampler_name', 'scheduler', 'filename_prefix']
-  for (const node of source) {
-    const inputs = node !== null && typeof node === 'object' ? node.inputs : null
-    if (inputs === null || typeof inputs !== 'object') continue
-    for (const name of wanted) {
-      if (params[name] === undefined && inputs[name] !== undefined && typeof inputs[name] !== 'object') {
-        params[name] = inputs[name]
-      }
-    }
-    for (const modelField of ['ckpt_name', 'unet_name', 'model', 'model_name']) {
-      if (params.model === undefined && typeof inputs[modelField] === 'string' && inputs[modelField].length > 0) {
-        params.model = inputs[modelField]
-      }
-    }
+  for (const field of extractBusinessParamFields(graph)) {
+    if (params[field.key] === undefined) params[field.key] = field.value
   }
   return params
 }

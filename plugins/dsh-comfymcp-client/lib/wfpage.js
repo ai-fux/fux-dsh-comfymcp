@@ -1900,6 +1900,8 @@ const BUSINESS_CSS = `
 .bizfields .f.narrow{max-width:170px}
 .bizfields input,.bizfields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:13px}
 .bizparams{display:contents}
+.bizparamtools{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px}
+.bizparamtools .muted{font-size:11.5px}
 .bizfoot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
 .bizfoot .grow{flex:1}
 .bizhelp{margin-top:10px;font-size:12px;line-height:1.5}
@@ -1926,9 +1928,28 @@ export function renderBusinessHtml({ profiles = [], kinds = [], candidates = [],
   const kindChips = kindList
     .map((kind) => `<span class="kindchip" title="${escapeHtml((kind.keywords ?? []).join('，') || '没有触发词')}">${escapeHtml(kind.label)}<button type="button" class="kindx" data-kind-remove="${escapeHtml(kind.id)}" title="删除该业务类（仍被配置引用时会拒绝）">✕</button></span>`)
     .join('')
-  const wfOptions = workflows
-    .map((name) => `<option value="${escapeHtml(name)}"></option>`)
-    .join('')
+  // 工作流候选：按来源分组的下拉（跑过的 / 我的工作流 / 本地文件 / 模板库 / 已配置），保证「有数据」
+  const wfList = (Array.isArray(workflows) ? workflows : [])
+    .map((entry) => (typeof entry === 'string'
+      ? { name: entry, origin: '本地文件' }
+      : { name: String(entry?.name ?? ''), origin: String(entry?.origin ?? '其它') }))
+    .filter((entry) => entry.name.length > 0)
+  const wfOrigins = [...new Set(wfList.map((entry) => entry.origin))]
+  const wfSelectOptions = (current) => {
+    const groups = wfOrigins.map((origin) => {
+      const items = wfList.filter((entry) => entry.origin === origin)
+      return `<optgroup label="${escapeHtml(origin)}（${items.length}）">${items
+        .map((entry) => `<option value="${escapeHtml(entry.name)}"${entry.name === current ? ' selected' : ''}>${escapeHtml(entry.name)}</option>`)
+        .join('')}</optgroup>`
+    }).join('')
+    const missing = current.length > 0 && !wfList.some((entry) => entry.name === current)
+      ? `<optgroup label="当前值"><option value="${escapeHtml(current)}" selected>${escapeHtml(current)}</option></optgroup>`
+      : ''
+    return `<option value=""${current.length === 0 ? ' selected' : ''}>（选择工作流…）</option>${missing}${groups}`
+  }
+  const wfCountText = wfList.length === 0
+    ? '还没发现任何工作流：先跑一次，或到「我的工作流 / 模板」里拉取一个再回来配置'
+    : `可选工作流 ${wfList.length} 个（${wfOrigins.map((origin) => `${origin} ${wfList.filter((entry) => entry.origin === origin).length}`).join(' · ')}）`
   const paramKeys = [
     ['steps', '采样步数'],
     ['width', '宽'],
@@ -1949,11 +1970,12 @@ ${profile.auto === false ? '<span class="chip">手动</span>' : '<span class="ch
 <div class="bizfields">
 <label class="f"><span>业务类</span><select data-field="business">${kindOptions(profile.business)}</select></label>
 <label class="f"><span>显示名</span><input type="text" data-field="label" value="${escapeHtml(profile.label ?? '')}" placeholder="文生图"></label>
-<label class="f"><span>首选工作流</span><input type="text" data-field="workflow" list="biz-wf-names" value="${escapeHtml(profile.workflow ?? '')}" placeholder="z-image-turbo"></label>
+<label class="f"><span>首选工作流</span><select data-field="workflow">${wfSelectOptions(String(profile.workflow ?? ''))}</select></label>
 <label class="f"><span>触发词（逗号分隔）</span><input type="text" data-field="keywords" value="${escapeHtml((profile.keywords ?? []).join('，'))}" placeholder="画，生成图片，出图"></label>
-<span class="bizparams">
+<span class="bizparams" data-params-for="${escapeHtml(String(profile.workflow ?? ''))}">
 ${paramKeys.map(([key, label]) => `<label class="f narrow"><span>${label}</span><input type="text" data-param="${key}" value="${escapeHtml(params[key] ?? '')}" placeholder="沿用工作流"></label>`).join('\n')}
 </span>
+<span class="bizparamtools"><button type="button" class="mini" data-params-load title="按所选工作流读取它实际有的参数（换工作流后参数区会跟着变）">⟳ 读取该工作流参数</button><span class="muted" data-params-note></span></span>
 <label class="f"><span>备注</span><input type="text" data-field="notes" value="${escapeHtml(profile.notes ?? '')}" placeholder="例如：出图走 turbo，8 步"></label>
 </div>
 <div class="bizfoot"><span>用过 ${Number(profile.uses) || 0} 次</span><span class="grow"></span>
@@ -1973,7 +1995,7 @@ ${workbenchTabs('business', token)}</div>
 <div class="biztoolbar">
 <button type="button" class="mini" id="biz-add">＋ 新增业务配置</button>
 <button type="button" class="primary" id="biz-save">保存配置</button>
-<span class="muted" id="biz-note">已装 ${profiles.length} 条 · 命中后模型直接执行该工作流，跳过模板检索与模型枚举</span>
+<span class="muted" id="biz-note">已装 ${profiles.length} 条 · ${escapeHtml(wfCountText)}</span>
 </div>
 <div class="bizkinds" id="biz-kinds">
 <span class="muted">业务类（可动态增删，卡片下拉即用这份清单）：</span>
@@ -1987,7 +2009,6 @@ ${kindChips}
 <div class="muted">已跑过但还没登记的工作流（点「登记」即可成为该业务类的首选）：</div>
 ${candRows}
 </div>
-<datalist id="biz-wf-names">${wfOptions}</datalist>
 <div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
 <div class="bizhelp muted">每条配置＝一个业务类（默认给文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频，可自行添加）。
 模型在开工前会先用 <code>comfymcp_business</code> 按你说的话匹配：命中就直接用这张配置里的工作流与参数，
@@ -2027,6 +2048,48 @@ function bizNote(message, bad) {
   note.textContent = message;
   note.style.color = bad ? 'var(--err)' : '';
 }
+/**
+ * 按所选工作流重建参数区：拉「该工作流实际有哪些可调参数」，逐项生成输入框。
+ * 已经填过的值保留，未填的用工作流当前值占位（空＝沿用工作流），换工作流时参数区随之变化。
+ */
+function bizLoadParams(card, options) {
+  var select = card.querySelector('[data-field="workflow"]');
+  var holder = card.querySelector('.bizparams');
+  var note = card.querySelector('[data-params-note]');
+  if (select === null || holder === null) return;
+  var workflow = String(select.value || '').trim();
+  var previous = {};
+  Array.prototype.slice.call(holder.querySelectorAll('[data-param]')).forEach(function (el) {
+    var value = String(el.value || '').trim();
+    if (value.length > 0) previous[el.getAttribute('data-param')] = value;
+  });
+  if (workflow.length === 0) {
+    holder.setAttribute('data-params-for', '');
+    holder.innerHTML = '<span class="muted">先选工作流，再点「⟳ 读取该工作流参数」</span>';
+    if (note !== null) note.textContent = '';
+    return;
+  }
+  if (note !== null) note.textContent = '读取中…';
+  api('/api/business/schema', { workflow: workflow }).then(function (data) {
+    var payload = data && data.value !== undefined ? data.value : data;
+    if (!payload || payload.ok === false) throw new Error((payload && payload.error) || '读取失败');
+    var fields = Array.isArray(payload.fields) ? payload.fields : [];
+    if (fields.length === 0) {
+      holder.innerHTML = '<span class="muted">该工作流没有可调参数（或图里没有这些字段）</span>';
+      if (note !== null) note.textContent = '来源：' + (payload.origin || '-');
+      return;
+    }
+    holder.innerHTML = fields.map(function (field) {
+      var value = previous[field.key] !== undefined ? previous[field.key] : '';
+      return '<label class="f narrow" title="' + (field.classType || '') + ' ' + (field.nodeId || '') + '"><span>' + field.label +
+        '</span><input type="text" data-param="' + field.key + '" value="' + value + '" placeholder="' + field.value + '"></label>';
+    }).join('');
+    holder.setAttribute('data-params-for', workflow);
+    if (note !== null) note.textContent = fields.length + ' 个参数（来源：' + (payload.origin || '-') + '；留空＝沿用工作流当前值' + (options && options.auto ? '' : '') + '）';
+  }).catch(function (error) {
+    if (note !== null) note.textContent = '读取失败：' + error.message;
+  });
+}
 function bizAddCard() {
   var list = document.getElementById('biz-list');
   if (list === null) return;
@@ -2064,6 +2127,11 @@ document.addEventListener('click', function (event) {
   if (el.id === 'biz-save') { bizSave(); return; }
   if (el.id === 'biz-add') { bizAddCard(); return; }
   if (el.id === 'kind-add') { bizAddKind(); return; }
+  if (el.getAttribute && el.getAttribute('data-params-load') !== null) {
+    var host = el.closest ? el.closest('.bizcard') : null;
+    if (host !== null) bizLoadParams(host);
+    return;
+  }
   var kindId = el.getAttribute && el.getAttribute('data-kind-remove');
   if (kindId) {
     if (!confirm('删除业务类「' + kindId + '」？（仍被业务配置引用时会拒绝）')) return;
@@ -2091,6 +2159,18 @@ document.addEventListener('click', function (event) {
       location.reload();
     }).catch(function (error) { bizNote('登记失败：' + error.message, true); });
   }
+});
+// 换了工作流 → 参数区跟着变（卡片里的下拉 change 事件冒泡到这里统一处理）
+document.addEventListener('change', function (event) {
+  var el = event.target;
+  if (!el || !el.getAttribute || el.getAttribute('data-field') !== 'workflow') return;
+  var card = el.closest ? el.closest('.bizcard') : null;
+  if (card !== null) bizLoadParams(card, { auto: true });
+});
+// 首屏：已有工作流的卡片自动读一次参数（这样打开页面就能看到该工作流真实的可调项）
+Array.prototype.slice.call(document.querySelectorAll('#biz-list .bizcard')).forEach(function (card) {
+  var select = card.querySelector('[data-field="workflow"]');
+  if (select !== null && String(select.value || '').trim().length > 0) bizLoadParams(card, { auto: true });
 });
 </script>`
   return pageShell('ComfyUI 工作台 · 业务配置', body, { extraCss: `${BUSINESS_CSS}${TABS_CSS}`, wrapClass: 'wide' })

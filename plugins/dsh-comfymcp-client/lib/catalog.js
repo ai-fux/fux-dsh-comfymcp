@@ -19,6 +19,7 @@ import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 import { createRunExecutor, distributeArtifacts } from './runcore.js'
 import { createBusinessStore, DEFAULT_BUSINESS_KINDS, inferBusiness, matchBusiness, extractBusinessParams } from './business.js'
+import { createDevLog } from './devlog.js'
 
 
 const REMOTE_TOOL_LIST = [
@@ -102,13 +103,32 @@ function readLocalGraph(bridge, workflow) {
   return null
 }
 
-export function createTools({ define, bridge, askUser, business = null }) {
+export function createTools({ define, bridge, askUser, business = null, devLog = null, devMode = false }) {
   const businessStore = business
+  const log = devLog ?? createDevLog({ dataDir: bridge?.config?.dataDir, devMode })
+  // 每个工具的异常都进开发日志：开发模式下模型可直接读报告定位问题；非开发模式仅留档供反馈
+  const defineTool = (options) => define({
+    ...options,
+    execute: async (args, exec) => {
+      try {
+        return await options.execute(args, exec)
+      } catch (error) {
+        log.add({
+          level: 'error',
+          source: 'tool',
+          tool: options.name,
+          message: error instanceof Error ? error.message : String(error),
+          detail: error instanceof Error ? (error.stack ?? '') : String(error),
+        })
+        throw error
+      }
+    },
+  })
   const tools = []
   const executeRun = createRunExecutor({ bridge })
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_status',
       description:
         'Probe the comfy-mcp integration: MCP host process, comfy-mcp service reachability, ComfyUI snapshot, and whether the server-side unload-model plugin is available. ' +
@@ -126,7 +146,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_discover',
       description:
         'Inspect the workflow workspace and the remote template library: local workflow files under the configured directories plus remote saved workflows (list_workflows), optionally filtered by a query. ' +
@@ -177,7 +197,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_business',
       description:
         '业务配置（开工第一步，省 token 的关键）：把「跑过 / 加载过」的工作流按业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）沉淀成配置，后续会话用自然语言直接命中，' +
@@ -302,7 +322,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_analyze_workflow',
       description:
         'Turn a requirement plus a candidate graph into an analysis and a tailored form draft: fetches the template graph (workflowId) or accepts an inline graph, reads node declarations, and derives form fields (prompts, seeds, numeric params, model choices). ' +
@@ -370,7 +390,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_push_form',
       description:
         'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). ' +
@@ -491,7 +511,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_apply_form',
       description:
         'Apply form answers onto the graph (custom text wins, seed re-roll honored), then validate the runnable graph remotely. ' +
@@ -542,7 +562,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_run_workflow',
       description:
         'Save the graph into the workflow workspace subdirectory (mandatory, every run is traceable), optionally integrate the UnloadAllModels node when config enables it and the server supports it, run remotely, wait for completion, and return artifacts with local download paths. ' +
@@ -569,7 +589,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_fetch_artifacts',
       description:
         'Download artifact refs (the artifacts[] entries a previous run returned) into the local artifacts dir and return their absolute paths for echo/preview. ' +
@@ -593,7 +613,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_files',
       description:
         'Manage the plugin-owned file space: list managed files (local artifacts dir, MinIO or Aliyun OSS depending on the storage setting) with key/size/kind and an access url. ' +
@@ -623,7 +643,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_workflow_pull',
       description:
         'Pull a workflow file from the remote template library (comfymcp_discover remote entries) into the local workflow workspace, making it editable/inspectable offline. ' +
@@ -655,7 +675,7 @@ export function createTools({ define, bridge, askUser, business = null }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_call_remote',
       description:
         `Escape hatch: invoke any remote tool of the comfy-mcp service verbatim (${REMOTE_TOOL_LIST.join(', ')} among others; list with list_remote_tools via this tool's sibling status info). ` +
@@ -677,6 +697,41 @@ export function createTools({ define, bridge, askUser, business = null }) {
           tool: args.tool,
           data,
         }
+      },
+    }),
+  )
+
+  tools.push(
+    defineTool({
+      name: 'comfymcp_dev',
+      description:
+        '开发模式工具（插件自查自修）：开发模式（配置 devMode）开启时，允许定位并修复插件源码（plugins/dsh-comfymcp-client/**）、把结论记录到日志；**未开启时严禁修改任何插件源码**，只能按插件规则执行并把问题记录/转述给用户。' +
+        'action=report 读最近异常报告（按级别/来源汇总 + 最近的错误明细 + 复现线索）；action=note 记录一条发现（message 必填，level 可选 info/warn/error）；action=clear 清空日志。' +
+        'Answers { ok, devMode, report? | entry?, guidance }。',
+      parameters: {
+        action: { type: 'string', description: 'report（默认）| note | clear' },
+        message: { type: 'string', description: 'action=note 时的发现描述（必填）' },
+        level: { type: 'string', description: 'action=note 时的级别：info（默认）| warn | error' },
+        limit: { type: 'number', description: 'report/note 返回的条数上限（默认 40）' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+      },
+      async execute(args = {}) {
+        const action = String(args.action ?? 'report').trim() || 'report'
+        if (action === 'clear') {
+          log.clear()
+          return { ok: true, devMode, action, guidance: '开发日志已清空。' }
+        }
+        if (action === 'note') {
+          const message = String(args.message ?? '').trim()
+          if (message.length === 0) return { ok: false, devMode, action, error: 'note 需要 message' }
+          const entry = log.add({ level: String(args.level ?? 'info'), source: 'model', message })
+          return { ok: true, devMode, action, entry, guidance: log.report({ limit: 1 }).guidance }
+        }
+        const report = log.report({ limit: Number(args.limit) || 40 })
+        return { ok: true, devMode, action: 'report', report, guidance: report.guidance }
       },
     }),
   )

@@ -385,6 +385,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 dataDir: text(config.dataDir),
                 quickCommands: text(config.quickCommands),
                 autoAcceptForm: config.autoAcceptForm === true,
+              devMode: config.devMode === true,
                 autoAcceptFormSec: text(config.autoAcceptFormSec),
                 downloadDir: text(config.downloadDir),
                 runTimeoutMin: text(config.runTimeoutMin),
@@ -459,6 +460,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             homeDir: draft.homeDir,
             quickCommands: draft.quickCommands,
             autoAcceptForm: draft.autoAcceptForm === true,
+            devMode: draft.devMode === true,
             autoAcceptFormSec: draft.autoAcceptFormSec,
             downloadDir: draft.downloadDir,
             runTimeoutMin: draft.runTimeoutMin,
@@ -488,6 +490,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 quickCommands: text(applied.quickCommands),
               autoAcceptForm: applied.autoAcceptForm === true,
               autoAcceptFormSec: text(applied.autoAcceptFormSec),
+              devMode: applied.devMode === true,
                 downloadDir: text(applied.downloadDir),
                 runTimeoutMin: text(applied.runTimeoutMin),
               }
@@ -691,6 +694,18 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             }),
             h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间；缺省 30 秒（最少 1 秒，非法值按 30 秒处理），仅开关开启时生效' },
               h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } })),
+          ),
+
+          h(SettingsSection, {
+            title: '开发模式',
+            description: '开启后允许大模型在交互中自主排查插件问题：读开发日志报告（记录工具异常/运行失败）、定位 plugins/dsh-comfymcp-client 源码并当场修复。关闭（默认）时严禁修改任何插件源码，必须遵循插件规则执行，只能把问题记录并转述给你。',
+          },
+            h(SwitchRow, {
+              label: '允许大模型自查自修插件（开发模式）',
+              checked: draft.devMode === true,
+              onChange: function (value) { edit('devMode', value) },
+            }),
+            h(Hint, { hint: '开发日志：<数据目录>/dev-log.jsonl；模型侧用 comfymcp_dev（action=report/note/clear）读取与记录。', always: true }),
           ),
 
           h('div', { className: 'dshmcp-row' },

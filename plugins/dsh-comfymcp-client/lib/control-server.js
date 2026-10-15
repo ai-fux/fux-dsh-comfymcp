@@ -116,12 +116,15 @@ function sendMedia(response, bytes, contentType, rangeHeader) {
 export function createControlServer(options = {}) {
   const methods = options.methods
   const logger = options.logger ?? console
+  const devLog = options.devLog ?? null
   const host = options.host ?? DEFAULT_CONTROL_HOST
   const requestedPort = options.port ?? DEFAULT_CONTROL_PORT
   const portWindow = options.portWindow ?? CONTROL_PORT_WINDOW
   const token = options.token ?? ''
   const version = options.version ?? '0.0.0'
   const log = options.log ?? (() => {})
+  // 控制端点异常统一经 logger.devLog 进开发日志（未接开发日志时静默）
+  const loggerWithDevLog = devLog === null ? logger : { ...logger, devLog: (entry) => devLog.add(entry) }
 
   let server = null
   let actualPort = 0
@@ -138,7 +141,10 @@ export function createControlServer(options = {}) {
       const attempt = await new Promise((resolve) => {
         const candidate = createServer((request, response) => {
           handle(request, response).catch((error) => {
-            logger.error?.(`[dsh-comfymcp] control endpoint error: ${error instanceof Error ? error.message : String(error)}`)
+            const message = error instanceof Error ? error.message : String(error)
+            loggerWithDevLog.error?.(`[dsh-comfymcp] control endpoint error: ${message}`)
+            // 控制端点异常也进开发日志（开发模式下模型据此定位页面/接口问题）
+            loggerWithDevLog.devLog?.({ level: 'error', source: 'control', where: `${request.method} ${request.url}`, message, detail: error instanceof Error ? (error.stack ?? '') : '' })
             if (!response.headersSent) sendJson(response, 500, { ok: false, error: { code: 'internal', message: 'internal error' } }, undefined)
             else response.destroy()
           })
@@ -440,6 +446,10 @@ export function createControlServer(options = {}) {
       }
       if (pathname === '/api/business/kind/remove') {
         sendJson(response, 200, { ok: true, value: await methods.removeBusinessKind(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/schema') {
+        sendJson(response, 200, { ok: true, value: await methods.businessSchema(payload) }, allowedOrigin)
         return
       }
       if (pathname === '/api/business/list') {

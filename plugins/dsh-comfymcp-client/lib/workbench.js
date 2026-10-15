@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
-import { createBusinessStore, BUSINESS_KINDS, businessLabel, inferBusiness, matchBusiness } from './business.js'
+import { createBusinessStore, BUSINESS_KINDS, businessLabel, extractBusinessParamFields, inferBusiness, matchBusiness } from './business.js'
 import { parseQuickCommands, buildQuickRerun, applyBatchSize } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { createRunDaemon, summarizeRun } from './rund.js'
@@ -270,13 +270,23 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
   const businessStore = business ?? createBusinessStore({ dataDir: config.dataDir })
   const remote = createRemoteSource(bridge)
 
-  /** 可选工作流名（本地文件词干 + 远端模板 id），供业务配置页下拉。 */
-  const knownWorkflowNames = async () => {
-    const names = new Set()
+  /**
+   * 可选工作流候选（业务配置页用）：合并四个来源，避免「没有数据」——
+   * ① 跑过的（运行记录，最贴用户预期）② 本地工作流文件 ③ 服务端（我的工作流 / 模板库）
+   * ④ 已在业务配置里引用过的。每项带 origin，页面按来源分组展示。
+   */
+  const knownWorkflows = async () => {
+    const seen = new Map()
+    const add = (name, origin) => {
+      const value = String(name ?? '').trim()
+      if (value.length === 0 || seen.has(value)) return
+      seen.set(value, origin)
+    }
+    for (const run of bridge.listRuns(80)) add(run?.name, '跑过的')
     for (const dir of config.workflowDirs ?? []) {
       try {
         for (const file of readdirSync(dir)) {
-          if (/\.json$/i.test(file)) names.add(file.replace(/\.json$/i, ''))
+          if (/\.json$/i.test(file)) add(file.replace(/\.json$/i, ''), '本地文件')
         }
       } catch {
         // 目录不存在/不可读：跳过
@@ -284,14 +294,17 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     }
     try {
       const groups = tabGroups(await remote.remoteList())
-      for (const page of [...groups.mine, ...groups.library]) {
-        const name = String(page?.name ?? '').trim()
-        if (name.length > 0) names.add(name)
-      }
+      for (const page of groups.mine) add(page?.name, '我的工作流')
+      for (const page of groups.library) add(page?.name, '模板库')
     } catch {
-      // 远端不可达：只用本地
+      // 服务端不可达：至少还有「跑过的 / 本地文件」
     }
-    return [...names].sort((a, b) => a.localeCompare(b)).slice(0, 200)
+    for (const profile of businessStore.all()) add(profile.workflow, '已配置')
+    const order = { 跑过的: 0, 我的工作流: 1, 本地文件: 2, 模板库: 3, 已配置: 4 }
+    return [...seen.entries()]
+      .map(([name, origin]) => ({ name, origin }))
+      .sort((a, b) => (order[a.origin] ?? 9) - (order[b.origin] ?? 9) || a.name.localeCompare(b.name))
+      .slice(0, 400)
   }
 
   /**
@@ -466,7 +479,7 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
           profiles,
           kinds,
           candidates: businessCandidates(bridge.listRuns(80), profiles, kinds),
-          workflows: await knownWorkflowNames(),
+          workflows: await knownWorkflows(),
         }),
       }
     },
@@ -482,6 +495,23 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     async saveBusinessKind({ kind } = {}) {
       const outcome = businessStore.saveKind(kind ?? {})
       return { ...outcome, profiles: businessStore.all(), kinds: businessStore.kinds() }
+    },
+
+    /**
+     * 读取某个工作流**实际存在**的可调参数（供业务配置页按所选工作流动态渲染参数区）：
+     * 本地 API 图直接读；远端模板走 get_workflow；读不到就给明确原因，不猜参数。
+     */
+    async businessSchema({ workflow } = {}) {
+      const name = String(workflow ?? '').trim()
+      if (name.length === 0) return { ok: false, error: '缺少工作流名' }
+      const resolved = await resolveGraph(name)
+      if (resolved === null) return { ok: false, error: `工作流 ${name} 不存在（本地与远端模板库都没有）` }
+      return {
+        ok: true,
+        workflow: name,
+        origin: resolved.origin,
+        fields: extractBusinessParamFields(resolved.graph),
+      }
     },
 
     async removeBusinessKind({ id } = {}) {
