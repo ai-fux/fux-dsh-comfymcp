@@ -12,12 +12,13 @@
  *   comfymcp_files           插件自有文件目录管理（本地/MinIO/OSS 统一接口）
  *   comfymcp_workflow_pull   从远端模板库拉取工作流文件到本地工作流空间
  */
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, firstPromptText, firstSeed } from './forms.js'
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 import { createRunExecutor, distributeArtifacts } from './runcore.js'
+import { createBusinessStore, inferBusiness, matchBusiness, extractBusinessParams } from './business.js'
 
 
 const REMOTE_TOOL_LIST = [
@@ -58,7 +59,51 @@ function oneLine(value) {
  * 工具目录：七个 comfymcp_* 模型工具 + comfymcp_call_remote 逃生舱。
  * define 注入（生产为 lib/define.js 的本地 defineTool；测试注入捕获桩）。
  */
-export function createTools({ define, bridge, askUser }) {
+/**
+ * 业务配置候选（工具侧）：把已跑过、但该业务类还没登记的运行列出来，提示模型/用户去登记。
+ * 与工作台 businessCandidates 同义，这里只依赖 bridge 的轻量列表。
+ */
+function businessCandidatesOf(bridge, profiles = []) {
+  const runs = typeof bridge?.listRuns === 'function' ? bridge.listRuns(80) : []
+  const grouped = new Map()
+  for (const run of runs) {
+    const graph = run?.form?.graph
+    if (graph === undefined || graph === null) continue
+    const business = inferBusiness(graph)
+    if (business === 'other') continue
+    const workflow = String(run.name ?? '').trim()
+    if (workflow.length === 0) continue
+    const profile = profiles.find((entry) => entry.business === business) ?? null
+    if (profile !== null && profile.workflow === workflow) continue
+    const key = `${business}:${workflow}`
+    const found = grouped.get(key)
+    if (found === undefined) grouped.set(key, { business, workflow, runs: 1, current: profile === null ? null : profile.workflow })
+    else found.runs += 1
+  }
+  return [...grouped.values()].slice(0, 8)
+}
+
+/** 读本地工作流文件（本地主目录优先）：只在 API 格式时返回图，UI 格式交给页面/工作台转换。 */
+function readLocalGraph(bridge, workflow) {
+  const name = String(workflow ?? '').trim()
+  if (name.length === 0) return null
+  const stem = safeFileStem(name.replace(/^(library|saved):/, '').replace(/\.json$/i, ''))
+  for (const dir of bridge?.config?.workflowDirs ?? []) {
+    try {
+      const file = join(dir, `${stem}.json`)
+      if (!existsSync(file)) continue
+      const parsed = JSON.parse(readFileSync(file, 'utf8'))
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed.nodes)) return null
+      return parsed
+    } catch {
+      // 读不动就当作没有（远端模板路径兜底）
+    }
+  }
+  return null
+}
+
+export function createTools({ define, bridge, askUser, business = null }) {
+  const businessStore = business
   const tools = []
   const executeRun = createRunExecutor({ bridge })
 
@@ -126,6 +171,104 @@ export function createTools({ define, bridge, askUser }) {
           local,
           remote,
           ...(remoteError.length > 0 ? { remoteError } : {}),
+        }
+      },
+    }),
+  )
+
+  tools.push(
+    define({
+      name: 'comfymcp_business',
+      description:
+        '业务配置（开工第一步，省 token 的关键）：把「跑过 / 加载过」的工作流按业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）沉淀成配置，后续会话用自然语言直接命中，' +
+        '命中就用该配置里的工作流与默认参数继续，**不要**再去 comfymcp_discover 捞模板或 list_models 枚举模型。' +
+        '用法：action=match 传用户原话 text（默认）→ 命中返回 matched{workflow, params, keywords}，本地 API 格式工作流还会带上 graph（可直接喂给 comfymcp_analyze_workflow 的 graph，省一次取图）；未命中返回 matched:null，再走完整探索流程。' +
+        '跑通后可用 action=register 把这次的工作流登记回来（可带 graph 自动判断业务类），下次就命中。action=list 看全部配置，action=save/remove 手工增删。' +
+        'Answers { ok, action, matched|null, profiles[], candidates[], nextSteps }.',
+      parameters: {
+        action: { type: 'string', description: 'match（默认）| list | register | save | remove' },
+        text: { type: 'string', description: '用户原话（action=match 时用于自然语言匹配业务类）' },
+        business: { type: 'string', description: '业务类 id：text2img/image2img/text2video/image2video/edit/upscale/audio/other' },
+        workflow: { type: 'string', description: '工作流名（本地文件词干或远端模板 id）' },
+        graph: { type: 'json', description: '可选：内联图，用于 register 时自动判断业务类并摘取默认参数' },
+        params: { type: 'json', description: '可选：该业务类的默认参数覆盖（steps/width/height/batch_size/model…）' },
+        keywords: { type: 'string', description: '可选：自定义触发词，逗号分隔' },
+        notes: { type: 'string', description: '可选：备注' },
+        id: { type: 'string', description: 'action=remove 时的配置 id（等于业务类）' },
+        includeGraph: { type: 'boolean', description: 'match 是否附带本地图（默认 true；只是想确认命中可设 false）' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+      },
+      async execute(args = {}) {
+        const action = String(args.action ?? 'match').trim() || 'match'
+        const store = businessStore !== null ? businessStore : createBusinessStore({ dataDir: bridge.config?.dataDir })
+        if (action === 'list') {
+          const profiles = store.all()
+          return { ok: true, action, matched: null, profiles, candidates: businessCandidatesOf(bridge, profiles), nextSteps: '命中后直接执行该工作流；未配置的业务类先跑一次再用 register 登记。' }
+        }
+        if (action === 'remove') {
+          const removed = store.remove(args.id ?? args.business)
+          return { ok: removed, action, matched: null, profiles: store.all(), candidates: businessCandidatesOf(bridge, store.all()) }
+        }
+        if (action === 'save' || action === 'register') {
+          const graph = args.graph ?? null
+          const business = String(args.business ?? '').trim() || (graph === null ? 'other' : inferBusiness(graph))
+          const workflow = String(args.workflow ?? '').trim()
+          if (workflow.length === 0) return { ok: false, action, error: 'register/save 需要 workflow' }
+          const saved = store.save({
+            id: business,
+            business,
+            workflow,
+            source: String(args.source ?? 'saved'),
+            params: args.params ?? (graph === null ? {} : extractBusinessParams(graph)),
+            keywords: args.keywords,
+            notes: args.notes ?? (action === 'register' ? '由一次成功的运行登记' : ''),
+            auto: false,
+          })
+          return {
+            ok: true,
+            action,
+            matched: saved,
+            profiles: store.all(),
+            nextSteps: `已登记：${business} → ${workflow}。下次同类需求会直接命中，不再检索模板库。`,
+          }
+        }
+        // 默认：自然语言匹配
+        const profiles = store.all()
+        const hit = matchBusiness(String(args.text ?? ''), profiles)
+        if (hit === null) {
+          return {
+            ok: true,
+            action: 'match',
+            matched: null,
+            profiles,
+            candidates: businessCandidatesOf(bridge, profiles),
+            nextSteps: '没有命中业务配置：按技能走完整流程（discover → analyze → 表单 → 运行），跑通后用 action=register 登记回来。',
+          }
+        }
+        const local = args.includeGraph === false ? null : readLocalGraph(bridge, hit.profile.workflow)
+        store.touch(hit.profile.id)
+        return {
+          ok: true,
+          action: 'match',
+          matched: {
+            id: hit.profile.id,
+            business: hit.profile.business,
+            label: hit.profile.label,
+            workflow: hit.profile.workflow,
+            params: hit.profile.params ?? {},
+            keywords: hit.profile.keywords ?? [],
+            notes: hit.profile.notes ?? '',
+            score: hit.score,
+            hits: hit.hits,
+          },
+          ...(local === null ? {} : { graph: local }),
+          profiles: store.all(),
+          nextSteps: local === null
+            ? `命中「${hit.profile.label}」→ 直接用 comfymcp_analyze_workflow 传 workflowId="${hit.profile.workflow}"（远端模板），跳过 discover 与模型枚举。`
+            : `命中「${hit.profile.label}」→ 已附上本地图 graph，直接把它与需求一起喂给 comfymcp_analyze_workflow，不要再检索模板库。`,
         }
       },
     }),

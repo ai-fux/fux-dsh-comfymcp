@@ -13,8 +13,9 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, artifactsRunsHtml } from './wfpage.js'
+import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
+import { createBusinessStore, BUSINESS_KINDS, businessLabel, inferBusiness, matchBusiness } from './business.js'
 import { parseQuickCommands, buildQuickRerun, applyBatchSize } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { createRunDaemon, summarizeRun } from './rund.js'
@@ -23,6 +24,40 @@ import { matchRun, matchRunQuery, parseQuery } from './artifactsearch.js'
 import { safeFileStem } from './bridge.js'
 import { apiGraphFromUi, hasSubgraphs, isUiWorkflow } from './wfgraph.js'
 const REMOTE_TTL_MS = 5 * 60 * 1000
+
+/**
+ * 「一键登记」候选：把已经跑过、但当前业务类还没登记（或主配置是别的工作流）的运行列出来，
+ * 供工作台手动登记——这就是「加载过的数据自动配置」的手动兜底入口。
+ */
+export function businessCandidates(runs = [], profiles = []) {
+  const grouped = new Map()
+  for (const run of runs) {
+    const graph = run?.form?.graph
+    if (graph === undefined || graph === null) continue
+    const business = inferBusiness(graph)
+    if (business === 'other') continue
+    const workflow = String(run.name ?? '').trim()
+    if (workflow.length === 0) continue
+    const profile = profiles.find((entry) => entry.business === business) ?? null
+    if (profile !== null && profile.workflow === workflow) continue
+    const key = `${business}:${workflow}`
+    const found = grouped.get(key)
+    if (found === undefined) {
+      grouped.set(key, {
+        business,
+        label: businessLabel(business),
+        workflow,
+        runs: 1,
+        lastAt: run.startedAt ?? null,
+        current: profile === null ? null : profile.workflow,
+      })
+    } else {
+      found.runs += 1
+      if ((run.startedAt ?? 0) > (found.lastAt ?? 0)) found.lastAt = run.startedAt
+    }
+  }
+  return [...grouped.values()].sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0)).slice(0, 12)
+}
 
 function isPlainStem(name) {
   const stem = String(name ?? '').trim()
@@ -228,11 +263,36 @@ async function chainSerialReruns({ daemon, lastRun, entry, count, name, subdir, 
   }
 }
 
-export function createWorkbenchMethods({ bridge, config, persistWrite = null }) {
+export function createWorkbenchMethods({ bridge, config, persistWrite = null, business = null }) {
   const executeRun = createRunExecutor({ bridge })
   const daemon = createRunDaemon({ bridge, executeRun })
   const tagStore = createTagStore({ dataDir: config.dataDir })
+  const businessStore = business ?? createBusinessStore({ dataDir: config.dataDir })
   const remote = createRemoteSource(bridge)
+
+  /** 可选工作流名（本地文件词干 + 远端模板 id），供业务配置页下拉。 */
+  const knownWorkflowNames = async () => {
+    const names = new Set()
+    for (const dir of config.workflowDirs ?? []) {
+      try {
+        for (const file of readdirSync(dir)) {
+          if (/\.json$/i.test(file)) names.add(file.replace(/\.json$/i, ''))
+        }
+      } catch {
+        // 目录不存在/不可读：跳过
+      }
+    }
+    try {
+      const groups = tabGroups(await remote.remoteList())
+      for (const page of [...groups.mine, ...groups.library]) {
+        const name = String(page?.name ?? '').trim()
+        if (name.length > 0) names.add(name)
+      }
+    } catch {
+      // 远端不可达：只用本地
+    }
+    return [...names].sort((a, b) => a.localeCompare(b)).slice(0, 200)
+  }
 
   /**
    * 图来源与格式适配：
@@ -393,6 +453,65 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null }) 
       return { html: renderArtifactsHtml({ runs: bridge.listRuns(60), tags: tagStore.all(), token }) }
     },
 
+    /**
+     * 业务配置页（第 5 个 Tab）：把「跑过/加载过」的工作流按业务类沉淀下来，
+     * 后续会话用自然语言直接命中，不再每次去服务端捞模板、枚举模型。
+     */
+    async pageBusiness({ token = '' } = {}) {
+      const profiles = businessStore.all()
+      return {
+        html: renderBusinessHtml({
+          token,
+          profiles,
+          kinds: BUSINESS_KINDS,
+          candidates: businessCandidates(bridge.listRuns(80), profiles),
+          workflows: await knownWorkflowNames(),
+        }),
+      }
+    },
+
+    /** 业务配置读写（工具层与工作台共用同一份存储）。 */
+    async listBusiness() {
+      const profiles = businessStore.all()
+      return { profiles, kinds: BUSINESS_KINDS, candidates: businessCandidates(bridge.listRuns(80), profiles) }
+    },
+
+    async saveBusiness({ profile, profiles } = {}) {
+      const list = Array.isArray(profiles) ? profiles : (profile === undefined || profile === null ? [] : [profile])
+      if (list.length === 0) return { ok: false, error: '缺少业务配置内容' }
+      const saved = []
+      for (const entry of list) {
+        if (entry === null || typeof entry !== 'object') continue
+        saved.push(businessStore.save(entry))
+      }
+      if (saved.length === 0) return { ok: false, error: '没有可保存的业务配置' }
+      return { ok: true, saved, profiles: businessStore.all() }
+    },
+
+    async removeBusiness({ id } = {}) {
+      const removed = businessStore.remove(id)
+      return { ok: removed, profiles: businessStore.all() }
+    },
+
+    /** 登记候选：把某个已跑过的工作流手动登记到指定业务类。 */
+    async registerBusiness({ workflow, business, label, keywords, notes, params } = {}) {
+      const name = String(workflow ?? '').trim()
+      if (name.length === 0) return { ok: false, error: '缺少工作流名' }
+      const kind = String(business ?? '').trim() || inferBusiness(config.businessGraphs?.[name])
+      const saved = businessStore.save({
+        id: kind,
+        business: kind,
+        label,
+        workflow: name,
+        source: 'saved',
+        keywords,
+        notes,
+        params,
+        auto: false,
+      })
+      return { ok: true, profile: saved, profiles: businessStore.all() }
+    },
+
     async listWorkflows() {
       return tabGroups(await remote.remoteList())
     },
@@ -449,6 +568,16 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null }) 
       const runName = typeof name === 'string' && name.trim().length > 0 ? name : stem
       // 模板（远端）跑过即落库到「我的工作流」，之后从本地文件解析（已存在则沿用上次参数）
       if (resolved.origin === 'remote') persistLocalGraph(runName, resolved.graph)
+      // 业务配置自动登记：这次跑的工作流按推断出的业务类沉淀下来，后续会话自然语言即可直接命中
+      try {
+        businessStore.autoRegister({
+          workflow: runName,
+          graph: resolved.graph,
+          source: resolved.origin === 'remote' ? 'library' : 'saved',
+        })
+      } catch (error) {
+        console.error(`[dsh-comfymcp-client] 业务配置自动登记失败: ${String(error)}`)
+      }
       return daemon.start({
         workflow: runName,
         name: runName,

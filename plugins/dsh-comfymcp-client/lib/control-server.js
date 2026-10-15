@@ -291,6 +291,8 @@ export function createControlServer(options = {}) {
         outcome = methods.pageLibrary !== undefined ? await methods.pageLibrary({ token: queryToken }) : { error: 'library page unavailable' }
       } else if (pathname === '/ui/commands') {
         outcome = methods.pageCommands !== undefined ? await methods.pageCommands({ token: queryToken }) : { error: 'commands page unavailable' }
+      } else if (pathname === '/ui/business') {
+        outcome = methods.pageBusiness !== undefined ? await methods.pageBusiness({ token: queryToken }) : { error: 'business page unavailable' }
       } else if (pathname.startsWith('/ui/wf/')) {
         const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
         outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
@@ -411,6 +413,31 @@ export function createControlServer(options = {}) {
       }
       sendJson(response, 200, { ok: true, value: await methods.queryArtifacts(body.payload ?? {}) }, allowedOrigin)
       return
+    }
+    // 业务配置（第 5 个 Tab）：列表 / 保存 / 删除 / 登记候选
+    if (pathname.startsWith('/api/business/') && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const payload = body.payload ?? {}
+      if (pathname === '/api/business/save') {
+        sendJson(response, 200, { ok: true, value: await methods.saveBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/remove') {
+        sendJson(response, 200, { ok: true, value: await methods.removeBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/register') {
+        sendJson(response, 200, { ok: true, value: await methods.registerBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/list') {
+        sendJson(response, 200, { ok: true, value: await methods.listBusiness(payload) }, allowedOrigin)
+        return
+      }
     }
     if (pathname === '/api/artifacts/remove-batch' && request.method === 'POST') {
       const body = await jsonBody()

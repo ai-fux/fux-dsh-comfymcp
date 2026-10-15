@@ -111,6 +111,60 @@ function makeWorkbench(bridge, config = {}, extra = {}) {
   })
 }
 
+describe('业务配置（首次生成的工作流选择优化）', () => {
+  it('pageBusiness 渲染业务配置页；saveBusiness 批量保存 + 候选登记', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    // 先制造一条「跑过但没登记」的运行（带图，能推断业务类）
+    bridge.recordRun({
+      id: 'run-1',
+      name: 'beach',
+      state: 'completed',
+      startedAt: Date.now(),
+      form: { graph: { '1': { class_type: 'LoadImage', inputs: {} }, '2': { class_type: 'KSampler', inputs: {} }, '3': { class_type: 'SaveImage', inputs: {} } } },
+    })
+    const page = await workbench.pageBusiness({ token: 'tk' })
+    expect(page.html).toContain('id="biz-list"')
+    expect(page.html).toContain('id="biz-save"')
+    expect(page.html).toContain('业务配置')
+    const listed = await workbench.listBusiness()
+    expect(listed.candidates.map((entry) => entry.business)).toContain('image2img')
+
+    const saved = await workbench.saveBusiness({
+      profiles: [
+        { id: 'text2img', business: 'text2img', workflow: 'beach', params: { steps: 8 }, keywords: '画，出图' },
+        { id: 'image2img', business: 'image2img', workflow: 'beach' },
+      ],
+    })
+    expect(saved.ok).toBe(true)
+    expect(saved.profiles.length).toBe(2)
+    expect(saved.profiles[0]).toMatchObject({ workflow: 'beach', params: { steps: 8 } })
+
+    // 登记候选后，该业务类的主工作流变成用户指定的那条
+    const registered = await workbench.registerBusiness({ workflow: 'beach', business: 'text2video', label: '文生视频' })
+    expect(registered.ok).toBe(true)
+    expect(registered.profiles.find((profile) => profile.id === 'text2video')?.workflow).toBe('beach')
+    expect(await workbench.registerBusiness({})).toMatchObject({ ok: false })
+
+    const removed = await workbench.removeBusiness({ id: 'text2video' })
+    expect(removed.ok).toBe(true)
+    expect(removed.profiles.some((profile) => profile.id === 'text2video')).toBe(false)
+  })
+
+  it('运行页跑过一次即自动登记业务配置（下次会话可自然语言直接命中）', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    const started = await workbench.runPage({ workflow: 'beach' })
+    expect(started.ok).not.toBe(false)
+    const profiles = (await workbench.listBusiness()).profiles
+    expect(profiles.length).toBe(1)
+    expect(profiles[0].workflow).toBe('beach')
+    expect(profiles[0].auto).toBe(true)
+    // beach 图里是 KSampler + CLIPTextEncode → 文生图
+    expect(profiles[0].business).toBe('text2img')
+  })
+})
+
 describe('workbench pages', () => {
   it('index lists workflow files; pageWorkflow builds the descriptor html', async () => {
     const workbench = makeWorkbench(await makeBridge())

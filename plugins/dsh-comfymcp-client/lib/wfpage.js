@@ -353,6 +353,7 @@ export function workbenchTabs(active, token = '') {
 ${item('mine', '我的工作流', '/ui', typeof active === 'object' ? active.mine : undefined)}
 ${item('library', '模板', '/ui/library', typeof active === 'object' ? active.library : undefined)}
 ${item('artifacts', '成果物', '/ui/artifacts', typeof active === 'object' ? active.artifacts : undefined)}
+${item('business', '业务配置', '/ui/business', typeof active === 'object' ? active.business : undefined)}
 ${item('commands', '指令', '/ui/commands', typeof active === 'object' ? active.commands : undefined)}
 </nav>`
 }
@@ -1869,3 +1870,184 @@ const COMMANDS_CSS = `
 .cmdhelp{margin-top:10px;font-size:12px;line-height:1.5}
 .cmdhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
 `
+
+const BUSINESS_CSS = `
+.biztoolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px}
+.biztoolbar .muted{flex:1;min-width:240px}
+.bizcands{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.bizcands[hidden]{display:none}
+.bizcands .candrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;font-size:12px;border-top:1px solid var(--line)}
+.bizcands .candrow:first-of-type{border-top:0}
+.bizcands .candrow .biz{font-weight:600;color:var(--text)}
+#biz-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px;align-items:start;justify-content:start}
+#biz-list .card.muted{grid-column:1/-1}
+.bizcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.bizhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.bizhead .biztitle{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bizhead .grow{flex:1}
+.bizhead .chip{font-size:11px}
+.bizfields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px}
+.bizfields .f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.bizfields .f>span{font-size:12px;color:var(--muted)}
+.bizfields .f.narrow{max-width:170px}
+.bizfields input,.bizfields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:13px}
+.bizparams{display:contents}
+.bizfoot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+.bizfoot .grow{flex:1}
+.bizhelp{margin-top:10px;font-size:12px;line-height:1.5}
+.bizhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
+`
+
+/**
+ * 业务配置页（第 5 个 Tab）：一次运行＝一张业务卡。
+ * 把「跑过/加载过」的工作流按业务类固定下来，后续会话用自然语言直接命中，
+ * 不再每次去服务端捞模板、枚举模型挑最优解（省 token）。
+ */
+export function renderBusinessHtml({ profiles = [], kinds = [], candidates = [], workflows = [], token = '' } = {}) {
+  const kindOptions = (current) => kinds
+    .map((kind) => `<option value="${escapeHtml(kind.id)}"${kind.id === current ? ' selected' : ''}>${escapeHtml(kind.label)}</option>`)
+    .join('')
+  const wfOptions = workflows
+    .map((name) => `<option value="${escapeHtml(name)}"></option>`)
+    .join('')
+  const paramKeys = [
+    ['steps', '采样步数'],
+    ['width', '宽'],
+    ['height', '高'],
+    ['batch_size', '生成数'],
+    ['model', '模型'],
+  ]
+  const card = (profile, index) => {
+    const params = profile.params ?? {}
+    return `<section class="bizcard" data-biz="${escapeHtml(profile.id ?? String(index))}">
+<div class="bizhead">
+<span class="biztitle">${escapeHtml(profile.label ?? businessLabelOf(kinds, profile.business))}</span>
+<span class="chip">${escapeHtml(profile.business ?? 'other')}</span>
+${profile.auto === false ? '<span class="chip">手动</span>' : '<span class="chip">自动登记</span>'}
+<span class="grow"></span>
+<button type="button" class="mini danger" data-biz-remove="${escapeHtml(profile.id ?? '')}">✕ 删除</button>
+</div>
+<div class="bizfields">
+<label class="f"><span>业务类</span><select data-field="business">${kindOptions(profile.business)}</select></label>
+<label class="f"><span>显示名</span><input type="text" data-field="label" value="${escapeHtml(profile.label ?? '')}" placeholder="文生图"></label>
+<label class="f"><span>首选工作流</span><input type="text" data-field="workflow" list="biz-wf-names" value="${escapeHtml(profile.workflow ?? '')}" placeholder="z-image-turbo"></label>
+<label class="f"><span>触发词（逗号分隔）</span><input type="text" data-field="keywords" value="${escapeHtml((profile.keywords ?? []).join('，'))}" placeholder="画，生成图片，出图"></label>
+<span class="bizparams">
+${paramKeys.map(([key, label]) => `<label class="f narrow"><span>${label}</span><input type="text" data-param="${key}" value="${escapeHtml(params[key] ?? '')}" placeholder="沿用工作流"></label>`).join('\n')}
+</span>
+<label class="f"><span>备注</span><input type="text" data-field="notes" value="${escapeHtml(profile.notes ?? '')}" placeholder="例如：出图走 turbo，8 步"></label>
+</div>
+<div class="bizfoot"><span>用过 ${Number(profile.uses) || 0} 次</span><span class="grow"></span>
+<span>${profile.lastUsedAt ? `最近 ${escapeHtml(String(profile.lastUsedAt).slice(0, 19).replace('T', ' '))}` : '还没用过'}</span></div>
+</section>`
+  }
+  const cards = profiles.map((profile, index) => card(profile, index)).join('\n')
+  const candRows = candidates
+    .map((candidate) => `<div class="candrow"><span class="biz">${escapeHtml(candidate.label)}</span>
+<span>${escapeHtml(candidate.workflow)}</span><span class="muted">跑过 ${candidate.runs} 次${candidate.current === null ? '' : ` · 当前登记 ${escapeHtml(candidate.current)}`}</span>
+<span class="grow"></span>
+<button type="button" class="mini" data-biz-register="${escapeHtml(candidate.workflow)}" data-biz-kind="${escapeHtml(candidate.business)}">登记为「${escapeHtml(candidate.label)}」</button></div>`)
+    .join('')
+  const body = `
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('business', token)}</div>
+<div class="biztoolbar">
+<button type="button" class="mini" id="biz-add">＋ 新增业务配置</button>
+<button type="button" class="primary" id="biz-save">保存配置</button>
+<span class="muted" id="biz-note">已装 ${profiles.length} 条 · 命中后模型直接执行该工作流，跳过模板检索与模型枚举</span>
+</div>
+<div class="bizcands" id="biz-cands"${candidates.length > 0 ? '' : ' hidden'}>
+<div class="muted">已跑过但还没登记的工作流（点「登记」即可成为该业务类的首选）：</div>
+${candRows}
+</div>
+<datalist id="biz-wf-names">${wfOptions}</datalist>
+<div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
+<div class="bizhelp muted">每条配置＝一个业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）。
+模型在开工前会先用 <code>comfymcp_business</code> 按你说的话匹配：命中就直接用这张配置里的工作流与参数，
+不再去模板库里大海捞针；没命中才走完整探索流程，并把跑通的结果自动登记回来。</div>
+<script>
+var TOKEN = ${JSON.stringify(token)};
+function api(url, payload) {
+  return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
+}
+function bizCards() { return Array.prototype.slice.call(document.querySelectorAll('#biz-list .bizcard')); }
+function bizValues(card) {
+  var get = function (selector) { return card.querySelector(selector); };
+  var text = function (selector) { var el = get(selector); return el === null ? '' : String(el.value || '').trim(); };
+  var params = {};
+  Array.prototype.slice.call(card.querySelectorAll('[data-param]')).forEach(function (el) {
+    var value = String(el.value || '').trim();
+    if (value.length === 0) return;
+    var key = el.getAttribute('data-param');
+    params[key] = (key === 'steps' || key === 'width' || key === 'height' || key === 'batch_size') && /^-?\\d+$/.test(value) ? Number(value) : value;
+  });
+  var business = text('[data-field="business"]') || 'other';
+  return {
+    id: card.getAttribute('data-biz') || business,
+    business: business,
+    label: text('[data-field="label"]') || business,
+    workflow: text('[data-field="workflow"]'),
+    keywords: text('[data-field="keywords"]').split(/[,，]/).map(function (item) { return item.trim(); }).filter(Boolean),
+    notes: text('[data-field="notes"]'),
+    params: params,
+    source: 'saved',
+    auto: false
+  };
+}
+function bizNote(message, bad) {
+  var note = document.getElementById('biz-note');
+  if (!note) return;
+  note.textContent = message;
+  note.style.color = bad ? 'var(--err)' : '';
+}
+function bizAddCard() {
+  var list = document.getElementById('biz-list');
+  if (list === null) return;
+  var empty = list.querySelector('.card.muted');
+  if (empty !== null) empty.remove();
+  var html = ${JSON.stringify(card({ id: '', business: 'text2img', label: '', workflow: '', keywords: [], params: {}, notes: '', uses: 0, lastUsedAt: null, auto: false }, 0))};
+  var holder = document.createElement('div');
+  holder.innerHTML = html;
+  var node = holder.firstElementChild;
+  if (node !== null) { node.setAttribute('data-biz', ''); list.appendChild(node); }
+}
+function bizSave() {
+  var profiles = bizCards().map(bizValues).filter(function (profile) { return profile.workflow.length > 0; });
+  if (profiles.length === 0) { bizNote('至少填一个「首选工作流」', true); return; }
+  bizNote('保存中…');
+  api('/api/business/save', { profiles: profiles }).then(function (data) {
+    if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '保存失败');
+    bizNote('已保存 ' + profiles.length + ' 条业务配置 · 新会话即可自然语言命中');
+  }).catch(function (error) { bizNote('保存失败：' + error.message, true); });
+}
+document.addEventListener('click', function (event) {
+  var el = event.target;
+  if (el.id === 'biz-save') { bizSave(); return; }
+  if (el.id === 'biz-add') { bizAddCard(); return; }
+  var removeId = el.getAttribute && el.getAttribute('data-biz-remove');
+  if (removeId !== null && removeId !== undefined) {
+    if (removeId.length === 0) {
+      var card = el.closest ? el.closest('.bizcard') : null;
+      if (card !== null) card.remove();
+      return;
+    }
+    if (!confirm('删除这条业务配置？')) return;
+    api('/api/business/remove', { id: removeId }).then(function () { location.reload(); });
+    return;
+  }
+  var registerWorkflow = el.getAttribute && el.getAttribute('data-biz-register');
+  if (registerWorkflow) {
+    api('/api/business/register', { workflow: registerWorkflow, business: el.getAttribute('data-biz-kind') }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '登记失败');
+      location.reload();
+    }).catch(function (error) { bizNote('登记失败：' + error.message, true); });
+  }
+});
+</script>`
+  return pageShell('ComfyUI 工作台 · 业务配置', body, { extraCss: `${BUSINESS_CSS}${TABS_CSS}`, wrapClass: 'wide' })
+}
+
+function businessLabelOf(kinds, id) {
+  const found = (Array.isArray(kinds) ? kinds : []).find((kind) => kind.id === String(id ?? ''))
+  return found === undefined ? String(id ?? '') : found.label
+}

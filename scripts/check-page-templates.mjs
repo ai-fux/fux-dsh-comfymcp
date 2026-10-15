@@ -2,7 +2,8 @@
  * 页面模板体检：确保所有页面渲染函数里的 HTML 模板没有「游离反引号」被提前截断
  * （典型来源：在 HTML 里写 markdown 反引号），并顺带核对关键元素是否存在。
  */
-import { renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, buildPageDescriptor } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, buildPageDescriptor } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { BUSINESS_KINDS } from '../plugins/dsh-comfymcp-client/lib/business.js'
 
 const GRAPH = { '3': { class_type: 'KSampler', inputs: { seed: 1 } } }
 const cases = {
@@ -17,6 +18,13 @@ const cases = {
   commands: renderCommandsHtml({
     commands: [{ name: '抽卡', label: '🎲 抽卡', count: 1, batchMode: 'serial', seed: { mode: 'range', min: 1, max: 4294967295 } }],
     lastRun: { name: 'a', seed: 1 },
+    token: 'tk',
+  }),
+  business: renderBusinessHtml({
+    profiles: [{ id: 'text2img', business: 'text2img', label: '文生图', workflow: 'wf', keywords: ['画'], params: { steps: 8 } }],
+    kinds: BUSINESS_KINDS,
+    candidates: [{ business: 'image2img', label: '图生图', workflow: 'wf2', runs: 1, current: null }],
+    workflows: ['wf', 'wf2'],
     token: 'tk',
   }),
 }
