@@ -129,10 +129,17 @@ const PAGE_CSS = `
 :root{--bg:#f6f7f9;--surface:#ffffff;--text:#1f2329;--muted:#6f7680;--line:#e4e7ec;--accent:#3b6cf0;--accent-weak:#eaf0ff;--ok:#1a7f37;--err:#c0392b;--radius:8px}
 @media (prefers-color-scheme:dark){:root{--bg:#141517;--surface:#1d1f23;--text:#e8eaed;--muted:#9aa1ab;--line:#2e3238;--accent:#6f96ff;--accent-weak:#22304d}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}
-.wrap{max-width:860px;margin:0 auto;padding:20px 16px 48px}
+.wrap{max-width:860px;margin:0 auto;padding:14px 16px 40px}
 /* 宽版页面（成果物画廊 / 指令编辑器）：全宽左对齐，卡片从左侧起排 */
-.wrap.wide{max-width:none;margin:0;padding:20px 24px 48px}
-h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+.wrap.wide{max-width:none;margin:0;padding:14px 20px 40px}
+/* 页头（标题 + 四 Tab）：嵌在 DSH 工作台里时顶部已有同样的 Tab，页内不再重复，
+   只有「在新窗口打开」的独立访问才显示，保证单独打开时仍有导航。 */
+.pagehead{display:none}
+.pagehead.standalone{display:block}
+h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+/* 页面条：一行说明 + 右侧动作（顶部 Tab 由客户端插件提供，页内不再重复标题与 Tab） */
+.pagebar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pagebar-actions{display:flex;gap:6px;flex:0 0 auto}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
 .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}
@@ -197,6 +204,10 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .history .empty{color:var(--muted);font-size:13px}
 `
 
+/** 只在独立窗口（非 iframe）里露出页头与页内 Tab——嵌在 DSH 工作台时顶部已有 Tab。 */
+const FRAME_JS = `if (window.self === window.top) { var ph = document.querySelector('.pagehead'); if (ph) ph.classList.add('standalone'); }
+`
+
 function pageShell(title, body, { extraScript = '', extraCss = '', wrapClass = '' } = {}) {
   const styles = extraCss.length > 0 ? `${PAGE_CSS}${extraCss}` : PAGE_CSS
   const wrap = wrapClass.length > 0 ? `wrap ${wrapClass}` : 'wrap'
@@ -206,7 +217,7 @@ function pageShell(title, body, { extraScript = '', extraCss = '', wrapClass = '
 <title>${escapeHtml(title)}</title>
 <style>${styles}</style></head>
 <body><div class="${wrap}">${body}</div>
-<script>${extraScript}</script></body></html>
+<script>${FRAME_JS}${extraScript}</script></body></html>
 `
 }
 
@@ -996,10 +1007,10 @@ export function renderIndexHtml({ mine = [], library = [], token = '' }) {
 <div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></div>`
   const mineItems = mine.map((page) => (page.origin === 'remote' ? pullButton(page) : pageLink(page))).join('\n')
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs({ mine: mine.length, library: library.length }, token)}
-<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 ·
-<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}</div>
+<div class="sub pagebar">工作流静态页 · 由 dsh-comfymcp-client 生成
+<span class="pagebar-actions"><button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></span></div>
 ${mineItems || '<div class="card">还没有我的工作流：在「模板」里点开任一模板执行一次，或点条目的「⬇ 拉取」保存到本地。</div>'}
 `
   return pageShell('ComfyUI 工作台', body, { extraScript: `var TOKEN = ${JSON.stringify(token)};\n${PAGE_INDEX_JS}`, extraCss: `${INDEX_CSS}${TABS_CSS}` })
@@ -1014,10 +1025,10 @@ export function renderLibraryHtml({ library = [], mine = [], token = '' }) {
 <div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''} · 打开后执行一次即自动保存到「我的工作流」</div></a>`)
     .join('\n')
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs({ mine: mine.length, library: library.length }, token)}
-<div class="sub">模板库共 ${library.length} 个 · 执行过一次后自动落入「我的工作流」；已存在时优先沿用上次运行的参数 ·
-<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}</div>
+<div class="sub pagebar">模板库共 ${library.length} 个 · 执行过一次后自动落入「我的工作流」；已存在时优先沿用上次运行的参数
+<span class="pagebar-actions"><button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></span></div>
 ${items || '<div class="card">模板库暂不可达（服务端未连接或目录为空）。</div>'}
 `
   return pageShell('ComfyUI 工作台 · 模板', body, { extraCss: `${INDEX_CSS}${TABS_CSS}` })
@@ -1418,8 +1429,9 @@ const ARTIFACTS_CSS = `
 .promptRow .arrow{border:0;background:transparent;cursor:pointer;color:var(--muted);padding:0 4px}
 .promptFull{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;max-height:none}
 .promptFull[hidden]{display:none}
-.exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 14px}
-.searchbar{display:flex;flex-direction:column;gap:6px;margin:10px 0 4px}
+.exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px;padding:8px 10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.exportBar #runs-summary{margin-left:auto}
+.searchbar{display:flex;flex-direction:column;gap:6px;margin:0 0 8px}
 .searchbar .srow{display:flex;gap:8px;flex-wrap:wrap}
 .searchbar input[type=text]{flex:1;min-width:220px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 .searchbar select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
@@ -1594,9 +1606,8 @@ ${stack}
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
   const { html: runCards, summary, shown, galleries } = artifactsRunsHtml({ runs, tags, token })
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs('artifacts', token)}
-<div class="sub" id="runs-summary">${summary}</div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('artifacts', token)}</div>
 <form id="search-form" onsubmit="return false" class="searchbar">
 <div class="srow">
 <input type="text" id="q" placeholder='复合检索：fashion | tag:夕阳 param:steps&gt;=25 -tag:废片 prompt:"sunset beach" file:.png'>
@@ -1635,6 +1646,7 @@ ${workbenchTabs('artifacts', token)}
 <button type="button" class="mini danger" id="remove-picked">🗑 删除选中（含磁盘文件）</button>
 <span class="muted" id="pick-count">已选 0 件</span>
 <button type="button" class="mini" id="export-all" title="导出当前列表全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
+<span class="muted" id="runs-summary">${summary}</span>
 </div>
 <div id="runs" class="style-masonry" data-style="masonry">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
 <div class="modal lightbox" id="preview" role="dialog" aria-modal="true" hidden>
@@ -1677,16 +1689,15 @@ ${ARTIFACTS_JS}
 export function renderCommandsHtml({ commands = [], lastRun = null, token = '' }) {
   const cards = commands.map((command, index) => commandCardHtml(command, index)).join('\n')
   const lastRunText = lastRun === null
-    ? '<span class="muted">还没有可复用的运行——先跑一次工作流，抽卡会沿用其参数</span>'
-    : `将复用最近一次运行：<b>${escapeHtml(lastRun.name)}</b>（种子 ${escapeHtml(String(lastRun.seed ?? '-'))}）`
+    ? '生成数缺省 1：连续 N 次＝串行重滚种子跑 N 次；批次＝一次出 N 张 · 还没有可复用的运行——先跑一次工作流，抽卡会沿用其参数'
+    : `生成数缺省 1：连续 N 次＝串行重滚种子跑 N 次；批次＝一次出 N 张 · 将复用最近一次运行：${escapeHtml(lastRun.name)}（种子 ${escapeHtml(String(lastRun.seed ?? '-'))}）`
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs('commands', token)}
-<div class="sub">${lastRunText}</div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('commands', token)}</div>
 <div class="cmdtoolbar">
 <button type="button" class="mini" id="cmd-add">＋ 新增指令</button>
 <button type="button" class="primary" id="cmd-save">保存指令</button>
-<span class="muted" id="cmd-note">生成数缺省 1：连续 N 次＝每次重滚种子串行跑 N 次；批次＝一次执行出 N 张（改 batch_size）</span>
+<span class="muted" id="cmd-note">${lastRunText}</span>
 </div>
 <div id="cmd-list">${cards || '<div class="card muted">还没有指令。点「＋ 新增指令」建一条，保存后可在聊天里直接用，或在这里「▶ 执行」。</div>'}</div>
 <script>

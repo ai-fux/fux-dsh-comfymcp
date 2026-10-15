@@ -467,6 +467,24 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(code).toContain('function renderGalleryStrip(modalId)')
   })
 
+  it('页头只在独立窗口出现：嵌在工作台里不重复顶部 Tab（取消页内标题与 Tab）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 页头（标题 + 四 Tab）仍渲染，但默认 display:none，只有独立访问才加 .standalone
+    expect(html).toContain('class="pagehead"')
+    expect(html).toContain('.pagehead{display:none}')
+    expect(html).toContain('.pagehead.standalone{display:block}')
+    expect(html).toContain("if (window.self === window.top) { var ph = document.querySelector('.pagehead'); if (ph) ph.classList.add('standalone'); }")
+    // 内容区第一行就是主操作（工具栏 / 检索），不再先来一个大标题占位
+    expect(html).not.toMatch(/<div class="wrap wide">\s*<h1>/)
+    expect(html.indexOf('id="runs-summary"')).toBeGreaterThan(html.indexOf('id="pick-count"'))
+    const commands = renderCommandsHtml({ commands: [], lastRun: null, token: 'tk' })
+    expect(commands).toContain('class="pagehead"')
+    expect(commands).not.toMatch(/<div class="wrap wide">\s*<h1>/)
+    // 工具栏一行到底：说明文案并进 toolbar，不再单独占一行
+    expect(commands).toContain('id="cmd-note"')
+    expect(commands).not.toMatch(/<div class="sub">[^<]*生成数缺省/)
+  })
+
   it('工作流页共用同一灯箱（preview2 也是整屏遮罩）', () => {
     const html = renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' })
     expect(html).toContain('class="modal lightbox" id="preview2"')
