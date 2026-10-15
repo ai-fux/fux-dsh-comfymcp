@@ -434,6 +434,14 @@ export function createControlServer(options = {}) {
         sendJson(response, 200, { ok: true, value: await methods.registerBusiness(payload) }, allowedOrigin)
         return
       }
+      if (pathname === '/api/business/kind/save') {
+        sendJson(response, 200, { ok: true, value: await methods.saveBusinessKind(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/kind/remove') {
+        sendJson(response, 200, { ok: true, value: await methods.removeBusinessKind(payload) }, allowedOrigin)
+        return
+      }
       if (pathname === '/api/business/list') {
         sendJson(response, 200, { ok: true, value: await methods.listBusiness(payload) }, allowedOrigin)
         return

@@ -1874,6 +1874,14 @@ const COMMANDS_CSS = `
 const BUSINESS_CSS = `
 .biztoolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px}
 .biztoolbar .muted{flex:1;min-width:240px}
+/* 业务类管理条：动态增删（新增后卡片下拉立即可选） */
+.bizkinds{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:9px 12px;margin-bottom:12px}
+.bizkinds .muted{font-size:12px}
+.bizkinds .grow{flex:1}
+.bizkinds input{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:12px}
+.kindchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 6px 2px 10px;font-size:12px;background:var(--accent-weak);color:var(--accent)}
+.kindchip .kindx{border:0;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:2px 3px;border-radius:999px}
+.kindchip .kindx:hover{background:rgba(192,57,43,.18);color:var(--err)}
 .bizcands{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
 .bizcands[hidden]{display:none}
 .bizcands .candrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;font-size:12px;border-top:1px solid var(--line)}
@@ -1904,8 +1912,19 @@ const BUSINESS_CSS = `
  * 不再每次去服务端捞模板、枚举模型挑最优解（省 token）。
  */
 export function renderBusinessHtml({ profiles = [], kinds = [], candidates = [], workflows = [], token = '' } = {}) {
-  const kindOptions = (current) => kinds
+  // 业务类来自存储（页面可动态增删）；卡片引用到清单外的 id 时也补进下拉，避免显示不了当前值
+  const kindList = [...kinds]
+  for (const profile of profiles) {
+    const id = String(profile.business ?? '').trim()
+    if (id.length > 0 && !kindList.some((kind) => kind.id === id)) {
+      kindList.push({ id, label: profile.label ?? id, keywords: [] })
+    }
+  }
+  const kindOptions = (current) => kindList
     .map((kind) => `<option value="${escapeHtml(kind.id)}"${kind.id === current ? ' selected' : ''}>${escapeHtml(kind.label)}</option>`)
+    .join('')
+  const kindChips = kindList
+    .map((kind) => `<span class="kindchip" title="${escapeHtml((kind.keywords ?? []).join('，') || '没有触发词')}">${escapeHtml(kind.label)}<button type="button" class="kindx" data-kind-remove="${escapeHtml(kind.id)}" title="删除该业务类（仍被配置引用时会拒绝）">✕</button></span>`)
     .join('')
   const wfOptions = workflows
     .map((name) => `<option value="${escapeHtml(name)}"></option>`)
@@ -1956,13 +1975,21 @@ ${workbenchTabs('business', token)}</div>
 <button type="button" class="primary" id="biz-save">保存配置</button>
 <span class="muted" id="biz-note">已装 ${profiles.length} 条 · 命中后模型直接执行该工作流，跳过模板检索与模型枚举</span>
 </div>
+<div class="bizkinds" id="biz-kinds">
+<span class="muted">业务类（可动态增删，卡片下拉即用这份清单）：</span>
+${kindChips}
+<span class="grow"></span>
+<input type="text" id="kind-label" placeholder="新业务类名称，如 换脸" size="14">
+<input type="text" id="kind-keywords" placeholder="触发词，逗号分隔，如 换脸，faceswap" size="24">
+<button type="button" class="mini" id="kind-add">＋ 添加业务类</button>
+</div>
 <div class="bizcands" id="biz-cands"${candidates.length > 0 ? '' : ' hidden'}>
 <div class="muted">已跑过但还没登记的工作流（点「登记」即可成为该业务类的首选）：</div>
 ${candRows}
 </div>
 <datalist id="biz-wf-names">${wfOptions}</datalist>
 <div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
-<div class="bizhelp muted">每条配置＝一个业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）。
+<div class="bizhelp muted">每条配置＝一个业务类（默认给文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频，可自行添加）。
 模型在开工前会先用 <code>comfymcp_business</code> 按你说的话匹配：命中就直接用这张配置里的工作流与参数，
 不再去模板库里大海捞针；没命中才走完整探索流程，并把跑通的结果自动登记回来。</div>
 <script>
@@ -2020,10 +2047,32 @@ function bizSave() {
     bizNote('已保存 ' + profiles.length + ' 条业务配置 · 新会话即可自然语言命中');
   }).catch(function (error) { bizNote('保存失败：' + error.message, true); });
 }
+/** 新增业务类：名称＋触发词写进存储，卡片下拉立刻可用（也就是「后续灵活增加数据」的入口）。 */
+function bizAddKind() {
+  var label = document.getElementById('kind-label');
+  var keywords = document.getElementById('kind-keywords');
+  var name = label === null ? '' : String(label.value || '').trim();
+  if (name.length === 0) { bizNote('业务类名称不能为空', true); return; }
+  bizNote('添加业务类中…');
+  api('/api/business/kind/save', { kind: { label: name, keywords: keywords === null ? '' : keywords.value } }).then(function (data) {
+    if (!data || data.ok === false) throw new Error((data && data.reason) || (data && data.error && data.error.message) || '添加失败');
+    location.reload();
+  }).catch(function (error) { bizNote('添加失败：' + error.message, true); });
+}
 document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'biz-save') { bizSave(); return; }
   if (el.id === 'biz-add') { bizAddCard(); return; }
+  if (el.id === 'kind-add') { bizAddKind(); return; }
+  var kindId = el.getAttribute && el.getAttribute('data-kind-remove');
+  if (kindId) {
+    if (!confirm('删除业务类「' + kindId + '」？（仍被业务配置引用时会拒绝）')) return;
+    api('/api/business/kind/remove', { id: kindId }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.reason) || '删除失败');
+      location.reload();
+    }).catch(function (error) { bizNote('删除失败：' + error.message, true); });
+    return;
+  }
   var removeId = el.getAttribute && el.getAttribute('data-biz-remove');
   if (removeId !== null && removeId !== undefined) {
     if (removeId.length === 0) {

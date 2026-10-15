@@ -78,6 +78,8 @@ const PAGE_CHECKS = {
     '保存业务配置': /api\/business\/save/,
     '删除业务配置': /api\/business\/remove/,
     '候选登记': /api\/business\/register/,
+    '业务类动态新增': /api\/business\/kind\/save/,
+    '业务类动态删除': /api\/business\/kind\/remove/,
     '卡片取值（业务类/工作流/触发词/参数）': /function bizValues\(card\)[\s\S]*data-param/,
     '新增卡片': /function bizAddCard\(/,
   },

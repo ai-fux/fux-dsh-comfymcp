@@ -29,7 +29,7 @@ const REMOTE_TTL_MS = 5 * 60 * 1000
  * 「一键登记」候选：把已经跑过、但当前业务类还没登记（或主配置是别的工作流）的运行列出来，
  * 供工作台手动登记——这就是「加载过的数据自动配置」的手动兜底入口。
  */
-export function businessCandidates(runs = [], profiles = []) {
+export function businessCandidates(runs = [], profiles = [], kinds = null) {
   const grouped = new Map()
   for (const run of runs) {
     const graph = run?.form?.graph
@@ -45,7 +45,7 @@ export function businessCandidates(runs = [], profiles = []) {
     if (found === undefined) {
       grouped.set(key, {
         business,
-        label: businessLabel(business),
+        label: businessLabel(business, kinds ?? undefined),
         workflow,
         runs: 1,
         lastAt: run.startedAt ?? null,
@@ -459,12 +459,13 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
      */
     async pageBusiness({ token = '' } = {}) {
       const profiles = businessStore.all()
+      const kinds = businessStore.kinds()
       return {
         html: renderBusinessHtml({
           token,
           profiles,
-          kinds: BUSINESS_KINDS,
-          candidates: businessCandidates(bridge.listRuns(80), profiles),
+          kinds,
+          candidates: businessCandidates(bridge.listRuns(80), profiles, kinds),
           workflows: await knownWorkflowNames(),
         }),
       }
@@ -473,7 +474,19 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     /** 业务配置读写（工具层与工作台共用同一份存储）。 */
     async listBusiness() {
       const profiles = businessStore.all()
-      return { profiles, kinds: BUSINESS_KINDS, candidates: businessCandidates(bridge.listRuns(80), profiles) }
+      const kinds = businessStore.kinds()
+      return { profiles, kinds, candidates: businessCandidates(bridge.listRuns(80), profiles, kinds) }
+    },
+
+    /** 业务类动态增删：新增/改名/改触发词，或删除没被引用的类。 */
+    async saveBusinessKind({ kind } = {}) {
+      const outcome = businessStore.saveKind(kind ?? {})
+      return { ...outcome, profiles: businessStore.all(), kinds: businessStore.kinds() }
+    },
+
+    async removeBusinessKind({ id } = {}) {
+      const outcome = businessStore.removeKind(id)
+      return { ...outcome, profiles: businessStore.all(), kinds: businessStore.kinds() }
     },
 
     async saveBusiness({ profile, profiles } = {}) {

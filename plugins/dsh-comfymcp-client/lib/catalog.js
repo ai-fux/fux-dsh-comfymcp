@@ -18,7 +18,7 @@ import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, firstPr
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 import { createRunExecutor, distributeArtifacts } from './runcore.js'
-import { createBusinessStore, inferBusiness, matchBusiness, extractBusinessParams } from './business.js'
+import { createBusinessStore, DEFAULT_BUSINESS_KINDS, inferBusiness, matchBusiness, extractBusinessParams } from './business.js'
 
 
 const REMOTE_TOOL_LIST = [
@@ -186,15 +186,16 @@ export function createTools({ define, bridge, askUser, business = null }) {
         '跑通后可用 action=register 把这次的工作流登记回来（可带 graph 自动判断业务类），下次就命中。action=list 看全部配置，action=save/remove 手工增删。' +
         'Answers { ok, action, matched|null, profiles[], candidates[], nextSteps }.',
       parameters: {
-        action: { type: 'string', description: 'match（默认）| list | register | save | remove' },
+        action: { type: 'string', description: 'match（默认）| list | register | save | remove | kind_save | kind_remove' },
         text: { type: 'string', description: '用户原话（action=match 时用于自然语言匹配业务类）' },
-        business: { type: 'string', description: '业务类 id：text2img/image2img/text2video/image2video/edit/upscale/audio/other' },
+        business: { type: 'string', description: '业务类 id（预置 text2img/image2img/text2video/image2video/edit/upscale/audio/other，也可用自定义 id）' },
+        label: { type: 'string', description: 'action=kind_save 时的业务类显示名（如「换脸」）' },
         workflow: { type: 'string', description: '工作流名（本地文件词干或远端模板 id）' },
         graph: { type: 'json', description: '可选：内联图，用于 register 时自动判断业务类并摘取默认参数' },
         params: { type: 'json', description: '可选：该业务类的默认参数覆盖（steps/width/height/batch_size/model…）' },
-        keywords: { type: 'string', description: '可选：自定义触发词，逗号分隔' },
+        keywords: { type: 'string', description: '可选：自定义触发词（逗号分隔；kind_save 时即该业务类的触发词）' },
         notes: { type: 'string', description: '可选：备注' },
-        id: { type: 'string', description: 'action=remove 时的配置 id（等于业务类）' },
+        id: { type: 'string', description: 'action=remove/kind_remove 时的 id（业务配置 id＝业务类 id）' },
         includeGraph: { type: 'boolean', description: 'match 是否附带本地图（默认 true；只是想确认命中可设 false）' },
       },
       output: {
@@ -204,13 +205,39 @@ export function createTools({ define, bridge, askUser, business = null }) {
       async execute(args = {}) {
         const action = String(args.action ?? 'match').trim() || 'match'
         const store = businessStore !== null ? businessStore : createBusinessStore({ dataDir: bridge.config?.dataDir })
+        const currentKinds = () => (typeof store.kinds === 'function' ? store.kinds() : DEFAULT_BUSINESS_KINDS)
         if (action === 'list') {
           const profiles = store.all()
-          return { ok: true, action, matched: null, profiles, candidates: businessCandidatesOf(bridge, profiles), nextSteps: '命中后直接执行该工作流；未配置的业务类先跑一次再用 register 登记。' }
+          return {
+            ok: true,
+            action,
+            matched: null,
+            profiles,
+            kinds: currentKinds(),
+            candidates: businessCandidatesOf(bridge, profiles),
+            nextSteps: '命中后直接执行该工作流；未配置的业务类先跑一次再用 register 登记。业务类可在工作台「业务配置」页动态增删，或用 action=kind_save。',
+          }
+        }
+        if (action === 'kind_save' || action === 'kind_remove') {
+          const outcome = action === 'kind_save'
+            ? store.saveKind({ id: args.business ?? args.id, label: args.label, keywords: args.keywords })
+            : store.removeKind(args.id ?? args.business)
+          return {
+            ok: outcome.ok !== false,
+            action,
+            matched: null,
+            kind: outcome.kind ?? null,
+            kinds: outcome.kinds ?? currentKinds(),
+            profiles: store.all(),
+            ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+            nextSteps: outcome.ok === false
+              ? '业务类还有配置在用（或名称不合法）：先改掉/删除相关配置，或换个名称。'
+              : '业务类清单已更新：后续 match 会按新的触发词匹配。',
+          }
         }
         if (action === 'remove') {
           const removed = store.remove(args.id ?? args.business)
-          return { ok: removed, action, matched: null, profiles: store.all(), candidates: businessCandidatesOf(bridge, store.all()) }
+          return { ok: removed, action, matched: null, profiles: store.all(), kinds: currentKinds(), candidates: businessCandidatesOf(bridge, store.all()) }
         }
         if (action === 'save' || action === 'register') {
           const graph = args.graph ?? null
@@ -235,9 +262,9 @@ export function createTools({ define, bridge, askUser, business = null }) {
             nextSteps: `已登记：${business} → ${workflow}。下次同类需求会直接命中，不再检索模板库。`,
           }
         }
-        // 默认：自然语言匹配
+        // 默认：自然语言匹配（用当前动态业务类清单打分）
         const profiles = store.all()
-        const hit = matchBusiness(String(args.text ?? ''), profiles)
+        const hit = matchBusiness(String(args.text ?? ''), profiles, currentKinds())
         if (hit === null) {
           return {
             ok: true,

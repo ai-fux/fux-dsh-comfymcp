@@ -5,20 +5,21 @@
  * 不再每次去服务端捞模板、枚举模型挑最优解（省 token、少绕路）。
  *
  * 存储：<dataDir>/business.json
- *   { version: 1, profiles: [{
- *       id, business, label, workflow, source, params, keywords, notes,
- *       auto, uses, lastUsedAt, updatedAt, candidates: [{ workflow, source, uses, seenAt }]
- *   }] }
+ *   { version: 1,
+ *     kinds:    [{ id, label, keywords[] }],       ← 业务类本身也落盘，可动态增删（不写死）
+ *     profiles: [{ id, business, label, workflow, source, params, keywords, notes,
+ *                  auto, uses, lastUsedAt, updatedAt, candidates[] }] }
  * 约定：
  *   - 一个业务类只保留一条**主配置**（profile.workflow 即首选工作流）；
  *     同一个业务类跑过的其它工作流进 candidates，供工作台一键切换。
  *   - auto=true 表示由运行/加载自动登记（用户可在工作台改成手动或删除）。
+ *   - kinds 首次读取用内置预置类播种，之后以文件为准（可加「换脸」「商品图」「3D」等自定义类）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** 预置业务类：id + 中文名 + 自然语言触发词（用户还可自定义触发词）。 */
-export const BUSINESS_KINDS = [
+/** 内置预置业务类（首次播种；之后以 business.json 的 kinds 为准，可自由增删）。 */
+export const DEFAULT_BUSINESS_KINDS = [
   {
     id: 'text2img',
     label: '文生图',
@@ -57,12 +58,31 @@ export const BUSINESS_KINDS = [
   { id: 'other', label: '其它', keywords: [] },
 ]
 
-export function businessKind(id) {
-  return BUSINESS_KINDS.find((kind) => kind.id === String(id ?? '')) ?? null
+/** 兼容旧名（预置业务类的种子值）。 */
+export const BUSINESS_KINDS = DEFAULT_BUSINESS_KINDS
+
+/** 业务类 id 规整：小写，空格与中文标点折成连字符（自定义类沿用同一套 id）。 */
+export function normalizeKindId(raw) {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s·/、，,]+/g, '-')
+    .replaceAll(/[^\w\u4e00-\u9fa5-]/g, '')
+    .replaceAll(/-+/g, '-')
+    .replaceAll(/^-|-$/g, '')
 }
 
-export function businessLabel(id) {
-  const kind = businessKind(id)
+/** 在给定业务类清单里按 id 查（清单可以是存储里的动态 kinds）。 */
+export function kindOf(kinds, id) {
+  return (Array.isArray(kinds) ? kinds : []).find((kind) => kind.id === String(id ?? '')) ?? null
+}
+
+export function businessKind(id, kinds = DEFAULT_BUSINESS_KINDS) {
+  return kindOf(kinds, id)
+}
+
+export function businessLabel(id, kinds = DEFAULT_BUSINESS_KINDS) {
+  const kind = kindOf(kinds, id)
   return kind === null ? String(id ?? '') : kind.label
 }
 
@@ -169,9 +189,9 @@ const IMAGE_HINT = /(图|照片|相片|参考|这张|上面|那只|原图|png|jp
 
 /**
  * 自然语言 → 业务配置匹配。
- * 打分：自定义触发词（越长越可信）> 业务类名 > 预置触发词，再按模态提示微调。返回 { profile, score, hits } 或 null。
+ * 打分：自定义触发词（越长越可信）> 业务类名 > 业务类触发词，再按模态提示微调。返回 { profile, score, hits } 或 null。
  */
-export function matchBusiness(text, profiles = []) {
+export function matchBusiness(text, profiles = [], kinds = DEFAULT_BUSINESS_KINDS) {
   const needle = normalize(text)
   if (needle.length === 0) return null
   const imageHint = IMAGE_HINT.test(needle)
@@ -187,7 +207,7 @@ export function matchBusiness(text, profiles = []) {
         hits.push(String(keyword))
       }
     }
-    const kind = businessKind(profile.business)
+    const kind = kindOf(kinds, profile.business)
     const names = [profile.label, kind === null ? '' : kind.label]
     for (const name of names) {
       const gained = keywordScore(name, needle)
@@ -196,7 +216,7 @@ export function matchBusiness(text, profiles = []) {
         hits.push(String(name))
       }
     }
-    for (const keyword of kind === null ? [] : kind.keywords) {
+    for (const keyword of kind === null ? [] : (kind.keywords ?? [])) {
       const gained = keywordScore(keyword, needle)
       if (gained > 0) {
         score += gained
@@ -214,24 +234,51 @@ export function matchBusiness(text, profiles = []) {
   return best
 }
 
-/** 业务配置存储（结构化数据 <dataDir>/business.json）。 */
+/** 业务配置存储（结构化数据 <dataDir>/business.json：kinds 可动态增删 + profiles）。 */
 export function createBusinessStore({ dataDir, now = () => new Date().toISOString() }) {
   const file = join(dataDir ?? '', 'business.json')
 
-  function load() {
+  function readFile() {
     try {
-      if (typeof dataDir !== 'string' || dataDir.length === 0 || !existsSync(file)) return []
+      if (typeof dataDir !== 'string' || dataDir.length === 0 || !existsSync(file)) return { kinds: null, profiles: [] }
       const parsed = JSON.parse(readFileSync(file, 'utf8'))
-      return Array.isArray(parsed?.profiles) ? parsed.profiles : []
+      return {
+        kinds: Array.isArray(parsed?.kinds) && parsed.kinds.length > 0 ? parsed.kinds : null,
+        profiles: Array.isArray(parsed?.profiles) ? parsed.profiles : [],
+      }
     } catch {
-      return []
+      return { kinds: null, profiles: [] }
     }
   }
 
-  function persist(profiles) {
+  function load() {
+    return readFile().profiles
+  }
+
+  /** 业务类清单：文件里有就用文件里的（可动态增删），否则用内置预置类。 */
+  function kinds() {
+    const stored = readFile().kinds
+    if (stored === null) return DEFAULT_BUSINESS_KINDS.map((kind) => ({ ...kind, keywords: [...kind.keywords] }))
+    return stored.map((kind) => ({
+      id: String(kind?.id ?? '').trim(),
+      label: String(kind?.label ?? kind?.id ?? '').trim(),
+      keywords: Array.isArray(kind?.keywords) ? kind.keywords.map((item) => String(item ?? '').trim()).filter(Boolean) : [],
+    })).filter((kind) => kind.id.length > 0)
+  }
+
+  function persist(next) {
     if (typeof dataDir !== 'string' || dataDir.length === 0) return
     mkdirSync(dataDir, { recursive: true })
-    writeFileSync(file, `${JSON.stringify({ version: 1, profiles }, null, 2)}\n`, 'utf8')
+    writeFileSync(file, `${JSON.stringify({ version: 1, kinds: next.kinds, profiles: next.profiles }, null, 2)}\n`, 'utf8')
+  }
+
+  /** 保存业务类清单 + 配置（各自可单独更新，合并写回）。 */
+  function saveAll({ kinds: nextKinds, profiles: nextProfiles }) {
+    const current = readFile()
+    persist({
+      kinds: nextKinds ?? current.kinds ?? DEFAULT_BUSINESS_KINDS,
+      profiles: nextProfiles ?? current.profiles,
+    })
   }
 
   function cleanList(value) {
@@ -243,9 +290,9 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
   function normalizeProfile(input, previous = null) {
     const business = String(input.business ?? previous?.business ?? 'other').trim() || 'other'
     const workflow = String(input.workflow ?? previous?.workflow ?? '').trim()
-    const label = String(input.label ?? previous?.label ?? businessLabel(business)).trim() || businessLabel(business)
+    const label = String(input.label ?? previous?.label ?? businessLabel(business, kinds())).trim() || businessLabel(business, kinds())
     const keywords = cleanList(input.keywords ?? previous?.keywords ?? [])
-    const fallbackKeywords = businessKind(business)?.keywords?.slice(0, 4) ?? []
+    const fallbackKeywords = kindOf(kinds(), business)?.keywords?.slice(0, 4) ?? []
     return {
       id: String(input.id ?? previous?.id ?? business),
       business,
@@ -279,12 +326,14 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
     all() {
       return load()
     },
+    /** 业务类清单（文件里有就用文件里的，可动态增删）。 */
+    kinds,
     get(id) {
       return load().find((profile) => profile.id === String(id ?? '')) ?? null
     },
-    /** 自然语言匹配：命中返回 { profile, score, hits }，否则 null。 */
+    /** 自然语言匹配：命中返回 { profile, score, hits }，否则 null（用当前动态业务类打分）。 */
     match(text) {
-      return matchBusiness(text, load())
+      return matchBusiness(text, load(), kinds())
     },
     /** 新增或更新一条业务配置（按 id 合并）。 */
     save(input = {}) {
@@ -295,15 +344,41 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
       const next = normalizeProfile({ ...input, id }, index >= 0 ? profiles[index] : null)
       if (index >= 0) profiles[index] = next
       else profiles.push(next)
-      persist(profiles)
+      saveAll({ profiles })
       return next
     },
     remove(id) {
       const profiles = load()
       const next = profiles.filter((profile) => profile.id !== String(id ?? ''))
       const removed = next.length !== profiles.length
-      if (removed) persist(next)
+      if (removed) saveAll({ profiles: next })
       return removed
+    },
+    /**
+     * 业务类增删（动态配置的入口）：
+     * - 新增/更新：id 规整后合并，label 缺省取 id；kw 支持数组或逗号串。
+     * - 删除：仍被业务配置引用的类拒绝删除（返回 { ok:false, reason }），避免留下孤儿配置。
+     */
+    saveKind(input = {}) {
+      const id = normalizeKindId(input.id ?? input.business ?? input.label)
+      if (id.length === 0) return { ok: false, reason: '业务类需要 id 或名称' }
+      const label = String(input.label ?? '').trim() || id
+      const keywords = cleanList(input.keywords)
+      const list = kinds()
+      const index = list.findIndex((kind) => kind.id === id)
+      const next = { id, label, keywords: keywords.length > 0 ? keywords : (index >= 0 ? list[index].keywords : []) }
+      if (index >= 0) list[index] = next
+      else list.push(next)
+      saveAll({ kinds: list })
+      return { ok: true, kind: next, kinds: list }
+    },
+    removeKind(id) {
+      const target = String(id ?? '').trim()
+      const used = load().filter((profile) => profile.business === target)
+      if (used.length > 0) return { ok: false, reason: `还有 ${used.length} 条业务配置在用「${target}」，先改掉或删除它们`, kinds: kinds() }
+      const list = kinds().filter((kind) => kind.id !== target)
+      saveAll({ kinds: list })
+      return { ok: true, kinds: list }
     },
     /**
      * 自动登记：工作流跑过 / 被加载过就按推断出的业务类落一条配置；
@@ -322,14 +397,14 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
           workflow: name,
           source,
           params: extractBusinessParams(graph),
-          keywords: businessKind(business)?.keywords?.slice(0, 4) ?? [],
+          keywords: kindOf(kinds(), business)?.keywords?.slice(0, 4) ?? [],
           notes: '自动登记：首次跑过的该业务类工作流',
           auto: true,
           uses: 1,
           lastUsedAt: now(),
         })
         profiles.push(created)
-        persist(profiles)
+        saveAll({ profiles })
         return created
       }
       const current = profiles[index]
@@ -341,7 +416,7 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
         lastUsedAt: name === current.workflow ? now() : current.lastUsedAt,
         updatedAt: now(),
       }
-      persist(profiles)
+      saveAll({ profiles })
       return profiles[index]
     },
     /** 命中后记一次使用（供工作台展示「最近使用」）。 */
@@ -354,7 +429,7 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
         uses: (Number(profiles[index].uses) || 0) + 1,
         lastUsedAt: now(),
       }
-      persist(profiles)
+      saveAll({ profiles })
       return profiles[index]
     },
   }

@@ -16,6 +16,7 @@
 | 3 | **模型侧工具 `comfymcp_business`**（开工第一步）：`match` 传用户原话 → 命中返回 workflow/params/keywords，本地 API 图直接附上 `graph`（省一次取图）；`register` 跑通后回写（可带 graph 自动判业务类）；`list`/`save`/`remove` 手工增删。技能首步改为「先查业务配置」，命中即跳过后面的模板检索与模型枚举 | `lib/catalog.js`、`lib/skills.js`、`test/catalog.test.js` | ✅ |
 | 4 | **自动登记**：工作台运行页每跑一次（`runPage`）就按推断出的业务类建档/记使用；同业务类已有主配置时不抢占，只把这次的工作流记进 candidates，供工作台一键切换 | `lib/workbench.js`（`runPage` 钩子）、`test/workbench.test.js` | ✅ |
 | 5 | **工作台「业务配置」Tab**（第 5 个 Tab）：卡片式编辑（业务类下拉 / 显示名 / 首选工作流（datalist 提示已有工作流）/ 触发词 / 参数覆盖 / 备注），页脚显示用过多少次与最近使用、自动登记还是手动；顶部「已跑过但还没登记的工作流」候选行支持一键登记；工具栏 ＋新增 / 保存配置 | `lib/wfpage.js` `renderBusinessHtml`、`lib/control-server.js`（`/ui/business` + `/api/business/*`）、`client.js`（第 5 个 Tab）、`scripts/check-page-*.mjs` | ✅ |
+| 6 | **业务类动态配置（不写死）**：原先业务类是代码里的 8 条常量，加新业务得改代码 → 改为**业务类与配置一起落盘**（`business.json` 的 `kinds`，首次读取用内置预置类播种）：工作台「业务配置」页顶部新增**业务类管理条**——一行 chip 列出当前全部业务类（点 ✕ 删除，仍被配置引用时拒绝并说明原因），右侧「名称 + 触发词 + ＋ 添加业务类」即时新增；卡片下拉与模型侧匹配都用这份存储清单，新增后立刻生效（例：加「换脸／触发词 换脸、faceswap」→ 说「把这张照片换脸」即命中）。工具侧同步支持 `action=kind_save` / `kind_remove`，id 由名称规整（中文/空格/标点折成连字符） | `lib/business.js`（`DEFAULT_BUSINESS_KINDS`/`saveKind`/`removeKind`/`normalizeKindId`/`matchBusiness(text, profiles, kinds)`）、`lib/workbench.js`、`lib/control-server.js`、`lib/wfpage.js`、`lib/catalog.js`、`test/business.test.js` | ✅ |
 
 **下个迭代候选**：业务配置的「优先命中提示」（命中时在表单标题里显示业务类）、多工作流候选排序（按成功率/最近使用自动选主配置）、业务级参数预设集、节点连线式画布。
 

@@ -172,4 +172,43 @@ describe('createBusinessStore', () => {
     expect(businessLabel('image2video')).toBe('图生视频')
     expect(businessLabel('custom-x')).toBe('custom-x')
   })
+
+  it('业务类可动态增删：新增即参与匹配，被引用时拒绝删除', () => {
+    const { dir, store } = tempStore()
+    // 首次读取用内置预置类播种
+    expect(store.kinds().map((kind) => kind.id)).toContain('text2img')
+    // 新增自定义业务类（触发词立刻参与匹配）
+    const added = store.saveKind({ label: '换脸', keywords: '换脸，faceswap' })
+    expect(added.ok).toBe(true)
+    expect(added.kind.id).toBe('换脸')
+    expect(store.kinds().some((kind) => kind.id === '换脸')).toBe(true)
+    store.save({ id: '换脸', business: '换脸', workflow: 'faceswap-wf' })
+    expect(store.match('帮我把这张照片换脸')?.profile.workflow).toBe('faceswap-wf')
+    // 被配置引用 → 拒绝删除（避免孤儿配置）
+    const refused = store.removeKind('换脸')
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toMatch(/在用/)
+    // 删掉配置后即可删除业务类；内置类同样能删（清单完全数据驱动）
+    store.remove('换脸')
+    expect(store.removeKind('换脸').ok).toBe(true)
+    expect(store.removeKind('audio').ok).toBe(true)
+    expect(store.kinds().some((kind) => kind.id === 'audio')).toBe(false)
+    // 落盘：kinds 与 profiles 一起持久化
+    const raw = JSON.parse(readFileSync(join(dir, 'business.json'), 'utf8'))
+    expect(Array.isArray(raw.kinds)).toBe(true)
+    expect(raw.kinds.some((kind) => kind.id === '换脸')).toBe(false)
+    // 名称规整：中文/空格/标点折成 id；空名称拒绝
+    expect(store.saveKind({ label: '商品图 白底' }).kind.id).toBe('商品图-白底')
+    expect(store.saveKind({}).ok).toBe(false)
+  })
+
+  it('自定义业务类不写死：删掉内置类后匹配只认存储里的清单', () => {
+    const { store } = tempStore()
+    store.removeKind('text2img')
+    store.removeKind('audio')
+    store.saveKind({ id: 'custom', label: '我的流程', keywords: ['跑我的流程'] })
+    store.save({ id: 'custom', business: 'custom', workflow: 'my-wf' })
+    expect(store.match('帮我画一只猫')).toBeNull()
+    expect(store.match('跑我的流程')?.profile.workflow).toBe('my-wf')
+  })
 })
