@@ -289,6 +289,8 @@ export function createControlServer(options = {}) {
         outcome = methods.pageArtifacts !== undefined ? await methods.pageArtifacts({ token: queryToken }) : { error: 'artifacts page unavailable' }
       } else if (pathname === '/ui/library') {
         outcome = methods.pageLibrary !== undefined ? await methods.pageLibrary({ token: queryToken }) : { error: 'library page unavailable' }
+      } else if (pathname === '/ui/commands') {
+        outcome = methods.pageCommands !== undefined ? await methods.pageCommands({ token: queryToken }) : { error: 'commands page unavailable' }
       } else if (pathname.startsWith('/ui/wf/')) {
         const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
         outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
@@ -488,6 +490,20 @@ export function createControlServer(options = {}) {
         return
       }
       sendJson(response, 200, { ok: true, value: started }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/quick/save' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const saved = methods.saveQuickCommands !== undefined ? await methods.saveQuickCommands(body.payload ?? {}) : { ok: false, reason: 'save unavailable' }
+      if (saved?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'save_rejected', message: saved?.reason ?? '指令保存失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: saved }, allowedOrigin)
       return
     }
     if (pathname === '/api/workflows/pull' && request.method === 'POST') {

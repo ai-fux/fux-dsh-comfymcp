@@ -84,9 +84,17 @@ describe('ComfymcpBridge.embeddedServer', () => {
     expect(bridge.config.endpoint).toBe('http://127.0.0.1:41234/mcp')
     expect(bridge.publicConfig().embeddedServer).toBe(true)
     expect(bridge.publicConfig().embeddedUrl).toBe('http://127.0.0.1:41234/mcp')
+    expect(bridge.publicConfig().autoAcceptForm).toBe(false) // 默认关：表单一直等待
+    expect(bridge.publicConfig().autoAcceptFormSec).toBe(30)
     await bridge.close()
     expect(killed).toBe(1)
     expect(bridge.embedded).toBeNull()
+  })
+
+  it('publicConfig exposes the form auto-accept policy for the generation flow skill', async () => {
+    const bridge = makeBridge({ autoAcceptForm: true, autoAcceptFormSec: 45 })
+    expect(bridge.publicConfig()).toMatchObject({ autoAcceptForm: true, autoAcceptFormSec: 45 })
+    await bridge.close()
   })
 
   it('propagates a failed embedded start as a thrown error (boundary)', async () => {
@@ -223,9 +231,76 @@ describe('ComfymcpBridge.applyOverlay', () => {
   })
 })
 
-describe('ComfymcpBridge.probe without a host entry', () => {
+describe('ComfymcpBridge 传输选择（远程＝Streamable HTTP，内置＝stdio 宿主）', () => {
+  it('uses streamable-http in remote mode and does not require a host entry', () => {
+    const bridge = makeBridge({ embeddedServer: false, hostEntry: '' })
+    expect(bridge.transport()).toBe('streamable-http')
+    const client = bridge.clientOrNull()
+    expect(client.status().transport).toBe('http')
+    // 上层拿到的仍是宿主工具门面
+    expect(typeof client.callTool).toBe('function')
+    expect(client.serverInfo).toBe(null)
+  })
+
+  it('keeps the stdio transport for the built-in server mode', () => {
+    const bridge = makeBridge({ embeddedServer: true })
+    expect(bridge.transport()).toBe('stdio')
+  })
+
+  it('remote probe reports the HTTP transport and never asks for hostEntry', async () => {
+    const calls = []
+    const bridge = makeBridge(
+      { embeddedServer: false, hostEntry: '', endpoint: 'http://127.0.0.1:9/mcp' },
+      {
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(init.body)
+          calls.push(body.method)
+          if (body.method === 'initialize') {
+            return {
+              status: 200,
+              headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : name.toLowerCase() === 'mcp-session-id' ? 's1' : '') },
+              text: async () => JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'comfy-mcp-server', version: '1' } } }),
+            }
+          }
+          if (body.method === 'tools/call') {
+            const tool = body.params.name
+            return {
+              status: 200,
+              headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : '') },
+              text: async () => JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { structuredContent: { ok: true, tool } } }),
+            }
+          }
+          return {
+            status: 200,
+            headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : '') },
+            text: async () => JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'node_search' }, { name: 'server_info' }] } }),
+          }
+        },
+      },
+    )
+    const probe = await bridge.probe()
+    expect(probe.ok).toBe(true)
+    expect(probe.host.transport).toBe('streamable-http')
+    expect(probe.error).not.toMatch(/hostEntry|DSH_COMFYMCP_HOST_ENTRY/)
+    expect(calls).toContain('initialize')
+    expect(calls).toContain('tools/call')
+  })
+
+  it('drops the cached client when the transport switches (config apply)', () => {
+    const bridge = makeBridge({ embeddedServer: true })
+    const first = bridge.clientOrNull()
+    expect(bridge.transport()).toBe('stdio')
+    bridge.applyOverlay({ embeddedServer: false })
+    expect(bridge.client).toBe(null)
+    const second = bridge.clientOrNull()
+    expect(second).not.toBe(first)
+    expect(bridge.transport()).toBe('streamable-http')
+  })
+})
+
+describe('ComfymcpBridge.probe without a host entry（仅内置/stdio 模式才需要宿主入口）', () => {
   it('answers ok:false with an actionable message and never throws', async () => {
-    const bridge = makeBridge({ hostEntry: '' })
+    const bridge = makeBridge({ embeddedServer: true, hostEntry: '' })
     const probe = await bridge.probe()
     expect(probe.ok).toBe(false)
     expect(probe.error).toMatch(/hostEntry|DSH_COMFYMCP_HOST_ENTRY/)

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 /** Local defaults mirroring the bundle patch row. */
 export const DEFAULTS = Object.freeze({
   endpoint: 'http://127.0.0.1:18800/mcp',
+  authToken: '',
   hostCommand: 'node',
   hostEntry: '',
   workflowDirs: [],
@@ -35,10 +36,12 @@ export const DEFAULTS = Object.freeze({
   quickCommands: '',
   downloadDir: '',
   runTimeoutMin: 30,
+  autoAcceptForm: false,
+  autoAcceptFormSec: 30,
 })
 
-const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin'])
-const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin', 'autoAcceptFormSec'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer', 'autoAcceptForm'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
 /**

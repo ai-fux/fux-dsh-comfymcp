@@ -23,7 +23,7 @@ import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = 'dsh-comfymcp-client'
-export const version = '0.2.0'
+export const version = '0.2.1'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 
@@ -49,16 +49,27 @@ export function apply(ctx, config) {
     const disposers = []
 
     // 1. 模型工具
-    const askUser = async (request, exec) => {
+    const askUser = async (request, exec, timedSeconds = 0) => {
       const userQuestions = ctx.get('userQuestions')
       if (userQuestions === undefined || typeof userQuestions.ask !== 'function') {
         throw new Error('userQuestions 服务不可用：无法推送表单（检查 dsh-user-questions 是否启用）')
       }
-      return userQuestions.ask({
+      const payload = {
         questions: request.questions,
         ...(exec?.agent !== undefined ? { agent: exec.agent } : {}),
         ...(exec?.signal !== undefined ? { signal: exec.signal } : {}),
-      })
+      }
+      // 计时提问：卡片自带可见倒计时；到期由 seam 返回 { pending: true }（问题仍可后答）。
+      // 需要活跃根代理 + 本次工具调用 id（卡片按 callId 配对）；不满足则回落阻塞式 ask。
+      if (
+        timedSeconds > 0 &&
+        exec?.agent !== undefined &&
+        typeof exec?.callId === 'string' && exec.callId.length > 0 &&
+        typeof userQuestions.askTimed === 'function'
+      ) {
+        return userQuestions.askTimed({ ...payload, agent: exec.agent }, exec.callId, Math.round(timedSeconds * 1000))
+      }
+      return userQuestions.ask(payload)
     }
     const tools = createTools({ define: defineTool, bridge, askUser })
     for (const tool of tools) {
@@ -85,7 +96,11 @@ export function apply(ctx, config) {
       },
     })
     // 工作台（/ui 静态页 + /api 页面 API）：工作流编排静态页、手动执行、成果物标签、快捷指令
-    const workbench = createWorkbenchMethods({ bridge, config: effective })
+    const workbench = createWorkbenchMethods({
+      bridge,
+      config: effective,
+      persistWrite: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
+    })
     Object.assign(methods, workbench)
     const control = createControlServer({
       methods,

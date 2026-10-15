@@ -10,6 +10,7 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import { McpStdioClient } from './mcp-stdio.js'
+import { McpHttpClient, createHostFacade } from './mcp-http.js'
 import { applyHomeDefaults, candidateHostEntries, resolveConfig, resolveServerEntry } from './config.js'
 const PROBE_TTL_MS = 60000
 const MAX_RUNS = 50
@@ -36,18 +37,22 @@ export class ComfymcpBridge {
     this.log = options.log ?? (() => {})
     this.now = options.now ?? (() => Date.now())
     this.spawn = options.spawn ?? nodeSpawn
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch
     this.embeddedSpawner = options.embeddedSpawner ?? null
     this.clientFactory =
       options.clientFactory ??
-      ((cfg) =>
-        new McpStdioClient({
+      ((cfg) => {
+        // 远程模式：直连 comfy-mcp 的 Streamable HTTP 端点（不 spawn 本地 stdio 宿主）
+        if (cfg.embeddedServer !== true) return createHostFacade(this.newHttpClient(cfg), { log: (line) => this.log(line) })
+        return new McpStdioClient({
           command: cfg.hostCommand,
           args: this.hostArgs(cfg),
           requestTimeoutMs: cfg.requestTimeoutMs,
           callTimeoutMs: cfg.callTimeoutMs,
           env: { ...process.env, COMFY_MCP_ENDPOINT: cfg.endpoint },
           log: (line) => this.log(line),
-        }))
+        })
+      })
     this.client = null
     this.embedded = null
     this.pluginDir = typeof options.pluginDir === 'string' ? options.pluginDir : ''
@@ -62,6 +67,24 @@ export class ComfymcpBridge {
       return [cfg.hostEntry.trim()]
     }
     return ['DSH_COMFYMCP_HOST_ENTRY_NOT_CONFIGURED']
+  }
+
+  /** 远程模式的 Streamable HTTP 客户端（可被测试替换 fetchImpl）。 */
+  newHttpClient(cfg = this.config) {
+    return new McpHttpClient({
+      endpoint: cfg.endpoint,
+      token: cfg.authToken,
+      headers: cfg.httpHeaders,
+      requestTimeoutMs: cfg.requestTimeoutMs,
+      callTimeoutMs: cfg.callTimeoutMs,
+      fetchImpl: this.fetchImpl,
+      log: (line) => this.log(line),
+    })
+  }
+
+  /** 当前传输方式：远程＝streamable-http，内置＝stdio 宿主。 */
+  transport() {
+    return this.config.embeddedServer === true ? 'stdio' : 'streamable-http'
   }
 
   /**
@@ -88,6 +111,19 @@ export class ComfymcpBridge {
     }
     // 配置变了：下次探测/调用按新配置重连（旧客户端保留到失败为止）
     this.unloadProbe = { at: 0, available: false, reason: 'config-changed' }
+    // 传输方式/端点/令牌变化 → 丢弃旧客户端（stdio 宿主或 HTTP 会话都要重建）
+    if (['embeddedServer', 'endpoint', 'authToken', 'hostEntry', 'hostCommand'].some((key) => key in (patch ?? {}))) {
+      const transportChanged = ['embeddedServer', 'endpoint', 'authToken'].some((key) => String(previous[key] ?? '') !== String(this.config[key] ?? ''))
+      if (this.client !== null) {
+        try {
+          this.client.close()
+        } catch {
+          /* ignore */
+        }
+        this.client = null
+      }
+      if (transportChanged) this.log(`MCP transport switched → ${this.transport()}`)
+    }
     if (this.embedded !== null) {
       const EMBEDDED_KEYS = ['comfyuiUrl', 'embeddedBackend', 'embeddedBackendCommand', 'embeddedBackendArgs', 'serverEntry']
       const changed = EMBEDDED_KEYS.some((key) => String(previous[key] ?? '') !== String(this.config[key] ?? ''))
@@ -202,7 +238,7 @@ export class ComfymcpBridge {
     return state
   }
 
-  /** Connected once per client lifetime; subsequent calls reuse the child. */
+  /** 连接一次即复用：内置（stdio 宿主）按需拉起服务端；远程（HTTP）直接握手。 */
   async ensureReady() {
     if (this.config.embeddedServer === true && this.embedded === null) {
       await this.startEmbeddedServer()
@@ -230,14 +266,19 @@ export class ComfymcpBridge {
       error: '',
     }
     try {
-      const entry = this.resolveHostEntry()
-      if (entry.entry === '') {
-        result.error =
-          'MCP 宿主入口未配置：设置 hostEntry 指向 projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs（或环境变量 DSH_COMFYMCP_HOST_ENTRY）'
-        return result
-      }
+      const transport = this.transport()
       const client = await this.ensureReady()
-      result.host = { ...client.status(), entry: entry.entry, entrySource: entry.source }
+      if (transport === 'stdio') {
+        const entry = this.resolveHostEntry()
+        if (entry.entry === '') {
+          result.error =
+            'MCP 宿主入口未配置：设置 hostEntry 指向 projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs（或环境变量 DSH_COMFYMCP_HOST_ENTRY）'
+          return result
+        }
+        result.host = { ...client.status(), transport, entry: entry.entry, entrySource: entry.source }
+      } else {
+        result.host = { ...client.status(), transport, entry: this.config.endpoint, entrySource: 'endpoint' }
+      }
       const status = await client.callTool('connection_status', {}, 20000)
       result.remote = status?.structuredContent ?? null
       result.ok = result.remote?.ok === true
@@ -447,6 +488,8 @@ export class ComfymcpBridge {
       workflowDirs: [...this.config.workflowDirs],
       artifactsDir: this.config.artifactsDir,
       autoUnloadModel: this.config.autoUnloadModel === true,
+      autoAcceptForm: this.config.autoAcceptForm === true,
+      autoAcceptFormSec: Number(this.config.autoAcceptFormSec) > 0 ? Number(this.config.autoAcceptFormSec) : 30,
       embeddedServer: this.config.embeddedServer === true,
       embeddedUrl: this.embedded !== null ? this.embedded.url : '',
       hostEntryConfigured:

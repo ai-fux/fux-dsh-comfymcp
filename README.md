@@ -1,11 +1,13 @@
-# dsh-comfymcp — DSH ⇄ comfy-mcp 对接（v0.2.0）
+# dsh-comfymcp — DSH ⇄ comfy-mcp 对接（v0.2.1）
 
 把 DSH（DeepSeek Harness）接入 ComfyUI 生成链路：大模型基于自然语言设计可运行工作流 →
 定制表单向用户确认 → 强制保存后运行 → 成果物回显到会话；并内置**图形工作台**（工作流静态页、
 执行进度与中断、成果物库检索 / 标签 / 导出）。
 
-> v0.2.0 封板于 2026-10-13（稳定分支 `snapshot-0.2.0`，开发分支 `dev-snapshot-20261011-0.2.0`）；
-> 上一稳定版本 v0.1.0（`snapshot-0.1.0`）。本期交付清单见 [迭代记录](docs/roadmap.md)。
+> v0.2.1 封板于 2026-10-15（已合并回 `dev`，tag `v0.2.1`；开发分支 `dev-snapshot-20261013-0.2.1`）。
+> 本期重点：配置界面精简、卸载开关语义修正、**工作台 UI 打磨**（真瀑布流排布、卡片分层与操作主次、
+> 整屏遮罩灯箱、多图收集卡与子级画廊、参数确认框文案与取消语义）。
+> 上一稳定版本 v0.2.0（`snapshot-0.2.0`）、v0.1.0（`snapshot-0.1.0`）。本期交付清单见 [迭代记录](docs/roadmap.md)。
 
 ## 组件与端口
 
@@ -134,8 +136,9 @@ Client 半区：`settings.section`（id=comfymcp）+ `tool.call.toolview`（keye
 
 ## 版本与分支
 
-- 分支：`dev-snapshot-20261011-0.1.0`（本地提交，未推远程）。
-- 版本：三段 `0.1.0`；公共插件 `@fux-mcp/comfy-client` 独立仓同分支。
+- 当前版本：`0.2.1`（tag `v0.2.1`，已合并回 `dev`）；开发分支 `dev-snapshot-20261013-0.2.1`，上一轮 `dev-snapshot-20261011-0.2.0`。
+- 稳定汇聚：本次按要求合并至 `dev`；历史稳定分支 `snapshot-0.2.0`、`snapshot-0.1.0`、`dev-snapshot-20261011-0.1.0`。
+- 版本：三段 `X.Y.Z`（平台 SEMVER 限制），四段仅用于分支/`.workplace` 目录名。
 
 ## 本次迭代（0.1.0-MVP）完成内容
 

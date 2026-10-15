@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTools, splitSteps } from '../lib/catalog.js'
 
 let workdir
@@ -130,6 +130,220 @@ describe('createTools catalog', () => {
     expect(result.ok).toBe(true)
     expect(result.answered).toBe(1)
     expect(result.answers[0].custom).toBe('answered')
+  })
+
+  it('comfymcp_push_form auto-accepts recommended values when the countdown expires（配置开启）', async () => {
+    vi.useFakeTimers()
+    try {
+      const { define, definitions } = fakeDefine()
+      let askCount = 0
+      const bridge = fakeBridge()
+      bridge.config.autoAcceptForm = true
+      bridge.config.autoAcceptFormSec = 1
+      createTools({
+        define,
+        bridge,
+        askUser: (request) => {
+          askCount += 1
+          // 每页都写明：推荐值 + 倒计时规则 + 该干什么
+          expect(request.questions[0].question).toMatch(/⏱ 1 秒未答 → 自动采用【推荐】值继续/)
+          expect(request.questions[0].question).toMatch(/本框可留空/)
+          expect(request.questions[0].question).toMatch(/推荐（预设）/)
+          expect(request.questions[0].header).toMatch(/生成参数确认 · 1\/1/)
+          return new Promise(() => {}) // 用户一直不作答
+        },
+      })
+      const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+      const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+      const promise = tool.execute({ graph: GRAPH, fields }, {})
+      await vi.advanceTimersByTimeAsync(1100)
+      const result = await promise
+      expect(askCount).toBe(1) // 表单确实推送过（带倒计时提示）
+      expect(result.ok).toBe(true)
+      expect(result.auto).toBe(true)
+      expect(result.autoReason).toMatch(/倒计时 1 秒.*推荐参数/)
+      expect(result.answers).toEqual([])
+      expect(result.answered).toBe(0)
+      expect(result.fields.length).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('comfymcp_push_form uses the timed ask（卡片原生倒计时）and maps pending to auto', async () => {
+    const { define, definitions } = fakeDefine()
+    const calls = []
+    const bridge = fakeBridge()
+    bridge.config.autoAcceptForm = true
+    bridge.config.autoAcceptFormSec = 30
+    createTools({
+      define,
+      bridge,
+      askUser: async (request, exec, timedSeconds) => {
+        calls.push({ request, exec, timedSeconds })
+        expect(timedSeconds).toBe(30)
+        expect(exec.callId).toBe('call-1')
+        return { pending: true, callId: 'call-1' } // seam 到期返回 pending
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    const result = await tool.execute({ graph: GRAPH, fields }, { agent: 'agent-1', callId: 'call-1' })
+    expect(calls.length).toBe(1)
+    expect(result.ok).toBe(true)
+    expect(result.auto).toBe(true)
+    expect(result.autoReason).toMatch(/倒计时 30 秒.*推荐参数/)
+    expect(result.autoReason).toMatch(/迟到回答/)
+    expect(result.answers).toEqual([])
+    expect(result.fields.length).toBe(1)
+  })
+
+  it('comfymcp_push_form falls back to the local race when the timed ask hits a precondition error（兼容旧 seam）', async () => {
+    vi.useFakeTimers()
+    try {
+      const { define, definitions } = fakeDefine()
+      let calls = 0
+      const bridge = fakeBridge()
+      bridge.config.autoAcceptForm = true
+      bridge.config.autoAcceptFormSec = 1
+      createTools({
+        define,
+        bridge,
+        askUser: async (request, exec, timedSeconds) => {
+          calls += 1
+          if (timedSeconds > 0) {
+            // 真实前置失败形状：非活跃根代理（旧 seam / 子代理里调用）
+            const error = new Error('timed questions require a live agent')
+            error.code = 'DELEGATED_CALLER'
+            throw error
+          }
+          return new Promise(() => {}) // 阻塞不作答
+        },
+      })
+      const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+      const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+      const promise = tool.execute({ graph: GRAPH, fields }, {})
+      await vi.advanceTimersByTimeAsync(1100)
+      const result = await promise
+      expect(calls).toBe(2) // 先试 timed → 前置失败 → 本地竞速（倒计时仍然生效）
+      expect(result.auto).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('comfymcp_push_form never re-prompts after the user dismisses the form（取消后不重弹）', async () => {
+    const { define, definitions } = fakeDefine()
+    let calls = 0
+    const bridge = fakeBridge()
+    bridge.config.autoAcceptForm = true
+    bridge.config.autoAcceptFormSec = 30
+    createTools({
+      define,
+      bridge,
+      askUser: async () => {
+        calls += 1
+        const error = new Error('the user cancelled ask_user_question')
+        error.code = 'ASK_CANCELLED'
+        throw error
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    const result = await tool.execute({ graph: GRAPH, fields }, { agent: 'a', callId: 'c1' })
+    expect(calls).toBe(1) // 取消只发生一次：不会再弹一个没有倒计时的阻塞对话框
+    expect(result).toMatchObject({ ok: true, cancelled: true })
+    expect(result.reason).toMatch(/取消/)
+    expect(result.answers).toEqual([])
+  })
+
+  it('comfymcp_push_form reports the same cancellation when auto-accept is off（默认关闭也要识别取消）', async () => {
+    const { define, definitions } = fakeDefine()
+    const bridge = fakeBridge() // autoAcceptForm 默认关
+    createTools({
+      define,
+      bridge,
+      askUser: async () => {
+        const error = new Error('the user cancelled ask_user_question')
+        error.code = 'ASK_CANCELLED'
+        throw error
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    expect(await tool.execute({ graph: GRAPH, fields }, {})).toMatchObject({ ok: true, cancelled: true })
+  })
+
+  it('comfymcp_push_form keeps waiting and returns real answers when auto-accept is off（默认关闭）', async () => {
+    const { define, definitions } = fakeDefine()
+    let captured
+    createTools({
+      define,
+      bridge: fakeBridge(),
+      askUser: async (request) => {
+        captured = request
+        return { answers: [{ id: 'field:6.text', selected: [], custom: 'answered' }] }
+      },
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    const result = await tool.execute({ graph: GRAPH, fields }, {})
+    expect(captured.questions[0].question).not.toMatch(/⏱/)
+    expect(result.auto).toBeUndefined()
+    expect(result.answers[0].custom).toBe('answered')
+  })
+
+  it('comfymcp_push_form prefers the real user answer that wins the countdown race（先答先得）', async () => {
+    vi.useFakeTimers()
+    try {
+      const { define, definitions } = fakeDefine()
+      const bridge = fakeBridge()
+      bridge.config.autoAcceptForm = true
+      bridge.config.autoAcceptFormSec = 30
+      createTools({
+        define,
+        bridge,
+        askUser: async () => ({ answers: [{ id: 'field:6.text', selected: [], custom: 'human' }] }),
+      })
+      const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+      const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+      const result = await tool.execute({ graph: GRAPH, fields }, {})
+      expect(result.auto).toBeUndefined()
+      expect(result.answers[0].custom).toBe('human')
+      await vi.advanceTimersByTimeAsync(31000) // 计时器必须被清理，不产生未决拒绝
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('comfymcp_push_form falls back to the default 30s countdown for invalid seconds（缺省 30 秒）', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const bad of [0, -5, 'abc', undefined]) {
+        const { define, definitions } = fakeDefine()
+        const bridge = fakeBridge()
+        bridge.config.autoAcceptForm = true
+        bridge.config.autoAcceptFormSec = bad
+        let captured
+        createTools({
+          define,
+          bridge,
+          askUser: (request) => {
+            captured = request
+            return new Promise(() => {})
+          },
+        })
+        const tool = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+        const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+        const promise = tool.execute({ graph: GRAPH, fields }, {})
+        await vi.advanceTimersByTimeAsync(30100)
+        const result = await promise
+        expect(captured.questions[0].question).toMatch(/⏱ 30 秒未答 → 自动采用【推荐】值继续/)
+        expect(result.autoReason).toMatch(/倒计时 30 秒/)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('comfymcp_run_workflow saves first, integrates unload, runs, and records', async () => {

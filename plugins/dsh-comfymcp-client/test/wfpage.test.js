@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageDescriptor, renderArtifactsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
+import { buildPageDescriptor, renderArtifactsHtml, renderCommandsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
 
 const NODE_INFOS = {
   KSampler: {
@@ -264,5 +264,273 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     // 单件删除
     expect(html).toContain('data-remove-file=')
     expect(code).toContain("api('/api/artifacts/remove'")
+  })
+
+  it('瀑布流从左侧起排：全宽 wrap + JS 最短列装填（单卡片也贴左、无居中空洞）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 页面容器全宽左对齐（不再被 860px 居中容器推到中间）
+    expect(html).toContain('class="wrap wide"')
+    expect(html).toContain('.wrap.wide{max-width:none;margin:0')
+    // 瀑布流＝列容器 + 最短列装填（CSS 多列在卡高差异大时会平衡失败留下空洞）
+    expect(html).toContain('#runs.style-masonry{display:flex;align-items:flex-start;gap:12px;justify-content:flex-start')
+    expect(html).toContain('#runs.style-masonry .mcol{flex:1 1 0;min-width:0')
+    expect(html).not.toContain('column-width:300px')
+    expect(html).not.toContain('column-count')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function layoutMasonry()')
+    expect(code).toContain('function unwrapMasonry(')
+    // 每排从最左侧开始：按列序轮转填充（第 2 排仍从第 1 列开始）
+    expect(code).toContain('var pick = index % columns;')
+    expect(code).not.toContain('ROW_SLACK')
+    expect(code).not.toContain('heights[i] < heights[pick] - 1')
+    expect(code).toContain('data-order')
+    // 常量必须在函数内：页面脚本的 bootstrap 先于模块级 var 赋值执行（否则列数算出 NaN）
+    expect(code).not.toContain('MASONRY_TARGET')
+    expect(code).toContain('var target = 300;')
+    // 图片加载完成/窗口变化后重排，避免列高失真
+    expect(code).toContain('function scheduleMasonry()')
+    expect(code).toContain("window.addEventListener('resize', scheduleMasonry)")
+    // 两列平铺同样从左侧起排、按最小卡宽自适应
+    expect(html).toContain('#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))')
+    expect(html).toContain('justify-content:start')
+  })
+
+  it('点击图片放大＝整屏遮罩灯箱（遮罩铺满浏览器，图在遮罩内缩放）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 遮罩整屏 + 可访问性
+    expect(html).toContain('class="modal lightbox" id="preview"')
+    expect(html).toContain('role="dialog" aria-modal="true"')
+    expect(html).toContain('.modal.lightbox{position:fixed;inset:0;background:rgba(6,7,9,.96)')
+    // 舞台铺满窗口，图片在其中缩放平移（超出部分被遮罩裁掉）
+    expect(html).toContain('.modal.lightbox .lb-stage{position:absolute;inset:0;')
+    expect(html).toContain('id="preview-body"')
+    expect(html).toContain('overflow:hidden')
+    // 右上角圆形关闭 + 底部缩放工具条（含适应窗口/1:1/新窗口/下载）
+    expect(html).toContain('id="preview-close"')
+    expect(html).toContain('data-zoom="fit"')
+    expect(html).toContain('data-zoom="one"')
+    expect(html).toContain('id="preview-blank"')
+    expect(html).toContain('id="preview-save"')
+    expect(html).toContain('id="preview-hint"')
+    expect(html).not.toContain('id="zoom-hint"')
+    // 关闭按钮对称：上 16px／右 16px（含滚动条补偿），✕ 在圆内 flex 居中
+    expect(html).toContain('padding:16px var(--lb-pad,16px) 12px 16px')
+    expect(html).toContain('.modal.lightbox .lb-close{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px')
+    expect(html).toContain('--lb-pad')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain("modal.style.setProperty('--lb-pad'")
+    // 打开/关闭（锁页面滚动）、以光标为锚点缩放、适应窗口、1:1、边界收敛
+    expect(code).toContain('function showPreview(modalId, kind, url, name)')
+    expect(code).toContain("document.documentElement.classList.add('lb-open')")
+    expect(code).toContain('function viewZoomTo(scale, anchorX, anchorY)')
+    expect(code).toContain('function viewFit()')
+    expect(code).toContain('function viewActual()')
+    expect(code).toContain('function viewClamp()')
+    expect(code).toContain('function viewAvailable()')
+    expect(code).toContain("stage.addEventListener('pointerdown'")
+    expect(code).toContain('setPointerCapture')
+    expect(code).toContain('{ passive: false }')
+    // 缩放在遮罩内完成，图片不自己滚动/不被拖动选中
+    expect(html).toContain('touch-action:none')
+    expect(html).toContain('user-select:none')
+    // 页面自身的点击处理不再重复处理灯箱按钮（避免缩放两次）
+    expect(code).not.toContain("el.id === 'preview-close'")
+  })
+
+  it('卡片内容分层：一次运行＝一张整卡，操作分主次（⋯ 更多 收纳次要按钮）', () => {
+    const runs = [{
+      id: 'r1', name: 'fox-tiger', state: 'completed', seed: 730375400, durationMs: 37000,
+      startedAt: Date.parse('2026-10-13T20:57:16'), prompt: '夕阳西下',
+      localFiles: [{ path: 'C:\\a\\out.png', filename: 'out.png', kind: 'image', bytes: 2191000, key: 'k1' }],
+    }]
+    const tags = {
+      k1: {
+        tags: ['夕阳', '森林', '老虎', '狐狸'],
+        collections: ['旅拍'],
+        fields: { 尺寸: '768x512', 步数: '25', 采样器: 'euler' },
+      },
+    }
+    const html = renderArtifactsHtml({ runs, tags, token: 'tk' })
+    // 卡片头：勾选 + 工作流 + 状态 + 单行省略的元信息（完整信息在 title）
+    expect(html).toContain('class="muted meta-line"')
+    expect(html).toContain('种子 730375400 · 37s · 1 件')
+    expect(html).toContain('用时 37s · ')
+    // 标签/字段超额折叠成「+n」，避免长标签把卡片撑高
+    expect(html).toContain('class="chip chip-more"')
+    expect(html).toContain('>+3<')
+    expect(html).toContain('title="狐狸、旅拍、采样器=euler"')
+    // 操作分主次：常看的 3 个 + 更多；次要按钮仍在 DOM 里（可被展开）
+    expect(html).toContain('data-ops-more')
+    expect(html).toContain('class="op-secondary"')
+    expect(html).toContain('data-op="tag-add"')
+    expect(html).toContain('data-op="tag-edit"')
+    expect(html).toContain('data-op="collection"')
+    expect(html).toContain('data-op="field"')
+    expect(html).toContain('data-op="prompt"')
+    expect(html).toContain('data-op="source"')
+    expect(html).toContain('data-export-run=')
+    expect(html).toContain('data-remove-file=')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain("el.classList.contains('ops-more')")
+    expect(code).toContain("ops.classList.toggle('more-open')")
+  })
+
+  it('全局 label 规则不再污染勾选框：label{min-width:130px} 只作用于表单行', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    expect(html).toContain('.row label{min-width:130px')
+    expect(html).not.toMatch(/(^|[};])label\{min-width:130px/m)
+    expect(html).toContain('.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0')
+  })
+
+  it('多图＝固定尺寸收集卡：最多 5 张小角度摊开 + 子级画廊 + 文件列表可展开', () => {
+    const files = Array.from({ length: 7 }, (_, index) => ({
+      path: `C:\\a\\shot${index}.png`, filename: `shot${index}.png`, kind: 'image', bytes: 1000 + index, key: `k${index}`,
+    }))
+    const html = renderArtifactsHtml({
+      runs: [{ id: 'r-multi', name: 'batch', state: 'completed', seed: 9, localFiles: files }],
+      tags: {},
+      token: 'tk',
+    })
+    // 卡片尺寸与单卡一致：复用同一个 .mediacard/.thumb/.meta 结构，媒体区仍是 1:1
+    expect(html).toContain('class="mediacard stackcard"')
+    expect(html).toContain('class="thumb stack"')
+    expect(html).toContain('class="stackitem"')
+    // 最多摊开 5 张，其余只在角标里提示
+    expect([...html.matchAll(/class="stackitem"/g)].length).toBe(5)
+    expect(html).toContain('>7 张 · 另 2<')
+    // 每张都可点进画廊对应位置
+    expect(html).toContain('data-gallery-index="0"')
+    expect(html).toContain('data-gallery-index="4"')
+    expect(html).not.toContain('data-gallery-index="5"')
+    // 收集卡主操作：逐张查看 / 文件列表 / 导出；完整文件列表默认收起（逐张操作都在里面）
+    expect(html).toContain('⤢ 逐张查看')
+    expect(html).toContain('data-toggle-files="r-multi"')
+    expect(html).toContain('class="filelist" hidden')
+    expect([...html.matchAll(/class="rowpick"/g)].length).toBe(7)
+    // 小角度摊开（±7° 内），角度由 CSS nth-child 给
+    expect(html).toContain('.stackcard .thumb.stack .stackitem:nth-child(1){transform:rotate(-7deg)')
+    expect(html).toContain('.stackcard .thumb.stack .stackitem:nth-child(5){transform:rotate(7deg)')
+    // 单张仍是 .mediaList（不受影响）
+    const single = renderArtifactsHtml({
+      runs: [{ id: 'r1', name: 'one', state: 'completed', localFiles: [files[0]] }],
+      tags: {},
+      token: 'tk',
+    })
+    expect(single).toContain('class="mediaList"')
+    expect(single).not.toContain('class="mediacard stackcard"')
+  })
+
+  it('视频用首帧、音频用固定封面（多张收集卡里同样生效）', () => {
+    const html = renderArtifactsHtml({
+      runs: [{
+        id: 'r-media', name: 'video-audio', state: 'completed',
+        localFiles: [
+          { path: 'C:\\a\\clip.mp4', filename: 'clip.mp4', kind: 'video', bytes: 5200000, key: 'v' },
+          { path: 'C:\\a\\song.mp3', filename: 'song.mp3', kind: 'audio', bytes: 3200000, key: 'a' },
+        ],
+      }],
+      tags: {},
+      token: 'tk',
+    })
+    // 视频：<video muted preload=metadata> 取 #t=0.1 首帧 + 播放角标
+    expect(html).toContain('class="vthumb"')
+    expect(html).toContain('#t=0.1" muted playsinline preload="metadata"')
+    expect(html).toContain('class="play">▶')
+    // 音频：不依赖磁盘缩略图的固定封面（渐变 + 波形条 + 音符）
+    expect(html).toContain('class="audiocover"')
+    expect(html).toContain('<span class="bars">')
+    expect(html).toContain('class="note">♪')
+    expect(html).toContain('.mediacard .thumb .audiocover{width:100%;height:100%')
+  })
+
+  it('画廊数据随结果下发，并在页面脚本里支持 ← → 切换', () => {
+    const html = renderArtifactsHtml({
+      runs: [{
+        id: 'r-multi', name: 'batch', state: 'completed',
+        localFiles: [
+          { path: 'C:\\a\\1.png', filename: '1.png', kind: 'image', bytes: 1, key: 'k1' },
+          { path: 'C:\\a\\2.png', filename: '2.png', kind: 'image', bytes: 2, key: 'k2' },
+        ],
+      }],
+      tags: {},
+      token: 'tk',
+    })
+    expect(html).toContain('window.__galleries = {')
+    expect(html).toContain('"name":"2.png"')
+    expect(html).toContain('id="preview-strip"')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function showGallery(modalId, runId, index)')
+    expect(code).toContain('function galleryShow(index)')
+    expect(code).toContain('function galleryStep(delta)')
+    expect(code).toContain("event.key === 'ArrowRight'")
+    expect(code).toContain('data-strip-index')
+    expect(code).toContain('function renderGalleryStrip(modalId)')
+  })
+
+  it('页头只在独立窗口出现：嵌在工作台里不重复顶部 Tab（取消页内标题与 Tab）', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    // 页头（标题 + 四 Tab）仍渲染，但默认 display:none，只有独立访问才加 .standalone
+    expect(html).toContain('class="pagehead"')
+    expect(html).toContain('.pagehead{display:none}')
+    expect(html).toContain('.pagehead.standalone{display:block}')
+    expect(html).toContain("if (window.self === window.top) { var ph = document.querySelector('.pagehead'); if (ph) ph.classList.add('standalone'); }")
+    // 内容区第一行就是主操作（工具栏 / 检索），不再先来一个大标题占位
+    expect(html).not.toMatch(/<div class="wrap wide">\s*<h1>/)
+    expect(html.indexOf('id="runs-summary"')).toBeGreaterThan(html.indexOf('id="pick-count"'))
+    const commands = renderCommandsHtml({ commands: [], lastRun: null, token: 'tk' })
+    expect(commands).toContain('class="pagehead"')
+    expect(commands).not.toMatch(/<div class="wrap wide">\s*<h1>/)
+    // 工具栏一行到底：说明文案并进 toolbar，不再单独占一行
+    expect(commands).toContain('id="cmd-note"')
+    expect(commands).not.toMatch(/<div class="sub">[^<]*生成数缺省/)
+  })
+
+  it('工作流页共用同一灯箱（preview2 也是整屏遮罩）', () => {
+    const html = renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' })
+    expect(html).toContain('class="modal lightbox" id="preview2"')
+    expect(html).toContain('id="preview2-body"')
+    expect(html).toContain('id="preview2-blank"')
+    expect(html).toContain('id="preview2-save"')
+    expect(html).toContain("bindPreviewEvents('preview2')")
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function showPreview(modalId, kind, url, name)')
+    expect(code).toContain("showPreview('preview2', kind2, url2")
+    expect(code).not.toContain("t.id === 'preview2-close'")
+  })
+})
+
+describe('指令页（卡片式结构化编辑）', () => {
+  it('按卡片渲染 + 种子策略只显示相关参数，不再用横向表格', () => {
+    const html = renderCommandsHtml({
+      commands: [{ name: '抽卡', label: '🎲 抽卡', count: 2, batchMode: 'serial', seed: { mode: 'digits', length: 9 } }],
+      lastRun: { name: 'fox-tiger-forest-02', seed: 1728453906 },
+      token: 'tk',
+    })
+    expect(html).toContain('class="wrap wide"') // 全宽左对齐，避免表格溢出
+    expect(html).toContain('class="cmdcard"')
+    expect(html).toContain('id="cmd-list"')
+    expect(html).not.toContain('<table class="cmds"')
+    // 三种种子策略各有独立参数组（JS 按策略显隐，不再并排展示 + 禁用）
+    expect(html).toContain('data-seed="range"')
+    expect(html).toContain('data-seed="digits"')
+    expect(html).toContain('data-seed="timestamp"')
+    expect(html).toContain('data-field="min"')
+    expect(html).toContain('data-field="length"')
+    expect(html).toContain('data-field="extra"')
+    // 保存 / 执行 / 删除入口保留
+    expect(html).toContain('/api/quick/save')
+    expect(html).toContain('data-run="抽卡"')
+    expect(html).toContain('data-del=')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function syncSeedFields(')
+    expect(code).toContain("document.querySelectorAll('#cmd-list .cmdcard')")
+    expect(code).toContain("api('/api/quick'")
+  })
+
+  it('空列表与无历史时给出引导文案（边界）', () => {
+    const html = renderCommandsHtml({ commands: [], lastRun: null, token: '' })
+    expect(html).toContain('还没有指令')
+    expect(html).toContain('还没有可复用的运行')
+    expect(html).toContain('生成数缺省 1')
   })
 })

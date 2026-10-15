@@ -1,0 +1,8 @@
+{
+  "name": "@local/dsh-preset-timed-ask",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "覆盖 shipped preset-standard：ask_user_question 切计时模式（30 秒可见倒计时，到期 pending 不阻塞）",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

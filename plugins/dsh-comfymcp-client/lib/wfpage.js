@@ -129,12 +129,21 @@ const PAGE_CSS = `
 :root{--bg:#f6f7f9;--surface:#ffffff;--text:#1f2329;--muted:#6f7680;--line:#e4e7ec;--accent:#3b6cf0;--accent-weak:#eaf0ff;--ok:#1a7f37;--err:#c0392b;--radius:8px}
 @media (prefers-color-scheme:dark){:root{--bg:#141517;--surface:#1d1f23;--text:#e8eaed;--muted:#9aa1ab;--line:#2e3238;--accent:#6f96ff;--accent-weak:#22304d}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}
-.wrap{max-width:860px;margin:0 auto;padding:20px 16px 48px}
-h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+.wrap{max-width:860px;margin:0 auto;padding:14px 16px 40px}
+/* 宽版页面（成果物画廊 / 指令编辑器）：全宽左对齐，卡片从左侧起排 */
+.wrap.wide{max-width:none;margin:0;padding:14px 20px 40px}
+/* 页头（标题 + 四 Tab）：嵌在 DSH 工作台里时顶部已有同样的 Tab，页内不再重复，
+   只有「在新窗口打开」的独立访问才显示，保证单独打开时仍有导航。 */
+.pagehead{display:none}
+.pagehead.standalone{display:block}
+h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+/* 页面条：一行说明 + 右侧动作（顶部 Tab 由客户端插件提供，页内不再重复标题与 Tab） */
+.pagebar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pagebar-actions{display:flex;gap:6px;flex:0 0 auto}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
 .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}
-.row:last-child{margin-bottom:0}label{min-width:130px;max-width:100%;color:var(--muted);font-size:12px;word-break:break-all}
+.row:last-child{margin-bottom:0}.row label{min-width:130px;max-width:100%;color:var(--muted);font-size:12px;word-break:break-all}
 .row.fromLast label{color:var(--accent)}
 .row.fromLast input,.row.fromLast textarea,.row.fromLast select{border-color:var(--accent)}
 input[type=text],input[type=number],textarea,select{flex:1;min-width:180px;padding:5px 9px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--text);font:inherit}
@@ -152,13 +161,10 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .spinner{display:inline-block;width:12px;height:12px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
 .spinner[hidden]{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* 媒体预览弹层（图片放大 / 视频音频播放） */
+/* 文本弹窗基础样式（图片/视频预览已改为整屏遮罩灯箱，样式见 PREVIEW_CSS） */
 .modal{position:fixed;inset:0;background:rgba(12,14,17,.78);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
 .modal[hidden]{display:none}
 .modal .box{background:var(--surface);border-radius:10px;padding:12px;max-width:92vw;max-height:88vh;overflow:auto;position:relative}
-.modal img{max-width:88vw;max-height:74vh;display:block;border-radius:6px}
-.modal video{max-width:88vw;max-height:74vh;display:block;border-radius:6px;background:#000}
-.modal audio{width:min(560px,84vw);display:block}
 .modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;font-size:13px}
 .progress{margin-top:12px}.bar{height:8px;border-radius:99px;background:var(--accent-weak);overflow:hidden}
 .bar .fill{height:100%;width:0;background:var(--accent);transition:width .4s ease}
@@ -198,15 +204,20 @@ a{color:var(--accent);text-decoration:none}.top{display:flex;justify-content:spa
 .history .empty{color:var(--muted);font-size:13px}
 `
 
-function pageShell(title, body, { extraScript = '', extraCss = '' } = {}) {
+/** 只在独立窗口（非 iframe）里露出页头与页内 Tab——嵌在 DSH 工作台时顶部已有 Tab。 */
+const FRAME_JS = `if (window.self === window.top) { var ph = document.querySelector('.pagehead'); if (ph) ph.classList.add('standalone'); }
+`
+
+function pageShell(title, body, { extraScript = '', extraCss = '', wrapClass = '' } = {}) {
   const styles = extraCss.length > 0 ? `${PAGE_CSS}${extraCss}` : PAGE_CSS
+  const wrap = wrapClass.length > 0 ? `wrap ${wrapClass}` : 'wrap'
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${styles}</style></head>
-<body><div class="wrap">${body}</div>
-<script>${extraScript}</script></body></html>
+<body><div class="${wrap}">${body}</div>
+<script>${FRAME_JS}${extraScript}</script></body></html>
 `
 }
 
@@ -301,15 +312,24 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
   <button type="button" class="mini" id="clear-btn">清空展示</button></span></div>
   <div class="history" id="history"></div>
 </div>
-<div class="modal" id="preview2" hidden><div class="box">
-<div class="bar2"><span id="preview2-name"></span><span class="tools">
-<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
-<button type="button" class="mini" data-zoom="in">＋</button>
-<button type="button" class="mini" data-zoom="reset">重置</button>
-<button type="button" class="mini" id="preview2-close">关闭 ✕</button></span></div>
-<div id="preview2-body"></div>
-<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div>
-</div></div>
+<div class="modal lightbox" id="preview2" role="dialog" aria-modal="true" hidden>
+<div class="lb-top"><span class="lb-name" id="preview2-name"></span>
+<button type="button" class="lb-close" id="preview2-close" title="关闭（Esc）">✕</button></div>
+<div class="lb-stage" id="preview2-body"></div>
+<div class="lb-bottom">
+<div class="lb-strip" id="preview2-strip" hidden></div>
+<div class="lb-tools">
+<span class="lb-zoomtools">
+<button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
+<span class="lb-zoom" id="zoom-label">100%</span>
+<button type="button" class="mini" data-zoom="in" title="放大（+）">＋</button>
+<button type="button" class="mini" data-zoom="fit" title="适应窗口（0）">适应窗口</button>
+<button type="button" class="mini" data-zoom="one" title="原始尺寸（1）">1:1</button>
+</span>
+<a class="mini" id="preview2-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
+<a class="mini" id="preview2-save" href="#" download title="下载原文件">⬇ 下载</a>
+<span class="lb-hint" id="preview2-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · Esc 关闭</span>
+</div></div></div>
 <div class="modal" id="textmodal" hidden><div class="box wide">
 <div class="bar2"><span id="textmodal-name">编辑全文</span><span>
 <button type="button" class="mini" id="textmodal-save">保存到表单</button>
@@ -325,7 +345,7 @@ ${PAGE_RUN_JS}
   return pageShell(descriptor.title, body, { extraCss: PREVIEW_CSS })
 }
 
-/** 工作台顶部三 Tab（我的工作流 / 模板 / 成果物），三页共用，齐平展示。 */
+/** 工作台顶部 Tab（我的工作流 / 模板 / 成果物 / 指令），四页共用，齐平展示。 */
 export function workbenchTabs(active, token = '') {
   const enc = encodeURIComponent(token)
   const item = (key, label, href, count) => `<a class="wtab ${active === key ? 'active' : ''}" href="${href}?token=${enc}">${label}${typeof count === 'number' ? `（${count}）` : ''}</a>`
@@ -333,6 +353,7 @@ export function workbenchTabs(active, token = '') {
 ${item('mine', '我的工作流', '/ui', typeof active === 'object' ? active.mine : undefined)}
 ${item('library', '模板', '/ui/library', typeof active === 'object' ? active.library : undefined)}
 ${item('artifacts', '成果物', '/ui/artifacts', typeof active === 'object' ? active.artifacts : undefined)}
+${item('commands', '指令', '/ui/commands', typeof active === 'object' ? active.commands : undefined)}
 </nav>`
 }
 
@@ -344,101 +365,304 @@ const TABS_CSS = `
 .wtabs .wtab:hover{color:var(--text)}
 `
 
-/** CSS：预览弹层（含缩放画布）。两页共用。 */
+/**
+ * CSS：整屏遮罩灯箱（成果物页与工作流页共用）。
+ * 遮罩铺满整个浏览器窗口（不含浏览器自身边框），图片在遮罩区域内缩放/平移，
+ * 上下浮层分别是文件名+关闭、缩放工具条；用 .modal.lightbox 提高优先级，
+ * 覆盖 PAGE_RUN_CSS 里给文本弹窗写的 .modal 规则。
+ */
 const PREVIEW_CSS = `
-.modal{position:fixed;inset:0;background:rgba(12,14,17,.82);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
-.modal[hidden]{display:none}
-.modal .box{background:var(--surface);border-radius:10px;padding:10px 12px;max-width:94vw;max-height:90vh;display:flex;flex-direction:column;gap:8px;position:relative}
-.modal .bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}
-.modal .bar2 .tools{display:flex;gap:6px;align-items:center}
-.modal .stage{overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:8px;min-width:min(70vw,320px);min-height:200px}
-.modal .stage img{max-width:88vw;max-height:70vh;display:block;border-radius:6px;transform-origin:center center;cursor:grab;user-select:none}
-.modal .stage img.dragging{cursor:grabbing}
-.modal video{max-width:88vw;max-height:70vh;display:block;border-radius:6px;background:#000}
-.modal audio{width:min(560px,84vw);display:block;margin:24px auto}
-.modal .zoomHint{color:var(--muted);font-size:11px;text-align:right}
+html.lb-open,body.lb-open{overflow:hidden}
+.modal.lightbox{position:fixed;inset:0;background:rgba(6,7,9,.96);display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0;z-index:80}
+.modal.lightbox[hidden]{display:none}
+.modal.lightbox .lb-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px var(--lb-pad,16px) 12px 16px;z-index:3;color:#e9ecef;font-size:13px;background:linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:74vw;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* 圆形关闭：flex 居中保证 ✕ 落在圆心；上 16px／右 16px（含滚动条补偿）左右上下等距 */
+.modal.lightbox .lb-close{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.24);color:#f1f3f5;font-size:14px;line-height:1;cursor:pointer}
+.modal.lightbox .lb-close:hover{background:rgba(255,255,255,.24);color:#fff}
+/* 舞台铺满整个浏览器窗口，图片在其中缩放/平移（超出的部分被遮罩裁掉） */
+.modal.lightbox .lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab;touch-action:none}
+.modal.lightbox .lb-stage.grabbing{cursor:grabbing}
+.modal.lightbox .lb-stage img{display:block;max-width:none;max-height:none;transform-origin:center center;user-select:none;-webkit-user-drag:none;border-radius:2px;box-shadow:0 14px 44px rgba(0,0,0,.6)}
+.modal.lightbox .lb-stage video{max-width:100%;max-height:100%;display:block;background:#000;border-radius:6px}
+.modal.lightbox .lb-stage audio{width:min(560px,84vw);display:block}
+.modal.lightbox .lb-empty{color:#e9ecef;font-size:13px;max-width:80vw;word-break:break-all}
+.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px var(--lb-pad,16px) 16px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-tools{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+/* 画廊缩略条：多张成果物逐张查看时用（点缩略图跳转，← → 也可切） */
+.modal.lightbox .lb-strip{display:flex;gap:6px;max-width:86vw;overflow-x:auto;padding:2px}
+.modal.lightbox .lb-strip[hidden]{display:none}
+.modal.lightbox .lb-strip .stripitem{flex:0 0 auto;width:52px;height:52px;border-radius:6px;overflow:hidden;border:2px solid transparent;background:rgba(255,255,255,.08);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#e9ecef;font-size:16px}
+.modal.lightbox .lb-strip .stripitem.on{border-color:#fff}
+.modal.lightbox .lb-strip .stripitem img{width:100%;height:100%;object-fit:cover;display:block}
+.modal.lightbox .lb-bottom .mini{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2);color:#e9ecef}
+.modal.lightbox .lb-bottom .mini:hover{background:rgba(255,255,255,.2);color:#fff}
+.modal.lightbox .lb-bottom a.mini{text-decoration:none;display:inline-flex;align-items:center}
+.modal.lightbox .lb-zoom{min-width:54px;text-align:center;color:#fff;font-variant-numeric:tabular-nums}
+.modal.lightbox .lb-hint{color:rgba(255,255,255,.5);margin-left:8px}
+@media (max-width:760px){.modal.lightbox .lb-hint{display:none}}
 `
 
 /**
- * 预览器脚本：两页共用（图片滚轮缩放/拖拽平移/重置，视频音频就地播放）。
- * 需要调用方提供 openPreview(target) —— 由各页在自己的点击处理里按属性名分派。
+ * 灯箱脚本（两页共用）：整屏遮罩内查看图片——滚轮以光标为锚点缩放、拖拽平移、
+ * 双击「适应窗口 ↔ 1:1」、Esc/点空白关闭，视频音频就地播放。
+ * 调用方只需 showPreview(modalId, kind, url, name)（页面点击处理里按属性分派）。
  */
 const PREVIEW_JS = `
-var ZOOM = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 };
-function zoomApply(img) {
-  img.style.transform = 'translate(' + ZOOM.x + 'px,' + ZOOM.y + 'px) scale(' + ZOOM.scale + ')';
+var VIEW = { modalId: '', kind: 'file', natW: 1, natH: 1, scale: 1, fitScale: 1, x: 0, y: 0, dragging: false, moved: false, sx: 0, sy: 0 };
+function viewStage() { return document.getElementById(VIEW.modalId + '-body'); }
+function viewImg() { var stage = viewStage(); return stage ? stage.querySelector('img') : null; }
+function viewLabelSet() {
   var label = document.getElementById('zoom-label');
-  if (label) label.textContent = Math.round(ZOOM.scale * 100) + '%';
+  if (label) label.textContent = Math.round(VIEW.scale * 100) + '%';
 }
-function zoomReset() {
-  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
-  var img = document.querySelector('.modal .stage img');
-  if (img) zoomApply(img);
+/** 遮罩内可用于放图的空间：舞台铺满窗口，上下各留出浮层工具条的高度。 */
+function viewAvailable() {
+  var stage = viewStage();
+  var width = stage ? stage.clientWidth : 0;
+  var height = stage ? stage.clientHeight : 0;
+  return { w: Math.max(60, width - 36), h: Math.max(60, height - 116) };
 }
-function zoomBy(factor) {
-  var img = document.querySelector('.modal .stage img');
+function viewFitScale() {
+  var size = viewAvailable();
+  return Math.min(size.w / (VIEW.natW || 1), size.h / (VIEW.natH || 1));
+}
+function viewApply() {
+  var img = viewImg();
   if (!img) return;
-  ZOOM.scale = Math.max(0.1, Math.min(8, ZOOM.scale * factor));
-  zoomApply(img);
+  img.style.width = VIEW.natW + 'px';
+  img.style.height = VIEW.natH + 'px';
+  img.style.transform = 'translate(' + VIEW.x + 'px,' + VIEW.y + 'px) scale(' + VIEW.scale + ')';
+  viewLabelSet();
 }
+/** 别把图整个拖出视野：任何方向至少留 40px 可见。 */
+function viewClamp() {
+  var stage = viewStage();
+  if (!stage) return;
+  var maxX = Math.max(0, (VIEW.natW * VIEW.scale + stage.clientWidth) / 2 - 40);
+  var maxY = Math.max(0, (VIEW.natH * VIEW.scale + stage.clientHeight) / 2 - 40);
+  VIEW.x = Math.max(-maxX, Math.min(maxX, VIEW.x));
+  VIEW.y = Math.max(-maxY, Math.min(maxY, VIEW.y));
+}
+/** 以 (anchorX, anchorY)（默认遮罩中心）为锚点缩放到 scale。 */
+function viewZoomTo(scale, anchorX, anchorY) {
+  var stage = viewStage();
+  if (!stage) return;
+  var next = Math.max(0.05, Math.min(16, scale));
+  var rect = stage.getBoundingClientRect();
+  var cx = rect.left + rect.width / 2;
+  var cy = rect.top + rect.height / 2;
+  if (typeof anchorX !== 'number') { anchorX = cx; anchorY = cy; }
+  var ratio = next / (VIEW.scale || 1);
+  VIEW.x = anchorX - cx - (anchorX - cx - VIEW.x) * ratio;
+  VIEW.y = anchorY - cy - (anchorY - cy - VIEW.y) * ratio;
+  VIEW.scale = next;
+  viewClamp();
+  viewApply();
+}
+function viewZoomBy(factor, anchorX, anchorY) { viewZoomTo(VIEW.scale * factor, anchorX, anchorY); }
+function viewFit() {
+  VIEW.fitScale = viewFitScale();
+  VIEW.scale = VIEW.fitScale;
+  VIEW.x = 0;
+  VIEW.y = 0;
+  viewApply();
+}
+function viewActual() { VIEW.scale = 1; VIEW.x = 0; VIEW.y = 0; viewClamp(); viewApply(); }
+/* 旧调用点兼容 */
+function zoomBy(factor) { viewZoomBy(factor); }
+function zoomReset() { viewFit(); }
 function fillPreview(bodyId, kind, url, name) {
-  ZOOM.scale = 1; ZOOM.x = 0; ZOOM.y = 0;
+  var modalId = String(bodyId).replace(/-body$/, '');
+  VIEW.modalId = modalId;
+  VIEW.kind = kind;
+  VIEW.natW = 1; VIEW.natH = 1; VIEW.scale = 1; VIEW.fitScale = 1; VIEW.x = 0; VIEW.y = 0;
+  VIEW.dragging = false; VIEW.moved = false;
   var body = document.getElementById(bodyId);
-  if (kind === 'video') body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>';
-  else if (kind === 'audio') body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>';
-  else if (kind === 'image') body.innerHTML = '<div class="stage"><img src="' + url + '" alt="" draggable="false"></div>';
-  else body.innerHTML = '<div class="muted">该类型不支持内嵌预览，请下载后查看。</div>';
-  var label = document.getElementById('zoom-label');
-  if (label) label.textContent = '100%';
-  var hint = document.getElementById('zoom-hint');
+  if (!body) return;
+  var modal = document.getElementById(modalId);
+  var blank = document.getElementById(modalId + '-blank');
+  var save = document.getElementById(modalId + '-save');
+  var tools = modal ? modal.querySelector('.lb-zoomtools') : null;
+  var hint = document.getElementById(modalId + '-hint');
+  if (tools) tools.hidden = kind !== 'image';
   if (hint) hint.hidden = kind !== 'image';
+  if (blank) blank.href = url;
+  if (save) { save.href = url; save.setAttribute('download', name || ''); }
+  if (kind === 'video') { body.innerHTML = '<video src="' + url + '" controls autoplay playsinline></video>'; return; }
+  if (kind === 'audio') { body.innerHTML = '<audio src="' + url + '" controls autoplay></audio>'; return; }
+  if (kind !== 'image') { body.innerHTML = '<div class="lb-empty">该类型不支持内嵌预览，可点「下载」或「新窗口」查看。</div>'; return; }
+  body.innerHTML = '<img src="' + url + '" alt="" draggable="false">';
+  var img = body.querySelector('img');
+  var ready = function () {
+    VIEW.natW = img.naturalWidth || img.width || 1;
+    VIEW.natH = img.naturalHeight || img.height || 1;
+    viewFit(); // 打开即「适应窗口」：整张图落在遮罩区域内
+    // 显示遮罩后布局会再稳定一帧（滚动条/浮层），补一次以免用到旧尺寸
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () { if (viewImg() === img && !VIEW.dragging) viewFit(); });
+    }
+  };
+  img.addEventListener('load', ready);
+  img.addEventListener('error', function () {
+    body.innerHTML = '<div class="lb-empty">图像加载失败（可用「下载」或「新窗口」打开）：' + url + '</div>';
+  });
+  if (img.complete && img.naturalWidth > 0) ready();
 }
-function bindPreviewEvents(modalId) {
+/** 打开灯箱：设文件名 → 填内容 → 显示遮罩 → 锁页面滚动。 */
+function showPreview(modalId, kind, url, name) {
   var modal = document.getElementById(modalId);
   if (!modal) return;
-  modal.addEventListener('wheel', function (event) {
-    var img = modal.querySelector('.stage img');
-    if (!img) return;
-    event.preventDefault();
-    zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15);
-  }, { passive: false });
-  modal.addEventListener('mousedown', function (event) {
-    var img = modal.querySelector('.stage img');
-    if (!img || event.target !== img) return;
-    ZOOM.dragging = true; ZOOM.startX = event.clientX - ZOOM.x; ZOOM.startY = event.clientY - ZOOM.y;
-    img.classList.add('dragging');
-    event.preventDefault();
-  });
-  window.addEventListener('mousemove', function (event) {
-    if (!ZOOM.dragging) return;
-    var img = modal.querySelector('.stage img');
-    if (!img) return;
-    ZOOM.x = event.clientX - ZOOM.startX; ZOOM.y = event.clientY - ZOOM.startY;
-    zoomApply(img);
-  });
-  window.addEventListener('mouseup', function () {
-    ZOOM.dragging = false;
-    var img = modal.querySelector('.stage img');
-    if (img) img.classList.remove('dragging');
-  });
-  modal.addEventListener('dblclick', function (event) {
-    if (event.target.tagName !== 'IMG') return;
-    ZOOM.scale = ZOOM.scale > 1.01 ? 1 : 2;
-    ZOOM.x = 0; ZOOM.y = 0;
-    zoomApply(event.target);
-  });
-  document.addEventListener('keydown', function (event) {
-    if (modal.hidden) return;
-    if (event.key === 'Escape') closePreviewModal(modalId);
-    else if (event.key === '+' || event.key === '=') zoomBy(1.2);
-    else if (event.key === '-') zoomBy(1 / 1.2);
-    else if (event.key === '0') zoomReset();
-  });
+  GALLERY.items = []; // 单张模式：← → 不切图
+  GALLERY.modalId = modalId;
+  var nameEl = document.getElementById(modalId + '-name');
+  if (nameEl) nameEl.textContent = name || '';
+  fillPreview(modalId + '-body', kind, url, name);
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) { strip.hidden = true; strip.innerHTML = ''; }
+  modal.hidden = false;
+  document.documentElement.classList.add('lb-open');
+  // 若页面仍留着滚动条，给浮层补上等宽内边距，避免关闭按钮被压在滚动条下（看起来被切、不对称）
+  var scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+  modal.style.setProperty('--lb-pad', (16 + scrollbar) + 'px');
+}
+/* ---- 画廊模式：一次运行多张时逐张查看（子级详情） ---- */
+var GALLERY = { items: [], index: 0, modalId: '' };
+/** 打开某次运行的画廊：第 index 张起（items 由页面渲染时写入 window.__galleries）。 */
+function showGallery(modalId, runId, index) {
+  var items = (window.__galleries || {})[runId] || [];
+  if (items.length === 0) return;
+  GALLERY.items = items;
+  GALLERY.modalId = modalId;
+  var modal = document.getElementById(modalId);
+  if (!modal) return;
+  renderGalleryStrip(modalId);
+  galleryShow(Number(index) || 0);
+  modal.hidden = false;
+  document.documentElement.classList.add('lb-open');
+  var scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+  modal.style.setProperty('--lb-pad', (16 + scrollbar) + 'px');
+}
+function renderGalleryStrip(modalId) {
+  var strip = document.getElementById(modalId + '-strip');
+  if (!strip) return;
+  strip.hidden = GALLERY.items.length < 2;
+  strip.innerHTML = GALLERY.items.map(function (item, index) {
+    var inner = item.kind === 'image'
+      ? '<img src="' + item.url + '" alt="" loading="lazy">'
+      : item.kind === 'video' ? '▶' : item.kind === 'audio' ? '♪' : '📄';
+    return '<span class="stripitem" data-strip-index="' + index + '" title="' + (item.name || '') + '">' + inner + '</span>';
+  }).join('');
+}
+/** 切到第 index 张（循环）：更新标题序号、舞台内容、缩略条高亮。 */
+function galleryShow(index) {
+  if (GALLERY.items.length === 0) return;
+  var total = GALLERY.items.length;
+  var next = ((index % total) + total) % total;
+  GALLERY.index = next;
+  var item = GALLERY.items[next];
+  var modalId = GALLERY.modalId;
+  var nameEl = document.getElementById(modalId + '-name');
+  if (nameEl) nameEl.textContent = (item.name || '') + ' · ' + (next + 1) + '/' + total;
+  fillPreview(modalId + '-body', item.kind, item.url, item.name);
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) {
+    Array.prototype.slice.call(strip.children).forEach(function (el, i) {
+      el.classList.toggle('on', i === next);
+    });
+  }
+  var hint = document.getElementById(modalId + '-hint');
+  if (hint) hint.hidden = false;
+}
+function galleryStep(delta) {
+  if (GALLERY.items.length < 2) return;
+  galleryShow(GALLERY.index + delta);
 }
 function closePreviewModal(modalId) {
   var body = document.getElementById(modalId + '-body');
   if (body) body.innerHTML = ''; // 清空以停止播放
-  document.getElementById(modalId).hidden = true;
+  var modal = document.getElementById(modalId);
+  if (modal) modal.hidden = true;
+  var strip = document.getElementById(modalId + '-strip');
+  if (strip) { strip.hidden = true; strip.innerHTML = ''; }
+  GALLERY.items = [];
+  document.documentElement.classList.remove('lb-open');
+  VIEW.dragging = false;
+}
+function bindPreviewEvents(modalId) {
+  var modal = document.getElementById(modalId);
+  var stage = document.getElementById(modalId + '-body');
+  if (!modal || !stage) return;
+  // 滚轮：以光标为锚点缩放（图在遮罩内放大，遮罩本身不动）
+  modal.addEventListener('wheel', function (event) {
+    if (modal.hidden || !viewImg()) return;
+    event.preventDefault();
+    viewZoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX, event.clientY);
+  }, { passive: false });
+  stage.addEventListener('pointerdown', function (event) {
+    if (!viewImg() || event.button !== 0) return;
+    VIEW.dragging = true; VIEW.moved = false;
+    VIEW.sx = event.clientX - VIEW.x; VIEW.sy = event.clientY - VIEW.y;
+    stage.classList.add('grabbing');
+    try { stage.setPointerCapture(event.pointerId); } catch (error) {}
+    event.preventDefault();
+  });
+  stage.addEventListener('pointermove', function (event) {
+    if (!VIEW.dragging) return;
+    var nx = event.clientX - VIEW.sx;
+    var ny = event.clientY - VIEW.sy;
+    if (Math.abs(nx - VIEW.x) > 3 || Math.abs(ny - VIEW.y) > 3) VIEW.moved = true;
+    VIEW.x = nx; VIEW.y = ny;
+    viewClamp();
+    viewApply();
+  });
+  var endDrag = function (event) {
+    if (!VIEW.dragging) return;
+    VIEW.dragging = false;
+    stage.classList.remove('grabbing');
+    try { stage.releasePointerCapture(event.pointerId); } catch (error) {}
+  };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  // 点遮罩空白（且没拖动过）关闭
+  stage.addEventListener('click', function (event) {
+    if (event.target === stage && !VIEW.moved) closePreviewModal(modalId);
+  });
+  stage.addEventListener('dblclick', function (event) {
+    if (!viewImg() || event.target.tagName !== 'IMG') return;
+    if (VIEW.scale > VIEW.fitScale * 1.02) viewFit(); else viewActual();
+  });
+  modal.addEventListener('click', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-zoom]') : null;
+    if (target) {
+      var action = target.getAttribute('data-zoom');
+      if (action === 'in') viewZoomBy(1.25);
+      else if (action === 'out') viewZoomBy(1 / 1.25);
+      else if (action === 'one') viewActual();
+      else viewFit();
+      return;
+    }
+    var stripItem = event.target && event.target.closest ? event.target.closest('[data-strip-index]') : null;
+    if (stripItem) {
+      galleryShow(Number(stripItem.getAttribute('data-strip-index')) || 0);
+      return;
+    }
+    if (event.target && event.target.id === modalId + '-close') closePreviewModal(modalId);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (modal.hidden) return;
+    if (event.key === 'Escape') { closePreviewModal(modalId); return; }
+    if (event.key === 'ArrowLeft') { galleryStep(-1); return; }
+    if (event.key === 'ArrowRight') { galleryStep(1); return; }
+    if (!viewImg()) return;
+    if (event.key === '+' || event.key === '=') viewZoomBy(1.2);
+    else if (event.key === '-' || event.key === '_') viewZoomBy(1 / 1.2);
+    else if (event.key === '0') viewFit();
+    else if (event.key === '1') viewActual();
+  });
+  window.addEventListener('resize', function () {
+    if (!modal.hidden && viewImg()) viewFit();
+  });
 }
 `
 
@@ -535,11 +759,16 @@ function groupHtml(run, index) {
       + '<button type="button" class="del" title="删除该成果物（含磁盘文件）" data-remove-file="' + esc(file.path || '') + '" data-remove-run="' + esc(run.runId || '') + '">✕</button></div>';
   }).join('');
   var body = media || '<div class="muted">（本次无成果物）</div>';
+  var unloadLine = ''
+  if (run.unload && run.unload.reason) {
+    unloadLine = '<div class="muted" title="自动卸载开关处置详情">⏏ 卸载：' + esc(run.unload.reason) + '（开关＝' + (run.autoUnload === true ? '开' : '关') + '）</div>';
+  }
   return '<section class="runGroup" title="' + esc(hover) + '">'
     + '<div class="rgHead"><span class="idx">#' + index + ' ' + esc(run.workflow || WORKFLOW) + '</span>'
     + '<span class="chip ' + chipClass + '">' + esc(state) + '</span>'
     + '<span class="muted">种子 ' + esc(run.seed === null || run.seed === undefined ? '-' : run.seed) + ' · 用时 ' + esc(fmtElapsed(run.durationMs || run.elapsedMs)) + (time ? ' · ' + esc(time) : '') + '</span></div>'
     + promptText
+    + unloadLine
     + (run.error ? '<div class="muted" style="color:var(--err)">' + esc(run.error) + '</div>' : '')
     + '<details class="params"><summary>参数（' + ((run.params || []).length) + '）· 鼠标移入亦可查看</summary><table class="pv">' + paramRows(run.params) + '</table></details>'
     + '<div class="mediaRow">' + body + '</div>'
@@ -631,17 +860,7 @@ function start(makeCall, label) {
 }
 document.addEventListener('click', function (event) {
   var t = event.target;
-  if (t.id === 'preview2-close' || t.id === 'preview2') {
-    closePreviewModal('preview2');
-    return;
-  }
-  var zoomAction = t.getAttribute && t.getAttribute('data-zoom');
-  if (zoomAction) {
-    if (zoomAction === 'in') zoomBy(1.25);
-    else if (zoomAction === 'out') zoomBy(1 / 1.25);
-    else zoomReset();
-    return;
-  }
+  // 灯箱的关闭/缩放统一由 bindPreviewEvents('preview2') 处理，这里不再重复
   if (t.id === 'history-reload') { loadHistory(); return; }
   var historyExport = t.getAttribute && t.getAttribute('data-history-export');
   if (historyExport) {
@@ -671,9 +890,7 @@ document.addEventListener('click', function (event) {
     var kind2 = previewHost.getAttribute('data-kind') || 'file';
     var path2 = previewHost.getAttribute('data-preview2');
     var url2 = '/artifact?path=' + encodeURIComponent(path2) + (API_CFG.token ? '&token=' + encodeURIComponent(API_CFG.token) : '');
-    document.getElementById('preview2-name').textContent = previewHost.getAttribute('data-name') || '';
-    fillPreview('preview2-body', kind2, url2, previewHost.getAttribute('data-name') || '');
-    document.getElementById('preview2').hidden = false;
+    showPreview('preview2', kind2, url2, previewHost.getAttribute('data-name') || '');
     return;
   }
   if (t.id === 'textmodal-close' || t.id === 'textmodal') {
@@ -790,10 +1007,10 @@ export function renderIndexHtml({ mine = [], library = [], token = '' }) {
 <div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''}</div></div>`
   const mineItems = mine.map((page) => (page.origin === 'remote' ? pullButton(page) : pageLink(page))).join('\n')
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs({ mine: mine.length, library: library.length }, token)}
-<div class="sub">工作流静态页 · 由 dsh-comfymcp-client 生成 ·
-<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}</div>
+<div class="sub pagebar">工作流静态页 · 由 dsh-comfymcp-client 生成
+<span class="pagebar-actions"><button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></span></div>
 ${mineItems || '<div class="card">还没有我的工作流：在「模板」里点开任一模板执行一次，或点条目的「⬇ 拉取」保存到本地。</div>'}
 `
   return pageShell('ComfyUI 工作台', body, { extraScript: `var TOKEN = ${JSON.stringify(token)};\n${PAGE_INDEX_JS}`, extraCss: `${INDEX_CSS}${TABS_CSS}` })
@@ -808,10 +1025,10 @@ export function renderLibraryHtml({ library = [], mine = [], token = '' }) {
 <div class="muted">${page.updatedAt ? `更新 ${escapeHtml(page.updatedAt)}` : ''} · 打开后执行一次即自动保存到「我的工作流」</div></a>`)
     .join('\n')
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs({ mine: mine.length, library: library.length }, token)}
-<div class="sub">模板库共 ${library.length} 个 · 执行过一次后自动落入「我的工作流」；已存在时优先沿用上次运行的参数 ·
-<button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs({ mine: mine.length, library: library.length }, token)}</div>
+<div class="sub pagebar">模板库共 ${library.length} 个 · 执行过一次后自动落入「我的工作流」；已存在时优先沿用上次运行的参数
+<span class="pagebar-actions"><button type="button" class="mini" onclick="location.reload()">↻ 重新加载</button></span></div>
 ${items || '<div class="card">模板库暂不可达（服务端未连接或目录为空）。</div>'}
 `
   return pageShell('ComfyUI 工作台 · 模板', body, { extraCss: `${INDEX_CSS}${TABS_CSS}` })
@@ -828,7 +1045,6 @@ function api(path, body) {
 }
 function ask(label, current) { var v = prompt(label, current || ''); return v === null ? null : v.trim(); }
 function mediaUrl(path) { return '/artifact?path=' + encodeURIComponent(path) + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : ''); }
-function closePreview() { closePreviewModal('preview'); }
 function picked() {
   return Array.prototype.slice.call(document.querySelectorAll('.rowpick:checked')).map(function (el) {
     return { runId: el.getAttribute('data-run') || '', path: el.getAttribute('data-path') || '' };
@@ -859,6 +1075,9 @@ function renderRuns(payload) {
     summary.innerHTML = (payload.summary || '') + (payload.queryText ? ' · 检索：' + payload.queryText : '') + ' · <a href="/ui?token=' + encodeURIComponent(TOKEN || '') + '">← 工作台</a>';
   }
   if (payload && payload.runIds) window.__runIds = payload.runIds;
+  // 多张收集卡的画廊索引随结果一起换（否则检索后点「⤢ 逐张查看」会拿到旧列表）
+  if (payload && payload.galleries) window.__galleries = payload.galleries;
+  layoutMasonry();
   refreshPickCount();
 }
 function searchPayload() {
@@ -869,6 +1088,76 @@ function currentStyle() {
   var style = box && box.getAttribute('data-style');
   return style || 'masonry';
 }
+var masonryTimer = null;
+function byRunOrder(a, b) {
+  return Number(a.getAttribute('data-order') || 0) - Number(b.getAttribute('data-order') || 0);
+}
+/** 非瀑布流样式：把卡片从列容器里搬回来（保持原顺序）。 */
+function unwrapMasonry(box) {
+  var columns = box.querySelectorAll('.mcol');
+  if (columns.length === 0) return;
+  var runs = Array.prototype.slice.call(box.querySelectorAll('.run')).sort(byRunOrder);
+  runs.forEach(function (run) { box.appendChild(run); });
+  Array.prototype.slice.call(columns).forEach(function (column) { column.remove(); });
+}
+/**
+ * 真瀑布流：按顺序把每组塞进当前最短的列（并列取最左），列宽固定、列数随窗口，
+ * 保证每列从同一条顶线开始、整体左对齐且不留大片空白。
+ */
+function layoutMasonry() {
+  var box = document.getElementById('runs');
+  if (box === null) return;
+  if (box.getAttribute('data-style') !== 'masonry') { unwrapMasonry(box); return; }
+  var runs = Array.prototype.slice.call(box.querySelectorAll('.run'));
+  if (runs.length === 0) return;
+  // 常量写死在函数里：本脚本拼在 bootstrap 之后，模块级 var 赋值早于它执行时还是 undefined
+  var gap = 12;
+  var target = 300;
+  runs.forEach(function (run, index) {
+    if (run.getAttribute('data-order') === null) run.setAttribute('data-order', String(index));
+  });
+  runs.sort(byRunOrder);
+  var width = box.clientWidth || box.offsetWidth || 0;
+  var columns = Math.max(1, Math.floor((width + gap) / (target + gap)));
+  var list = [];
+  var heights = [];
+  for (var i = 0; i < columns; i++) {
+    var column = box.querySelector('.mcol[data-col="' + i + '"]');
+    if (column === null) {
+      column = document.createElement('div');
+      column.className = 'mcol';
+      column.setAttribute('data-col', String(i));
+      box.appendChild(column);
+    }
+    list.push(column);
+    heights.push(0);
+  }
+  Array.prototype.slice.call(box.querySelectorAll('.mcol')).forEach(function (column) {
+    if (Number(column.getAttribute('data-col')) >= columns) column.remove();
+  });
+  runs.forEach(function (run, index) {
+    // 按列序轮转填充：第 1 排从左到右、第 2 排仍从第 1 列开始，绝不出现「中间插一张、左边空一片」。
+    var pick = index % columns;
+    if (list[pick] === undefined) return;
+    list[pick].appendChild(run);
+    heights[pick] += (run.offsetHeight || 0) + gap;
+  });
+  watchMasonryImages();
+}
+/** 图片懒加载完成后高度才准，重排一次以免列高判断失真。 */
+function watchMasonryImages() {
+  document.querySelectorAll('#runs img').forEach(function (img) {
+    if (img.getAttribute('data-masonry-watched') === '1') return;
+    img.setAttribute('data-masonry-watched', '1');
+    img.addEventListener('load', scheduleMasonry);
+    img.addEventListener('error', scheduleMasonry);
+  });
+}
+function scheduleMasonry() {
+  if (masonryTimer !== null) clearTimeout(masonryTimer);
+  masonryTimer = setTimeout(function () { masonryTimer = null; layoutMasonry(); }, 120);
+}
+window.addEventListener('resize', scheduleMasonry);
 function applyStyle(style) {
   var box = document.getElementById('runs');
   if (!box) return;
@@ -879,6 +1168,7 @@ function applyStyle(style) {
   document.querySelectorAll('[data-style]').forEach(function (btn) {
     btn.classList.toggle('dshmcp-on', btn.getAttribute('data-style') === next);
   });
+  layoutMasonry();
   try { window.localStorage.setItem('comfymcp.artifactStyle', next); } catch (e) {}
 }
 function runSearch() {
@@ -911,8 +1201,18 @@ document.addEventListener('change', function (event) {
 });
 document.addEventListener('click', function (event) {
   var el = event.target;
-  if (el.id === 'preview-close' || el.id === 'preview') { closePreview(); return; }
+  // 灯箱的关闭/缩放统一由 bindPreviewEvents('preview') 处理，这里不再重复
   if (el.id === 'q-run') { runSearch(); return; }
+  // 卡片操作「⋯ 更多」：就地展开/收起次要操作，避免 9 个按钮铺满卡片
+  if (el.classList && el.classList.contains('ops-more')) {
+    var ops = el.closest ? el.closest('.ops') : null;
+    if (ops) {
+      var opened = ops.classList.toggle('more-open');
+      el.textContent = opened ? '⋯ 收起' : '⋯ 更多';
+      el.setAttribute('title', opened ? '收起次要操作' : '更多操作（标签集合/字段/绑定/来源/导出）');
+    }
+    return;
+  }
   if (el.id === 'q-help-toggle') {
     var help = document.getElementById('q-help');
     help.hidden = !help.hidden;
@@ -958,13 +1258,6 @@ document.addEventListener('click', function (event) {
       .catch(function (error) { alert('删除失败：' + error.message); });
     return;
   }
-  var zoomAction = el.getAttribute && el.getAttribute('data-zoom');
-  if (zoomAction) {
-    if (zoomAction === 'in') zoomBy(1.25);
-    else if (zoomAction === 'out') zoomBy(1 / 1.25);
-    else zoomReset();
-    return;
-  }
   if (el.id === 'export-all') {
     var ids = (window.__runIds || []).join(',');
     if (!ids) { alert('没有可导出的运行'); return; }
@@ -1002,9 +1295,28 @@ document.addEventListener('click', function (event) {
     var kind = previewHost.getAttribute('data-kind') || 'file';
     var name = previewHost.getAttribute('data-name') || '';
     var url = mediaUrl(previewHost.getAttribute('data-preview'));
-    document.getElementById('preview-name').textContent = name;
-    fillPreview('preview-body', kind, url, name);
-    document.getElementById('preview').hidden = false;
+    showPreview('preview', kind, url, name);
+    return;
+  }
+  // 多张收集卡：进入子级画廊逐张看 / 就地展开完整文件列表
+  var galleryHost = el.closest ? el.closest('[data-gallery-run]') : null;
+  if (galleryHost) {
+    var item = el.closest && el.closest('[data-gallery-index]');
+    var start = item ? Number(item.getAttribute('data-gallery-index')) || 0 : Number(galleryHost.getAttribute('data-gallery-index')) || 0;
+    showGallery('preview', galleryHost.getAttribute('data-gallery-run'), start);
+    return;
+  }
+  var toggleFiles = el.getAttribute && el.getAttribute('data-toggle-files');
+  if (toggleFiles) {
+    var run = document.querySelector('.runpick[data-run="' + toggleFiles + '"]');
+    var section = run ? (run.closest ? run.closest('.run') : null) : null;
+    var list = section ? section.querySelector('.filelist') : null;
+    if (list) {
+      list.hidden = !list.hidden;
+      el.classList.toggle('dshmcp-on', !list.hidden);
+      el.textContent = list.hidden ? '☰ 文件列表' : '☰ 收起文件';
+      layoutMasonry();
+    }
     return;
   }
   var key = el.getAttribute('data-key'); if (!key) return;
@@ -1030,16 +1342,37 @@ const ARTIFACTS_CSS = `
 .mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
 .mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
 /* 卡片式样式：瀑布流 / 两列平铺（竖向卡：缩略图占满卡片宽度） */
-#runs.style-masonry{column-count:2;column-gap:12px}
-@media (min-width:1200px){#runs.style-masonry{column-count:3}}
-#runs.style-masonry .run,#runs.style-grid2 .run{break-inside:avoid;display:inline-block;width:100%;margin:0 0 12px}
-#runs.style-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
-#runs.style-grid2 .run{margin:0}
-#runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{display:flex;flex-direction:column;gap:10px}
-#runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
+/* 瀑布流：列容器 + JS 轮转填充（真瀑布流）——CSS 多列在卡片高度差异大时会平衡失败，
+   留下大片空白；这里固定列宽 300px 自适应列数，按列序轮转（每排都从最左侧开始）。 */
+#runs.style-masonry{display:flex;align-items:flex-start;gap:12px;justify-content:flex-start;text-align:left}
+#runs.style-masonry .mcol{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:12px}
+#runs.style-masonry .run{break-inside:avoid;display:block;width:100%;margin:0}
+#runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;justify-content:start}
+#runs.style-grid2 .run{break-inside:avoid;width:100%;margin:0}
+/* 一次运行＝一张整卡：头 / 提示词 / 媒体 / 操作 四区，用发丝线分区，信息层级一眼可读 */
+#runs.style-masonry .run,#runs.style-grid2 .run{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.mediacard .chips{display:flex;flex-wrap:wrap;gap:4px;overflow:hidden;max-height:24px}
+.mediacard .chips .chip{font-size:11px;padding:0 6px}
+.mediacard .chips .chip-more{cursor:help;opacity:.8}
+.mediacard .ops .op-secondary{display:none}
+.mediacard .ops.more-open .op-secondary{display:contents}
+.mediacard .ops .ops-more{opacity:.85}
+.mediacard .bind{font-size:11.5px;line-height:1.45}
+#runs.style-masonry .run .head,#runs.style-grid2 .run .head{margin:0;padding:9px 12px;gap:8px;flex-wrap:nowrap;align-items:center;border-bottom:1px solid var(--line)}
+#runs.style-masonry .run .head b,#runs.style-grid2 .run .head b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:44%}
+#runs.style-masonry .run .head .chip,#runs.style-grid2 .run .head .chip{flex:0 0 auto;font-size:11px}
+#runs.style-masonry .run .head .meta-line,#runs.style-grid2 .run .head .meta-line{flex:1;min-width:0;margin-left:auto;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
+#runs.style-masonry .promptBox,#runs.style-grid2 .promptBox{padding:8px 12px;border-bottom:1px solid var(--line)}
+#runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{gap:0}
+#runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{position:relative;display:flex;flex-direction:column;align-items:stretch;gap:0;padding:0;border:0;border-radius:0;background:transparent;overflow:visible}
+#runs.style-masonry .mediacard + .mediacard,#runs.style-grid2 .mediacard + .mediacard{border-top:1px solid var(--line)}
 #runs.style-masonry .mediacard .thumb,#runs.style-grid2 .mediacard .thumb{flex:none;width:100%;height:auto;aspect-ratio:1/1;border-radius:0}
-#runs.style-masonry .mediacard .meta,#runs.style-grid2 .mediacard .meta{padding:10px 12px}
+#runs.style-masonry .mediacard .meta,#runs.style-grid2 .mediacard .meta{padding:10px 12px;gap:6px}
+#runs.style-masonry .mediacard .fname,#runs.style-grid2 .mediacard .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 勾选框浮在缩略图左上角：不再占一行高度，卡片高度更一致 */
+#runs.style-masonry .mediacard .pick,#runs.style-grid2 .mediacard .pick{position:absolute;left:8px;top:8px;z-index:2;margin:0;padding:2px 4px;border-radius:6px;background:rgba(10,12,15,.5);line-height:0}
 #runs.style-fan .mediacard{flex-direction:row}
+#runs.style-masonry .mediacard .ops,#runs.style-grid2 .mediacard .ops{margin-top:4px}
 .dshmcp-on{border-color:var(--accent);color:var(--accent);font-weight:600}
 .exportBar .sep{width:1px;height:16px;background:var(--line);margin:0 2px}
 .qhelp{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);font-size:12px}
@@ -1051,6 +1384,39 @@ const ARTIFACTS_CSS = `
 .mediacard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .mediacard .thumb .badge{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
 .mediacard .thumb .big{font-size:38px;color:var(--accent)}
+/* 多张收集卡：卡片尺寸与单张一致，内部把最多 5 张小角度扑克摊开 */
+.stackcard .thumb.stack{background:var(--bg);cursor:zoom-in}
+.stackcard .thumb.stack .stackitem{position:absolute;inset:13%;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.32);transition:transform .18s ease,box-shadow .18s ease}
+.stackcard .thumb.stack .stackitem img,.stackcard .thumb.stack .stackitem video{width:100%;height:100%;object-fit:cover;display:block}
+.stackcard .thumb.stack .stackitem:nth-child(1){transform:rotate(-7deg) translate(-13%, 3%)}
+.stackcard .thumb.stack .stackitem:nth-child(2){transform:rotate(-3.5deg) translate(-6.5%, 1.5%)}
+.stackcard .thumb.stack .stackitem:nth-child(3){transform:rotate(0deg) translate(0, 0)}
+.stackcard .thumb.stack .stackitem:nth-child(4){transform:rotate(3.5deg) translate(6.5%, 1.5%)}
+.stackcard .thumb.stack .stackitem:nth-child(5){transform:rotate(7deg) translate(13%, 3%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(1){transform:rotate(-10deg) translate(-17%, 3%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(2){transform:rotate(-5deg) translate(-8.5%, 1.5%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(4){transform:rotate(5deg) translate(8.5%, 1.5%)}
+.stackcard .thumb.stack:hover .stackitem:nth-child(5){transform:rotate(10deg) translate(17%, 3%)}
+.stackcard .thumb.stack .stackitem:hover{box-shadow:0 10px 26px rgba(0,0,0,.5);z-index:5}
+.stackcard .thumb.stack .stackitem:nth-child(3){z-index:3}
+.stackcard .thumb.stack .stackitem:nth-child(2),.stackcard .thumb.stack .stackitem:nth-child(4){z-index:2}
+.stackcard .thumb.stack .stackitem:nth-child(1),.stackcard .thumb.stack .stackitem:nth-child(5){z-index:1}
+/* 视频：首帧当封面 + 播放角标 */
+.mediacard .thumb .vthumb{pointer-events:none}
+.mediacard .thumb .play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;padding-left:3px}
+/* 音频：固定音乐封面（渐变 + 波形条 + 音符） */
+.mediacard .thumb .audiocover{width:100%;height:100%;display:flex;align-items:center;justify-content:center;position:relative;background:linear-gradient(135deg,#2b3a55,#4a3b63 55%,#7b4a63)}
+.mediacard .thumb .audiocover .bars{position:absolute;inset:auto 12% 16% 12%;height:34%;display:flex;align-items:flex-end;gap:6%}
+.mediacard .thumb .audiocover .bars i{flex:1;background:rgba(255,255,255,.5);border-radius:2px}
+.mediacard .thumb .audiocover .bars i:nth-child(1){height:38%}
+.mediacard .thumb .audiocover .bars i:nth-child(2){height:76%}
+.mediacard .thumb .audiocover .bars i:nth-child(3){height:52%}
+.mediacard .thumb .audiocover .bars i:nth-child(4){height:92%}
+.mediacard .thumb .audiocover .bars i:nth-child(5){height:60%}
+.mediacard .thumb .audiocover .note{position:relative;color:#fff;font-size:44px;text-shadow:0 2px 10px rgba(0,0,0,.45)}
+/* 多张时：完整文件列表默认收起，点「☰ 文件列表」就地展开 */
+.run .filelist{display:flex;flex-direction:column}
+.run .filelist[hidden]{display:none}
 .mediacard .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .mediacard .fname{font-size:13px;word-break:break-all;font-weight:600}
 .mediacard .ops{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
@@ -1063,12 +1429,13 @@ const ARTIFACTS_CSS = `
 .promptRow .arrow{border:0;background:transparent;cursor:pointer;color:var(--muted);padding:0 4px}
 .promptFull{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;max-height:none}
 .promptFull[hidden]{display:none}
-.exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 14px}
-.searchbar{display:flex;flex-direction:column;gap:6px;margin:10px 0 4px}
+.exportBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px;padding:8px 10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.exportBar #runs-summary{margin-left:auto}
+.searchbar{display:flex;flex-direction:column;gap:6px;margin:0 0 8px}
 .searchbar .srow{display:flex;gap:8px;flex-wrap:wrap}
 .searchbar input[type=text]{flex:1;min-width:220px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 .searchbar select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
-.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;cursor:pointer}
+.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0;max-width:none;cursor:pointer}
 .mediacard .pick{margin-right:2px}
 .run .head .pick{margin-right:4px}
 button.mini.danger{border-color:var(--err);color:var(--err)}
@@ -1108,49 +1475,79 @@ function promptBlock(run, token) {
   return `<div class="promptBox">${row('positive', '正', positive, prompts?.positiveField ?? '')}${row('negative', '负', negative, prompts?.negativeField ?? '')}</div>`
 }
 
-/** 成果物列表 HTML（首次渲染与检索结果复用同一份）。 */
+/** 音频固定封面（不依赖磁盘缩略图，风格统一）。 */
+function audioCoverHtml() {
+  return `<span class="audiocover" aria-hidden="true"><span class="bars"><i></i><i></i><i></i><i></i><i></i></span><span class="note">♪</span></span>`
+}
+
+/** 媒体缩略图内容：图像＝图；视频＝首帧（#t=0.1 让浏览器渲染到该帧）+ 播放角标；音频＝固定封面。 */
+function thumbInnerHtml(kind, src, name) {
+  if (kind === 'image') return `<img src="${src}" alt="${name}" loading="lazy">`
+  if (kind === 'video') return `<video class="vthumb" src="${src}#t=0.1" muted playsinline preload="metadata"></video><span class="play">▶</span>`
+  if (kind === 'audio') return audioCoverHtml()
+  return `<span class="big">📄</span>`
+}
+
+/**
+ * 成果物列表 HTML（首次渲染与检索结果复用同一份）。
+ * 同一次运行出多张时：卡片尺寸与单张一致，内部把最多 5 张按小角度扑克摊开（收集卡），
+ * 点击进入灯箱画廊逐张看（子级详情）；完整文件列表可就地展开，逐张的标签/删除等操作都在里面。
+ */
 export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
   const tagOf = (key) => tags[key] ?? null
+  const galleries = {}
   // 无模态数据不入库：丢弃没有任何产物的运行记录
   const withMedia = runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0)
   const runCards = withMedia
     .map((run) => {
-      const cards = (run.localFiles ?? [])
+      const files = Array.isArray(run.localFiles) ? run.localFiles : []
+      const mediaUrl = (file) => `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
+      const cards = files
         .map((file) => {
           const key = file.key ?? file.path ?? file.filename
           const meta = tagOf(key)
-          const chips = [
-            ...(meta?.tags ?? []).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`),
-            ...(meta?.collections ?? []).map((collection) => `<span class="chip" title="标签集合">🗃 ${escapeHtml(collection)}</span>`),
-          ].join('')
-          const fields = Object.entries(meta?.fields ?? {})
-            .map(([name, value]) => `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`)
-            .join('')
-          const bind = meta?.prompt || meta?.source
-            ? `<div class="muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
+          // 标签/集合/动态字段：最多各展示 3/2 个，其余折叠成「+n」（悬浮看全），保证卡片高度稳定
+          const chipItems = [
+            ...(meta?.tags ?? []).map((tag) => ({ html: `<span class="chip">${escapeHtml(tag)}</span>`, label: tag })),
+            ...(meta?.collections ?? []).map((collection) => ({ html: `<span class="chip" title="标签集合">🗃 ${escapeHtml(collection)}</span>`, label: collection })),
+          ]
+          const chipShown = chipItems.slice(0, 3).map((item) => item.html).join('')
+          const chipRest = chipItems.slice(3)
+          const fieldItems = Object.entries(meta?.fields ?? {})
+            .map(([name, value]) => ({ html: `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`, label: `${name}=${value}` }))
+          const fieldShown = fieldItems.slice(0, 2).map((item) => item.html).join('')
+          const fieldRest = fieldItems.slice(2)
+          const restLabels = [...chipRest, ...fieldRest].map((item) => item.label).join('、')
+          const restShown = restLabels.length > 0
+            ? `<span class="chip chip-more" title="${escapeHtml(restLabels)}">+${chipRest.length + fieldRest.length}</span>`
             : ''
-          const src = `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
+          const chipsHtml = chipShown + fieldShown + restShown
+          const bind = meta?.prompt || meta?.source
+            ? `<div class="bind muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
+            : ''
+          const src = mediaUrl(file)
           const name = escapeHtml(file.filename ?? key)
-          const kindLabel = file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : file.kind === 'audio' ? '音频' : '文件'
-          const big = file.kind === 'image' ? '' : file.kind === 'video' ? '▶' : file.kind === 'audio' ? '♪' : '📄'
-          const thumb = file.kind === 'image'
-            ? `<img src="${src}" alt="${name}" loading="lazy">`
-            : `<span class="big">${big}</span>`
+          const kind = file.kind ?? 'file'
+          const kindLabel = kind === 'image' ? '图片' : kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '文件'
           const sizeText = file.bytes ? `${Math.round(file.bytes / 1024)} KB` : ''
+          // 操作分主次：常看的 3 个 + 「⋯ 更多」展开其余，避免 9 个按钮铺满卡片
           return `<div class="mediacard">
 <label class="pick" title="勾选后可批量删除"><input type="checkbox" class="rowpick" data-run="${escapeHtml(run.id ?? '')}" data-path="${escapeHtml(file.path ?? '')}"></label>
-<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
-<div class="meta"><span class="fname" title="${name}">${name}</span>${chips}${fields}${bind}
+<div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(kind)}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumbInnerHtml(kind, src, name)}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
+<div class="meta"><span class="fname" title="${name}">${name}</span>${chipsHtml ? `<div class="chips">${chipsHtml}</div>` : ''}${bind}
 <div class="ops">
-<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add">＋标签</button>
+<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add" title="给这张图加标签">＋标签</button>
+<a class="mini" href="${src}" download title="下载原文件">⬇ 下载</a>
+<button type="button" class="mini danger" data-remove-file="${escapeHtml(file.path ?? '')}" data-remove-run="${escapeHtml(run.id ?? '')}" title="删除该成果物（含磁盘文件）">✕ 删除</button>
+<button type="button" class="mini ops-more" data-ops-more title="更多操作（标签集合/字段/绑定/来源/导出）">⋯ 更多</button>
+<span class="op-secondary">
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-edit">标签集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="collection">🗃 集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="field">字段</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="prompt">绑定提示词</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button>
-<a class="mini" style="padding:2px 8px" href="${src}" download>下载</a>
 <button type="button" class="mini" data-export-run="${escapeHtml(run.id ?? '')}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
-<button type="button" class="mini danger" data-remove-file="${escapeHtml(file.path ?? '')}" data-remove-run="${escapeHtml(run.id ?? '')}" title="删除该成果物（含磁盘文件）">✕ 删除</button>
+</span>
 </div></div></div>`
         })
         .join('\n')
@@ -1159,24 +1556,46 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
         : (run.finishedAt && run.startedAt ? `${Math.round((run.finishedAt - run.startedAt) / 1000)}s` : '-')
       const time = run.startedAt ? new Date(run.startedAt).toLocaleString('zh-CN') : ''
       const hits = Array.isArray(run.hits) && run.hits.length > 0
-        ? `<span class="muted">命中：${escapeHtml(run.hits.slice(0, 4).join(' / '))}</span>`
+        ? `<span class="chip" title="${escapeHtml(run.hits.join(' / '))}">命中 ${run.hits.length}</span>`
         : ''
-      const files = Array.isArray(run.localFiles) ? run.localFiles : []
-      const fanned = files.length >= 4 // 同组多张 → 扑克牌摊开（重叠）样式
+      const multi = files.length >= 2
+      const runId = escapeHtml(run.id ?? '')
+      let stack = ''
+      if (multi) {
+        const shownFiles = files.slice(0, 5)
+        const rest = files.length - shownFiles.length
+        stack = `<div class="mediacard stackcard">
+<div class="thumb stack" data-gallery-run="${runId}" title="点击逐张查看（共 ${files.length} 张，← → 切换）">
+${shownFiles.map((file, index) => `<span class="stackitem" data-gallery-index="${index}">${thumbInnerHtml(file.kind ?? 'file', mediaUrl(file), escapeHtml(file.filename ?? ''))}</span>`).join('')}
+<span class="badge">${files.length} 张${rest > 0 ? ` · 另 ${rest}` : ''}</span>
+</div>
+<div class="meta"><span class="fname" title="${escapeHtml(files.map((file) => file.filename ?? '').join('、'))}">${escapeHtml(files[0]?.filename ?? '')} 等 ${files.length} 张</span>
+<div class="ops">
+<button type="button" class="mini" data-gallery-run="${runId}" data-gallery-index="0" title="在遮罩灯箱里逐张查看（← → 切换）">⤢ 逐张查看</button>
+<button type="button" class="mini" data-toggle-files="${runId}" title="就地展开全部文件（逐张的标签/下载/删除都在里面）">☰ 文件列表</button>
+<button type="button" class="mini" data-export-run="${runId}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
+</div></div></div>`
+        galleries[run.id ?? ''] = files.map((file) => ({
+          url: mediaUrl(file),
+          kind: file.kind ?? 'file',
+          name: file.filename ?? '',
+        }))
+      }
+      // 卡片头：一行放完（勾选 + 工作流 + 状态 + 命中），元信息靠右单行省略 → 卡片高度稳定
       return `<section class="run"><div class="head">
-<label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${escapeHtml(run.id ?? '')}"></label>
-<b>${escapeHtml(run.name ?? 'workflow')}</b>
-<span class="chip">${escapeHtml(run.state ?? '')}</span>
-<span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件${fanned ? ' · 重叠展示' : ''}</span>
-${hits}
+<label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${runId}"></label>
+<b title="${escapeHtml(run.name ?? 'workflow')}">${escapeHtml(run.name ?? 'workflow')}</b>
+<span class="chip">${escapeHtml(run.state ?? '')}</span>${hits}
+<span class="muted meta-line" title="种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件">种子 ${escapeHtml(String(run.seed ?? '-'))} · ${escapeHtml(duration)} · ${files.length} 件</span>
 </div>
 ${promptBlock(run, token)}
-<div class="${fanned ? 'fan' : 'mediaList'}">${cards}</div></section>`
+${stack}
+<div class="${multi ? 'filelist' : 'mediaList'}"${multi ? ' hidden' : ''}>${cards}</div></section>`
     })
     .join('\n')
   const excluded = runs.length - withMedia.length
   const summary = `${withMedia.length} 次有产物的运行${excluded > 0 ? ` · 已忽略 ${excluded} 次无成果物记录` : ''}`
-  return { html: runCards, summary, shown: withMedia.length, total: runs.length }
+  return { html: runCards, summary, shown: withMedia.length, total: runs.length, galleries }
 }
 
 /**
@@ -1185,11 +1604,10 @@ ${promptBlock(run, token)}
  * 图片放大与缩放、视频音频播放、单次或整体导出 JSON（base64）。
  */
 export function renderArtifactsHtml({ runs = [], tags = {}, token = '' }) {
-  const { html: runCards, summary, shown } = artifactsRunsHtml({ runs, tags, token })
+  const { html: runCards, summary, shown, galleries } = artifactsRunsHtml({ runs, tags, token })
   const body = `
-<h1>ComfyUI 工作台</h1>
-${workbenchTabs('artifacts', token)}
-<div class="sub" id="runs-summary">${summary}</div>
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('artifacts', token)}</div>
 <form id="search-form" onsubmit="return false" class="searchbar">
 <div class="srow">
 <input type="text" id="q" placeholder='复合检索：fashion | tag:夕阳 param:steps&gt;=25 -tag:废片 prompt:"sunset beach" file:.png'>
@@ -1228,25 +1646,226 @@ ${workbenchTabs('artifacts', token)}
 <button type="button" class="mini danger" id="remove-picked">🗑 删除选中（含磁盘文件）</button>
 <span class="muted" id="pick-count">已选 0 件</span>
 <button type="button" class="mini" id="export-all" title="导出当前列表全部运行的字段与文件（base64 内嵌）">⇩ 导出全部（JSON / base64）</button>
+<span class="muted" id="runs-summary">${summary}</span>
 </div>
 <div id="runs" class="style-masonry" data-style="masonry">${runCards || '<div class="card">还没有带成果物的运行。先在聊天里或工作流页执行一次工作流。</div>'}</div>
-<div class="modal" id="preview" hidden><div class="box">
-<div class="bar2"><span id="preview-name"></span><span class="tools">
-<button type="button" class="mini" data-zoom="out">−</button><span id="zoom-label" class="muted">100%</span>
-<button type="button" class="mini" data-zoom="in">＋</button>
-<button type="button" class="mini" data-zoom="reset">重置</button>
-<button type="button" class="mini" id="preview-close">关闭 ✕</button></span></div>
-<div id="preview-body"></div>
-<div class="zoomHint" id="zoom-hint">滚轮缩放 · 拖拽平移 · 双击切换 100%/200% · 快捷键 +/−/0 · Esc 关闭</div></div></div>
+<div class="modal lightbox" id="preview" role="dialog" aria-modal="true" hidden>
+<div class="lb-top"><span class="lb-name" id="preview-name"></span>
+<button type="button" class="lb-close" id="preview-close" title="关闭（Esc）">✕</button></div>
+<div class="lb-stage" id="preview-body"></div>
+<div class="lb-bottom">
+<div class="lb-strip" id="preview-strip" hidden></div>
+<div class="lb-tools">
+<span class="lb-zoomtools">
+<button type="button" class="mini" data-zoom="out" title="缩小（-）">−</button>
+<span class="lb-zoom" id="zoom-label">100%</span>
+<button type="button" class="mini" data-zoom="in" title="放大（+）">＋</button>
+<button type="button" class="mini" data-zoom="fit" title="适应窗口（0）">适应窗口</button>
+<button type="button" class="mini" data-zoom="one" title="原始尺寸（1）">1:1</button>
+</span>
+<a class="mini" id="preview-blank" href="#" target="_blank" rel="noopener" title="在新窗口打开原图">⤢ 新窗口</a>
+<a class="mini" id="preview-save" href="#" download title="下载原文件">⬇ 下载</a>
+<span class="lb-hint" id="preview-hint">滚轮缩放 · 拖拽平移 · 双击切换 适应/1:1 · ← → 切换多张 · Esc 关闭</span>
+</div></div></div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
 window.__records = ${JSON.stringify(tags)};
 window.__runIds = ${JSON.stringify(runs.filter((run) => Array.isArray(run.localFiles) && run.localFiles.length > 0).map((run) => run.id ?? null).filter(Boolean))};
+window.__galleries = ${JSON.stringify(galleries ?? {})};
 bindPreviewEvents('preview');
 refreshPickCount();
 // 恢复上次选择的卡片样式（瀑布流 / 两列平铺 / 重叠摊开）
 try { applyStyle(window.localStorage.getItem('comfymcp.artifactStyle') || 'masonry'); } catch (e) { applyStyle('masonry'); }
 ${ARTIFACTS_JS}
 </script>`
-  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}` })
+  return pageShell('成果物', body, { extraCss: `${ARTIFACTS_CSS}${PREVIEW_CSS}${TABS_CSS}`, wrapClass: 'wide' })
 }
+
+/**
+ * 快捷指令页（第 4 个 Tab）：卡片式结构化编辑（不再手写 JSON，也不再有横向表格溢出）。
+ * 每条指令一张卡：名称 / 标签 / 生成数 / 模式（连续 N 次＝串行重滚种子；批次＝改 batch_size 一次出 N 张）/
+ * 种子策略（范围 / 位数 / 时间戳——按策略只显示相关参数）；支持新增、删除、保存（写回配置）与就地「▶ 执行」。
+ */
+export function renderCommandsHtml({ commands = [], lastRun = null, token = '' }) {
+  const cards = commands.map((command, index) => commandCardHtml(command, index)).join('\n')
+  const lastRunText = lastRun === null
+    ? '生成数缺省 1：连续 N 次＝串行重滚种子跑 N 次；批次＝一次出 N 张 · 还没有可复用的运行——先跑一次工作流，抽卡会沿用其参数'
+    : `生成数缺省 1：连续 N 次＝串行重滚种子跑 N 次；批次＝一次出 N 张 · 将复用最近一次运行：${escapeHtml(lastRun.name)}（种子 ${escapeHtml(String(lastRun.seed ?? '-'))}）`
+  const body = `
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('commands', token)}</div>
+<div class="cmdtoolbar">
+<button type="button" class="mini" id="cmd-add">＋ 新增指令</button>
+<button type="button" class="primary" id="cmd-save">保存指令</button>
+<span class="muted" id="cmd-note">${lastRunText}</span>
+</div>
+<div id="cmd-list">${cards || '<div class="card muted">还没有指令。点「＋ 新增指令」建一条，保存后可在聊天里直接用，或在这里「▶ 执行」。</div>'}</div>
+<script>
+var TOKEN = ${JSON.stringify(token)};
+function api(url, payload) {
+  return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
+}
+function cardValues(card) {
+  var get = function (sel) { return card.querySelector(sel); };
+  function number(field) {
+    var el = get('input[data-field="' + field + '"]');
+    if (el === null || el.value.trim().length === 0) return undefined;
+    var value = Number(el.value);
+    return Number.isFinite(value) ? value : undefined;
+  }
+  var mode = get('select[data-field="seedMode"]').value;
+  var seed = { mode: mode };
+  if (mode === 'range') {
+    var min = number('min'); var max = number('max');
+    if (min !== undefined) seed.min = min;
+    if (max !== undefined) seed.max = max;
+  }
+  if (mode === 'digits') { var length = number('length'); if (length !== undefined) seed.length = length; }
+  if (mode === 'timestamp') { var extra = number('extra'); if (extra !== undefined) seed.extraDigits = extra; }
+  var name = get('input[data-field="name"]').value.trim();
+  return {
+    name: name,
+    label: get('input[data-field="label"]').value.trim() || name,
+    count: number('count') || 1,
+    batchMode: get('select[data-field="batchMode"]').value,
+    seed: seed,
+  };
+}
+function collect() {
+  var out = [];
+  document.querySelectorAll('#cmd-list .cmdcard').forEach(function (card) {
+    var value = cardValues(card);
+    if (value.name.length > 0) out.push(value);
+  });
+  return out;
+}
+function note(text, bad) {
+  var el = document.getElementById('cmd-note');
+  el.textContent = text;
+  el.style.color = bad ? 'var(--err)' : '';
+}
+function syncSeedFields(card) {
+  var mode = card.querySelector('select[data-field="seedMode"]').value;
+  card.querySelectorAll('.seedfields').forEach(function (group) {
+    group.hidden = group.getAttribute('data-seed') !== mode;
+  });
+}
+function syncAll() {
+  document.querySelectorAll('#cmd-list .cmdcard').forEach(syncSeedFields);
+}
+document.getElementById('cmd-add').addEventListener('click', function () {
+  var list = document.getElementById('cmd-list');
+  var empty = list.querySelector('.card.muted');
+  if (empty !== null) empty.remove();
+  list.insertAdjacentHTML('beforeend', ${JSON.stringify(commandCardHtml({ name: '', label: '', count: 1, batchMode: 'serial', seed: { mode: 'range' } }, 'X'))});
+  var cards = list.querySelectorAll('.cmdcard');
+  syncSeedFields(cards[cards.length - 1]);
+  var input = cards[cards.length - 1].querySelector('input[data-field="name"]');
+  if (input !== null) input.focus();
+});
+document.getElementById('cmd-list').addEventListener('click', function (event) {
+  var t = event.target;
+  if (t.getAttribute && t.hasAttribute('data-del')) {
+    var card = t.closest('.cmdcard');
+    if (card !== null) card.remove();
+    if (document.querySelectorAll('#cmd-list .cmdcard').length === 0) {
+      document.getElementById('cmd-list').innerHTML = '<div class="card muted">还没有指令。点「＋ 新增指令」建一条，保存后可在聊天里直接用，或在这里「▶ 执行」。</div>';
+    }
+  }
+  if (t.getAttribute && t.getAttribute('data-run')) {
+    t.disabled = true; t.textContent = '启动中…';
+    api('/api/quick', { command: t.getAttribute('data-run') }).then(function (value) {
+      t.disabled = false; t.textContent = '▶ 执行';
+      note(value && value.ok ? '已启动' + (value.count > 1 ? '（计划 ' + value.count + ' 次）' : '') + (value.detail ? '：' + value.detail : '') : '启动失败：' + ((value && value.reason) || '未知原因'), !(value && value.ok));
+    }).catch(function (error) { t.disabled = false; t.textContent = '▶ 执行'; note('启动失败：' + error, true); });
+  }
+});
+document.getElementById('cmd-list').addEventListener('change', function (event) {
+  if (event.target && event.target.getAttribute && event.target.getAttribute('data-field') === 'seedMode') {
+    var card = event.target.closest('.cmdcard');
+    if (card !== null) syncSeedFields(card);
+  }
+});
+document.getElementById('cmd-list').addEventListener('input', function (event) {
+  var t = event.target;
+  if (t === null || t.getAttribute === undefined || t.getAttribute('data-field') !== 'name') return;
+  var card = t.closest('.cmdcard');
+  if (card === null) return;
+  var name = t.value.trim();
+  var title = card.querySelector('.cmdname');
+  if (title !== null) title.textContent = name.length > 0 ? name : '未命名指令';
+  var run = card.querySelector('[data-run]');
+  if (run !== null) { run.setAttribute('data-run', name); run.disabled = name.length === 0; }
+});
+document.getElementById('cmd-save').addEventListener('click', function () {
+  var button = this;
+  button.disabled = true;
+  api('/api/quick/save', { commands: collect() }).then(function (value) {
+    button.disabled = false;
+    if (value && value.ok) { note('已保存 ' + value.saved + ' 条指令（即时生效）'); setTimeout(function () { location.reload(); }, 600); }
+    else note('保存失败：' + ((value && value.reason) || '未知原因'), true);
+  }).catch(function (error) { button.disabled = false; note('保存失败：' + error, true); });
+});
+syncAll();
+</script>`
+  return pageShell('快捷指令', body, { extraCss: `${TABS_CSS}${COMMANDS_CSS}`, wrapClass: 'wide' })
+}
+
+function commandCardHtml(command, index) {
+  const seed = command.seed ?? {}
+  const mode = String(seed.mode ?? 'range')
+  const safe = (value) => escapeHtml(String(value ?? ''))
+  return `<section class="cmdcard">
+<div class="cmdhead">
+<span class="cmdname">${command.name ? safe(command.name) : '未命名指令'}</span>
+<span class="grow"></span>
+<button type="button" class="mini" data-run="${safe(command.name)}" title="立即执行该指令（沿用最近一次运行参数）"${command.name ? '' : ' disabled'}>▶ 执行</button>
+<button type="button" class="mini danger" data-del="${index}" title="删除该指令">✕ 删除</button>
+</div>
+<div class="cmdfields">
+<label class="f"><span>名称</span><input type="text" data-field="name" value="${safe(command.name)}" placeholder="抽卡"></label>
+<label class="f"><span>标签（聊天里显示）</span><input type="text" data-field="label" value="${safe(command.label)}" placeholder="🎲 抽卡"></label>
+<label class="f narrow"><span>生成数</span><input type="number" data-field="count" value="${safe(command.count ?? 1)}" min="1" max="64"></label>
+<label class="f"><span>模式</span><select data-field="batchMode">
+<option value="serial"${command.batchMode !== 'batch' ? ' selected' : ''}>连续 N 次（重滚种子）</option>
+<option value="batch"${command.batchMode === 'batch' ? ' selected' : ''}>批次 1 次（改 batch_size）</option>
+</select></label>
+<label class="f"><span>种子策略</span><select data-field="seedMode">
+<option value="range"${mode === 'range' ? ' selected' : ''}>随机范围</option>
+<option value="digits"${mode === 'digits' ? ' selected' : ''}>固定位数</option>
+<option value="timestamp"${mode === 'timestamp' ? ' selected' : ''}>时间戳</option>
+</select></label>
+<span class="seedfields" data-seed="range">
+<label class="f narrow"><span>最小值</span><input type="number" data-field="min" value="${safe(seed.min)}" placeholder="1"></label>
+<label class="f narrow"><span>最大值</span><input type="number" data-field="max" value="${safe(seed.max)}" placeholder="4294967295"></label>
+</span>
+<span class="seedfields" data-seed="digits">
+<label class="f narrow"><span>位数</span><input type="number" data-field="length" value="${safe(seed.length)}" placeholder="9"></label>
+</span>
+<span class="seedfields" data-seed="timestamp">
+<label class="f narrow"><span>补偿位</span><input type="number" data-field="extra" value="${safe(seed.extraDigits)}" placeholder="3"></label>
+</span>
+</div>
+<div class="cmdhelp muted">连续 N 次＝每次重滚种子串行跑 N 次；批次＝一次运行出 N 张（工作流里改 <code>batch_size</code>，无该字段时提示改用连续）</div>
+</section>`
+}
+
+const COMMANDS_CSS = `
+.cmdtoolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px}
+.cmdtoolbar .muted{flex:1;min-width:240px}
+#cmd-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:12px;align-items:start;justify-content:start}
+#cmd-list .card.muted{grid-column:1/-1}
+.cmdcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.cmdhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.cmdhead .cmdname{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdhead .grow{flex:1}
+.cmdfields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px}
+.cmdfields .f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cmdfields .f>span{font-size:12px;color:var(--muted)}
+.cmdfields .f.narrow{max-width:170px}
+.cmdfields input,.cmdfields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:13px}
+.seedfields{display:contents}
+.seedfields[hidden]{display:none}
+.cmdhelp{margin-top:10px;font-size:12px;line-height:1.5}
+.cmdhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
+`

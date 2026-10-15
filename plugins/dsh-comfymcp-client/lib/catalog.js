@@ -41,7 +41,16 @@ function text(value) {
 }
 
 function oneLine(value) {
-  return String(value ?? '').replaceAll(/\s+/g, ' ').slice(0, 400)
+  // 对象/数组必须先 JSON.stringify，否则 String() 产物是 "[object Object]"
+  let raw = value
+  if (typeof raw !== 'string') {
+    try {
+      raw = JSON.stringify(raw)
+    } catch {
+      raw = String(raw)
+    }
+  }
+  return String(raw ?? '').replaceAll(/\s+/g, ' ').slice(0, 400)
 }
 
 /** Build the comfymcp_* tool definitions; DI keeps tests free of the dsh runtime. */
@@ -194,12 +203,15 @@ export function createTools({ define, bridge, askUser }) {
     define({
       name: 'comfymcp_push_form',
       description:
-        'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). Seeds were randomized once at push time; every seed question offers use/re-roll/fixed options. ' +
+        'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). ' +
+        'Every question carries its purpose in the header (title · 1/N), the recommended value first labelled （推荐）, and the countdown rule in the question text. Seeds were randomized once at push time; every seed question offers use/re-roll/fixed options. ' +
+        'If the plugin config enables autoAcceptForm, a visible countdown runs on the question card: when it expires without user input the form auto-resolves to the recommended values (answers=[], seeds keep their randomized value), flagged `auto:true` — proceed with comfymcp_apply_form right away; a late user answer arrives as a message afterwards. ' +
+        'When the user dismisses the form instead, the result is `cancelled:true` — do not run; ask the user what to change and push a fresh form (a new push always carries a fresh countdown). ' +
         'Answers { ok, answers: [{id, selected[], custom?}], fields } where ids are `field:<node>.<input>`. Follow with comfymcp_apply_form. Requires a live user session.',
       parameters: {
         graph: { type: 'json', required: true, description: 'The analyzed graph (unchanged).' },
         fields: { type: 'json', required: true, description: 'Fields as produced by comfymcp_analyze_workflow.' },
-        title: { type: 'string', description: 'Short form title shown above the questions.' },
+        title: { type: 'string', description: '用途标题，写进每题 header（例如「白色机甲 · 生成参数」）；缺省「生成参数确认」' },
       },
       timeoutMs: 600000,
       isConcurrencySafe: () => false,
@@ -208,13 +220,95 @@ export function createTools({ define, bridge, askUser }) {
         render: (_args, value) => text(oneLine(value)),
       },
       async execute(args, exec) {
-        const { questions, prepared } = buildQuestions(args.fields)
-        const answer = await askUser(
-          {
-            questions,
-          },
-          exec,
-        )
+        // title 决定每题 header 的用途说明（对话框只渲染 header/question/options）
+        const { questions, prepared } = buildQuestions(args.fields, Math.random, { title: args.title })
+        // 倒计时自动确认：开启后超时未作答 → 自动采用推荐参数（空 answers＝种子沿用随机值、其余保持推导值）
+        const seconds = bridge.config?.autoAcceptForm === true
+          ? Math.max(1, Number(bridge.config?.autoAcceptFormSec) > 0 ? Number(bridge.config.autoAcceptFormSec) : 30)
+          : 0
+        if (seconds > 0 && questions.length > 0) {
+          // 对话框只渲染 question 与 options —— 提示必须写进 question 文本才可见；
+          // 每页都写，翻到第 2/3/4 题也知道倒计时规则与「不答即用推荐值」。
+          const note = `⏱ ${seconds} 秒未答 → 自动采用【推荐】值继续（本框可留空）`
+          questions.forEach((question, index) => {
+            questions[index] = {
+              ...question,
+              question: `${question.question}｜${note}`,
+              detail: `${question.detail ?? ''} · ${note}`,
+            }
+          })
+        }
+        const cancelled = (reason) => ({
+          ok: true,
+          cancelled: true,
+          reason,
+          answers: [],
+          fields: prepared,
+          answered: 0,
+        })
+        const isUserCancellation = (error) => {
+          const code = String(error?.code ?? '')
+          const message = String(error?.message ?? error ?? '')
+          return code === 'ASK_CANCELLED' || /cancel|abort|取消|中断/i.test(message)
+        }
+        // 计时提问的前置失败（非根代理 / 重复等待 / 等待参数非法）才值得退回阻塞式提问；
+        // 用户主动取消绝不能重弹，否则会再冒出一次没有倒计时的对话框。
+        const isTimedPrecondition = (error) => {
+          const code = String(error?.code ?? '')
+          if (code === 'BAD_TIMEOUT' || code === 'DUPLICATE_WAIT') return true
+          const message = String(error?.message ?? error ?? '')
+          return /timed questions require a live agent|live runtime root|DELEGATED_CALLER/i.test(message)
+        }
+        let timer = null
+        let answer
+        if (seconds > 0) {
+          // 本地守卫计时器：与 seam 计时（askTimed）双保险——seam 正常时到期返回 pending；
+          // 旧版 stub/seam 挂起不返回时由本地守卫兜底触发自动采用。
+          const guard = new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ autoTimeout: true }), seconds * 1000)
+          })
+          try {
+            // 计时提问：DSH 卡片自带可见倒计时；到期返回 { pending: true }（问题仍可后答，
+            // 迟到回答会以用户消息送达）。askTimed 需要活跃根代理 + 工具调用 id。
+            answer = await Promise.race([askUser({ questions }, exec, seconds), guard])
+          } catch (error) {
+            if (isUserCancellation(error)) {
+              if (timer !== null) clearTimeout(timer)
+              return cancelled('用户取消了参数确认（未作答）；不要继续执行，先与用户确认下一步')
+            }
+            if (!isTimedPrecondition(error)) throw error
+            // askTimed 不可用 → 退回阻塞式 ask + 本地守卫（倒计时仍然生效）
+            try {
+              answer = await Promise.race([askUser({ questions }, exec), guard])
+            } catch (retryError) {
+              if (isUserCancellation(retryError)) {
+                if (timer !== null) clearTimeout(timer)
+                return cancelled('用户取消了参数确认（未作答）；不要继续执行，先与用户确认下一步')
+              }
+              throw retryError
+            }
+          }
+        } else {
+          try {
+            answer = await askUser({ questions }, exec)
+          } catch (error) {
+            if (isUserCancellation(error)) {
+              return cancelled('用户取消了参数确认（未作答）；不要继续执行，先与用户确认下一步')
+            }
+            throw error
+          }
+        }
+        if (timer !== null) clearTimeout(timer)
+        if (answer !== null && typeof answer === 'object' && (answer.autoTimeout === true || answer.pending === true)) {
+          return {
+            ok: true,
+            auto: true,
+            autoReason: `倒计时 ${seconds} 秒未收到用户作答，已自动采用推荐参数（种子沿用随机值，其余保持推导值）；用户的迟到回答将以消息送达，届时可按新选择调整`,
+            answers: [],
+            fields: prepared,
+            answered: 0,
+          }
+        }
         const items = Array.isArray(answer?.answers) ? answer.answers : []
         return {
           ok: true,

@@ -1,6 +1,50 @@
 # 迭代计划（MVP Roadmap）
 
-> 版本规约：四段式 `主.较.常.快`；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
+> 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
+
+## snapshot-0.2.1（稳定，2026-10-15 封板）✅
+
+> 开发分支 `dev-snapshot-20261013-0.2.1` → 已合并回 `dev`，打 tag `v0.2.1`；插件 `plugins/dsh-comfymcp-client` 版本 0.2.1。
+
+**MVP 主题：配置界面精简 + 模型卸载开关语义修正；追加工作台 UI 打磨（瀑布流/卡片/灯箱/参数框）。**
+
+| # | 迭代内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | 配置界面精简：长提示文案统一收进「ⓘ」悬浮 tips（字段、开关、分区标题皆可），去掉常显说明段落；标签与占位文案收紧（如「ComfyUI 服务地址」→「ComfyUI 地址」、「comfy-mcp 服务来源」→「服务来源」） | `client.js`（`Hint` 组件 + 各 SettingsSection） | ✅ |
+| 2 | 目录布局改为一行「当前布局」链接行（主目录 ｜ 工作流 ｜ 产物 ｜ 数据），不再常显四段拼接说明 | `client.js` `layoutSummary()` | ✅ |
+| 3 | **模型卸载开关语义修正**：关闭时**移除工作流自带的卸载节点**（此前只做「插入」，工作流文件自带 `UnloadAllModels` 时关闭也照样卸载） | `lib/forms.js` `stripUnloadNodes/unloadNodeIds`、`lib/runcore.js` | ✅ |
+| 4 | 开启时若工作流已含卸载节点则**沿用不再重复插入**（`already present`），运行记录 `form.unload.reason` 说明实际处置 | `lib/forms.js` `integrateUnloadNode` | ✅ |
+| 5 | 卸载开关行补运行期状态说明（置灰原因 / 是否整合 / 已移除几个节点） | `client.js` 模型卸载段 | ✅ |
+| 6 | 测试：卸载节点移除与沿用两路（表单层 3 例 + 边界） | `test/forms.test.js` | ✅ |
+
+| 7 | **远程传输改造**：远程模式不再 spawn 本地 stdio 宿主，改用 **MCP Streamable HTTP 直连**端点（单端点 POST + JSON/SSE 双响应形态 + Mcp-Session-Id 会话 + Bearer 令牌）；宿主工具名（connection_status / list_remote_tools / call_remote_tool / fetch_artifacts）经门面翻译成原生工具，上层无感 | lib/mcp-http.js、lib/bridge.js | ✅ |
+| 8 | 修远程报错根因：探测曾对**远程模式**也强制要求 hostEntry（必然报「宿主入口未配置」）；现在仅内置/stdio 模式要求，远程报传输/端点错误 | lib/bridge.js probe() | ✅ |
+| 9 | 配置切换即时生效：embeddedServer / endpoint / authToken 变化时丢弃旧客户端并重建（此前一直复用旧 stdio 子进程） | lib/bridge.js applyOverlay() | ✅ |
+| 10 | 设置页：远程模式显式标注「Streamable HTTP」，新增「访问令牌」；传输/会话与宿主入口按模式分开展示 | client.js | ✅ |
+| 11 | 测试：HTTP 客户端 6 例（JSON/SSE、会话头、Bearer、连接失败/超时/无端点、门面翻译）+ 桥接 4 例（传输选择、远程探测、切换重建） | `test/mcp-http.test.js`、`test/bridge.test.js` | ✅ |
+| 12 | **表单倒计时自动确认**：新增 `autoAcceptForm`（默认关）+ `autoAcceptFormSec`（默认 30s）；开启后推送参数表单即启动倒计时，首题标注「⏱ N 秒内未作答将自动采用推荐参数」，超时未作答自动以推荐参数完成（空 answers＝种子沿用推送时随机值、其余保持推导值），结果标 `auto:true` 与 `autoReason`；关闭则一直等待用户作答 | `lib/catalog.js` `comfymcp_push_form`、`lib/config.js`、`lib/persist.js` | ✅ |
+| 13 | **卸载开关语义落地强化**（目的定稿：开启＝跨工作流生成方便重新加载模型；关闭＝同一工作流连续生成抽卡时模型热加载加速）：设置页说明改写为该语义；运行摘要透出 `autoUnload` 与 `form.unload`，运行卡片新增「⏏ 卸载：…（开关＝开/关）」处置行 | `client.js`、`lib/rund.js` `summarize`、`lib/wfpage.js` `groupHtml` | ✅ |
+| 15 | 测试 +6：倒计时超时自动确认（fake timers，验证提示注入/auto 标记/空答案）、关闭时正常等待、先答先胜（计时器清理）；`summarizeRun` 卸载透出与旧记录兼容 | `test/catalog.test.js`、`test/rund.test.js` | ✅ |
+| 16 | **修倒计时「开启后未生效」**：提示原先写在 ask 对话框不渲染的 `detail` 字段 → 移入首题 `question` 文本（「⏱ N 秒内未作答将自动采用推荐参数并继续执行；本框可留空」）；重装插件后需重启 DSH 才加载新逻辑 | `lib/catalog.js` | ✅ |
+| 17 | **快捷指令 Tab（第 4 个 Tab）**：`/ui/commands` 结构化管理指令（名称/标签/生成数/模式/种子策略，增删行、保存即写回配置，就地「▶ 执行」），不再手写 JSON；DSH 面板同步为四 Tab | `lib/wfpage.js` `renderCommandsHtml`、`lib/workbench.js` `pageCommands/saveQuickCommands`、`lib/control-server.js`、`client.js` | ✅ |
+| 18 | **抽卡多生成数**（缺省 1）：指令新增 `count` + `batchMode`——`serial` 连续调 N 次（每次重滚种子，第 1 次即启，其余后台链式补跑）；`batch` 批次生成（直接改图中 `batch_size=N` 一次执行，无该字段则提示改用连续） | `lib/quick.js` `applyBatchSize`、`lib/workbench.js` `quickRun/chainSerialReruns` | ✅ |
+| 19 | 测试 +9：quick 指令解析钳制、批次改写与边界；串行链（3 次全启动且种子互异）、批次单跑、无批次字段回退提示、saveQuickCommands 归一化落盘、指令页渲染；页面体检补 commands 页 | `test/quick.test.js`、`test/workbench.test.js`、`scripts/check-page-templates.mjs` | ✅ |
+| 20 | **修「其他会话场景无倒计时」**：截图中无倒计时的对话框是模型自发的 ask_user_question 追问（页眉/正文为模型拟写），不经过插件、技术上不可安全劫持 → ①`comfymcp_status.config` 透出 `autoAcceptForm`+`autoAcceptFormSec`；②生成流技能硬性规约：策略开启时**禁止**独立追问对话框，一切澄清选择并入 push_form 表单（推荐项第一位）由倒计时兜底，`auto:true` 直接继续不重复提问 | `lib/bridge.js` `publicConfig`、`lib/skills.js`、`test/bridge.test.js`、`test/skills.test.js` | ✅ |
+| 21 | **倒计时全面可见化（读取 DSH 宿主源码定案）**：①push_form 改走 seam `askTimed(callId, N*1000)`——**提问卡片自带可见倒计时**，到期返回 pending（问题仍可后答，迟到回答以用户消息送达），旧 seam/非根代理回退本地竞速守卫（双保险）；②新增 preset 覆盖 bundle `dsh-preset-timed-ask`：把 shipped `preset-standard` 的 tool-ask-user 切 `mode: timed, timeout: 30`——**所有** ask_user_question 卡片 30 秒可见倒计时、到期 pending 不阻塞（`timeout:-1` 可阻塞）；③技能同步 timed 语义（pending=按推荐项继续；策略关闭时模型显式传 `timeout:-1`） | `lib/catalog.js`、`index.js`、`lib/skills.js`、`dsh-preset-timed-ask/`（新 bundle） | ✅ |
+| 22 | **卸载开关处置核验**：实测运行中进程 `autoUnloadModel=false` 已生效、`runCore` 关闭时摘除工作流自带 UnloadAllModels 节点逻辑本就存在（昨日记录为旧进程产物）——补 3 条 runcore 集成测试钉死「关＝保存的图真的没有卸载节点、开＝输出链插入卸载节点」；用户昨日所见「取消未生效」源于旧进程 + 旧记录，今日进程已正确 | `test/runcore.test.js` | ✅ |
+| 23 | **成果物瀑布流改为从左侧起排**：根因＝页面容器 `.wrap{max-width:860px;margin:0 auto}` 居中，单卡片看起来「从中间开始」→ 新增 `.wrap.wide` 全宽左对齐（成果物/指令页启用），瀑布流由固定 `column-count` 改为 `column-width:300px` 自适应列数（列宽固定、列数随窗口、始终左起），两列平铺同步 `auto-fill minmax(300px,1fr)+justify-content:start`；无头浏览器截图实测：单卡片左边缘 x=20（原 x=267） | `lib/wfpage.js` `pageShell(wrapClass)`/`ARTIFACTS_CSS`、`test/wfpage.test.js` | ✅ |
+| 24 | **指令页 UI 重做（卡片式）**：原横向表格 8 列在窄容器里溢出（位数/补偿位列被切、操作列需横滚）→ 改为每条指令一张卡：卡片头（名称 + ▶ 执行 + ✕ 删除）、带标签字段网格（名称/标签/生成数/模式/种子策略）、**按种子策略只显示相关参数**（范围→最小值/最大值、位数→位数、时间戳→补偿位，不再并排禁用）、卡内说明；工具栏保留新增/保存/状态提示；页面 `wrapClass:'wide'` 显示多列卡片；页面脚本体检补 commands 页并改为按页各自断言 | `lib/wfpage.js` `renderCommandsHtml/commandCardHtml/COMMANDS_CSS`、`scripts/check-page-scripts.mjs`、`test/wfpage.test.js` | ✅ |
+| 25 | **瀑布流升级为真瀑布流（JS 最短列装填）**：CSS 多列在卡片高度差异大时平衡失败（用户实测：第 1-3 列只放一张就断、第 4 列堆两张、左下大片空洞）→ 改为 `display:flex` + JS `layoutMasonry()`：固定列宽 300px 算列数，按顺序把每组塞进**当前最矮的列**（并列取最左），图片加载完成/窗口变化后重排；`unwrapMasonry()` 保证切到两列平铺/重叠摊开时还原顺序。**踩坑**：页面脚本拼在 bootstrap 之后，模块级 `var MASONRY_TARGET` 在首次布局时仍是 undefined → 列数算出 NaN → `list[NaN].appendChild` 抛错、整页脚本中断；改为函数内常量。无头浏览器实测：4 列同顶线、左起铺满、无空洞 | `lib/wfpage.js` `ARTIFACTS_CSS`/`layoutMasonry`/`unwrapMasonry`/`scheduleMasonry`、`test/wfpage.test.js` | ✅ |
+| 26 | **参数确认框三修（用户三点反馈）**：①**说清干什么**——每题 header＝「title · 1/N」（新增 `title` 贯通 `buildQuestions`，技能要求模型必须传 title），字段名中文化（`提示词（CLIPTextEncode）`/`采样步数`/`生成张数`…）；②**体现推荐值**——每题题面写明「推荐：X／不答将采用推荐值 X」，选项首位标 `（推荐）`（enum/boolean 用当前值，seed 用本轮随机值，number/image 用现值），并保证「（推荐）」后缀不会被写进图（`resolveAnswer` 剥离，含边界测试）；③**取消后不再吞掉倒计时**——原先任何异常都退回阻塞式 ask，用户关掉一次对话框就会**再弹一个没有倒计时的框**；现在只在计时提问前置失败（BAD_TIMEOUT/DUPLICATE_WAIT/非活跃根代理）时才回退，用户取消返回 `cancelled:true`（不执行、不重弹），倒计时说明写到**每一页**（`⏱ N 秒未答 → 自动采用【推荐】值继续（本框可留空）`） | `lib/forms.js` `buildQuestions/resolveAnswer/FIELD_LABELS`、`lib/catalog.js` push_form、`lib/skills.js`、`test/forms.test.js`、`test/catalog.test.js` | ✅ |
+| 27 | **点击图片放大改为整屏遮罩灯箱**（对齐 ComfyUI 查看器体感）：原先是一个居中小弹窗（`.box` + 88vw/74vh 上限），放大后仍被窗口边距框住 → 改为 `.modal.lightbox` **铺满整个浏览器窗口**的遮罩：舞台 `position:absolute;inset:0` 铺满、图片在其中缩放平移、超出部分由遮罩裁掉；右上角圆形 ✕（Esc、点遮罩空白也可关，且只在未拖动时关，避免误触），底部浮层工具条 −/百分比/＋/适应窗口/1:1/在新窗口打开/下载，打开即「适应窗口」按窗口尺寸算比例；滚轮**以光标为锚点**缩放、指针拖拽平移（Pointer Events，触屏可用）、双击切换 适应↔1:1、`+/-/0/1` 快捷键，`viewClamp` 保证任何方向至少 40px 可见；打开时锁页面滚动。工作流页 `preview2` 与成果物页 `preview` 共用同一实现。**踩坑**：无头浏览器截图抓不到 `will-change:transform` 合成层（数值已生效但画面不更新），去掉该提示后截图可验证；另外打开瞬间布局未稳定会用到旧高度，改用 `requestAnimationFrame` 补一次 fit | `lib/wfpage.js` `PREVIEW_CSS`/`PREVIEW_JS`/两页灯箱标记、`scripts/check-page-scripts.mjs`、`test/wfpage.test.js` | ✅ |
+| 28 | **灯箱关闭按钮对称 + 瀑布流「每排从最左开始」**（用户回图反馈两点）：①关闭 ✕ 原来上 10px／右 16px，且字形按 button 默认基线居中（无头实测 `gapTop=10 gapRight=16`）→ 改为上 16px＝右 16px，打开时用 `--lb-pad` 变量补上滚动条宽度（避免被压在滚动条下看起来被切），✕ 改为 flex 居中落在圆心；②瀑布流最短列装填会让某排的下一张卡落到中间（用户实测 5 列 6 卡时第 6 张落第 4 列，左下大片空白）→ 改为**同排优先往左排**：以最矮列高为基准，列高差在 `ROW_SLACK=48px` 以内视为同一排、按列序取最左一列，只有真矮很多的列才优先补位（既不留左侧空洞，又保留瀑布流补位能力） | `lib/wfpage.js` `PREVIEW_CSS`/`showPreview`/`layoutMasonry`、`test/wfpage.test.js` | ✅ |
+| 29 | **成果物卡片内容重构 + 瀑布流改轮转填充**（用户回图：仍显得从中间起排、卡片内容乱）：①**排布**：`ROW_SLACK` 启发式仍会因个别卡特别高而把下一张塞到中间列（实测列高 520/971 并存）→ 直接改为**按列序轮转**（`index % columns`）：第 1 排左→右、第 2 排仍从第 1 列开始，绝不出现「中间插一张、左边空一片」，代价是列尾参差（瀑布流本来如此）。②**卡片**：原设计里「运行头 + 元信息 + 提示词」是**无边框的松散三行**、下面是另一个卡片盒（图 + 文件名 + 9 个按钮挤两行），两个视觉组互不对齐 → 改为**一次运行＝一张整卡**，内部四区用发丝线分隔：卡片头（勾选 + 工作流 + 状态 + 元信息单行右对齐省略）、提示词（单行省略可展开）、媒体（1:1 满宽，勾选框浮到图左上角不再占行高）、文件区（文件名 + 标签/字段 chip + 操作）。③**降噪**：标签/集合/字段最多显示 3/2 个、其余折叠为 `+n`（悬浮看全），操作分主次——常看的「＋标签 / ⬇下载 / ✕删除」+「⋯ 更多」就地展开（标签集合/集合/字段/绑定提示词/来源/导出 JSON）。**根因级发现**：全局表单规则 `label{min-width:130px}`（本意是运行表单字段标签）也套到勾选框 `<label class="pick">` 上 → 勾选框实测宽 130px，把卡片头元信息挤成 7px 一个字；已收窄为 `.row label` 并给 `.pick` 加 `min-width:0`。改后实测卡片头 `pick 20px / 名称 49 / 状态 75 / 元信息 117`，同排卡片高 520/520/520/520/522（近乎等高） | `lib/wfpage.js` `ARTIFACTS_CSS`/`artifactsRunsHtml`/`layoutMasonry`/`ARTIFACTS_JS`、`scripts/check-page-scripts.mjs`、`test/wfpage.test.js` | ✅ |
+| 30 | **多图＝固定尺寸收集卡 + 子级画廊；视频首帧 / 音频固定封面**（用户需求）：原先同一运行出 N 张时是**纵向铺开 N 张卡**（≥4 张走 `.fan` 重叠），卡片被撑得很高、与单卡不成比例 → 改为：①**多张（≥2）合成一张收集卡**，尺寸与单卡完全一致（复用同一 `.mediacard/.thumb/.meta` 结构、媒体区仍 1:1）；②媒体区内**最多 5 张小角度扑克摊开**（`±7°`，nth-child 逐张给角度与偏移，悬浮时再展开一点），角标显示「N 张 · 另 K」；③点任意一张进入**灯箱子级画廊**：标题带序号 `名字 · 2/5`、底部缩略条高亮、`← →` 键或点缩略条逐张切换（单张模式不受影响，`GALLERY.items=[]`）；画廊索引随渲染写进 `window.__galleries`，检索结果也一并下发（`queryArtifacts` 增加 `galleries`），否则检索后点开会拿到旧列表；④**视频＝首帧**（`<video muted preload=metadata src=…#t=0.1>` + ▶ 角标）、**音频＝固定封面**（渐变 + 波形条 + ♪，不依赖磁盘缩略图）；⑤逐张的标签/下载/删除仍可达：`☰ 文件列表` 就地展开完整列表 | `lib/wfpage.js` `thumbInnerHtml`/`audioCoverHtml`/`artifactsRunsHtml`/`showGallery`/`galleryShow`/`galleryStep`/灯箱标记、`lib/workbench.js` `queryArtifacts`、`test/wfpage.test.js` | ✅ |
+| 31 | **取消页内重复页头 + 布局压缩**（用户回图：顶部已有一套 Tab，页内又重复一套）：静态页是被**客户端插件的 iframe** 嵌进来的，插件已渲染「ComfyUI 工作台 + 我的工作流/模板/成果物/指令」外层 Tab，而每个静态页又渲染了一遍 `<h1>` + `workbenchTabs` → 视觉上两套。改为 **页头条件显示**：标题与页内 Tab 包进 `.pagehead`（默认 `display:none`），`pageShell` 注入的 `FRAME_JS` 只在独立窗口（`window.self === window.top`）时加 `.standalone` 露出来——嵌在工作台里完全看不到重复，单独开新窗口仍有导航。**布局同时压缩**：`.wrap` 顶部 20→14px；成果物页把摘要 `#runs-summary` 并入工具栏行（右侧对齐）并给工具栏加卡片底色，少一行且信息不丢；指令页把「最近一次运行」并进 `#cmd-note` 提示文案；检索框 `margin` 收紧。实测嵌入态首屏：宿主 Tab → 检索行 → 工具栏行（含摘要）→ 卡片，无重复标题 | `lib/wfpage.js` `pageShell`/`FRAME_JS`/`PAGE_CSS`/四个页渲染器、`docs/operations.md`、`test/wfpage.test.js` | ✅ |
+
+**下个迭代候选**：节点连线式画布、对象存储直传、多 ComfyUI 实例、表单记忆、国际化、成果物标签批量编辑。
+
+**封板校验（2026-10-15）**：插件 195 项测试全绿（18 个测试文件）· 页面模板体检 5 页完整 · 页面脚本体检 4 页语法 OK 且关键监听齐全 · 全仓 `pnpm test` + `pnpm typecheck` 通过 · 无头浏览器实测（瀑布流排布 / 卡片分层 / 灯箱缩放与画廊 / 页头条件显示）逐项截图核对。
 
 ## snapshot-0.2.0（稳定主分支，2026-10-13 封板）✅
 
