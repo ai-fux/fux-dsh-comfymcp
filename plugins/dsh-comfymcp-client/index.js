@@ -16,6 +16,8 @@ import { defineTool } from './lib/define.js'
 import { ComfymcpBridge } from './lib/bridge.js'
 import { applyHomeDefaults, resolveConfig } from './lib/config.js'
 import { createTools } from './lib/catalog.js'
+import { createBusinessStore } from './lib/business.js'
+import { createDevLog } from './lib/devlog.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
 import { createControlServer } from './lib/control-server.js'
@@ -71,7 +73,11 @@ export function apply(ctx, config) {
       }
       return userQuestions.ask(payload)
     }
-    const tools = createTools({ define: defineTool, bridge, askUser })
+    // 业务配置（首次生成的工作流选择优化）：工具层与工作台共用同一个存储实例
+    const business = createBusinessStore({ dataDir: effective.dataDir })
+    // 开发日志：异常/告警进环形缓冲 + dev-log.jsonl，供 comfymcp_dev 出报告（开发模式专用）
+    const devLog = createDevLog({ dataDir: effective.dataDir, devMode: effective.devMode === true })
+    const tools = createTools({ define: defineTool, bridge, askUser, business, devLog, devMode: effective.devMode === true })
     for (const tool of tools) {
       disposers.push(ctx.tools.register(tool))
     }
@@ -99,6 +105,7 @@ export function apply(ctx, config) {
     const workbench = createWorkbenchMethods({
       bridge,
       config: effective,
+      business,
       persistWrite: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
     })
     Object.assign(methods, workbench)
@@ -108,6 +115,7 @@ export function apply(ctx, config) {
       token: effective.controlToken,
       version,
       log,
+      devLog,
     })
     control
       .start()

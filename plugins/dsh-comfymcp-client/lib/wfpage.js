@@ -353,6 +353,7 @@ export function workbenchTabs(active, token = '') {
 ${item('mine', '我的工作流', '/ui', typeof active === 'object' ? active.mine : undefined)}
 ${item('library', '模板', '/ui/library', typeof active === 'object' ? active.library : undefined)}
 ${item('artifacts', '成果物', '/ui/artifacts', typeof active === 'object' ? active.artifacts : undefined)}
+${item('business', '业务配置', '/ui/business', typeof active === 'object' ? active.business : undefined)}
 ${item('commands', '指令', '/ui/commands', typeof active === 'object' ? active.commands : undefined)}
 </nav>`
 }
@@ -1869,3 +1870,294 @@ const COMMANDS_CSS = `
 .cmdhelp{margin-top:10px;font-size:12px;line-height:1.5}
 .cmdhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
 `
+
+const BUSINESS_CSS = `
+.biztoolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px}
+.biztoolbar .muted{flex:1;min-width:240px}
+/* 业务类管理条：动态增删（新增后卡片下拉立即可选） */
+.bizkinds{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:9px 12px;margin-bottom:12px}
+.bizkinds .muted{font-size:12px}
+.bizkinds .grow{flex:1}
+.bizkinds input{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:12px}
+.kindchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 6px 2px 10px;font-size:12px;background:var(--accent-weak);color:var(--accent)}
+.kindchip .kindx{border:0;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:2px 3px;border-radius:999px}
+.kindchip .kindx:hover{background:rgba(192,57,43,.18);color:var(--err)}
+#biz-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px;align-items:start;justify-content:start}
+#biz-list .card.muted{grid-column:1/-1}
+.bizcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.bizhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.bizhead .biztitle{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bizhead .grow{flex:1}
+.bizhead .chip{font-size:11px}
+.bizfields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px}
+.bizfields .f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.bizfields .f>span{font-size:12px;color:var(--muted)}
+.bizfields .f.narrow{max-width:170px}
+.bizfields input,.bizfields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-size:13px}
+.bizparams{display:contents}
+.bizparamtools{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px}
+.bizparamtools .muted{font-size:11.5px}
+.bizfoot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+.bizfoot .grow{flex:1}
+.bizhelp{margin-top:10px;font-size:12px;line-height:1.5}
+.bizhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
+`
+
+/**
+ * 业务配置页（第 5 个 Tab）：一次运行＝一张业务卡。
+ * 把「跑过/加载过」的工作流按业务类固定下来，后续会话用自然语言直接命中，
+ * 不再每次去服务端捞模板、枚举模型挑最优解（省 token）。
+ */
+export function renderBusinessHtml({ profiles = [], kinds = [], workflows = [], hiddenRuns = 0, token = '' } = {}) {
+  // 业务类来自存储（页面可动态增删）；卡片引用到清单外的 id 时也补进下拉，避免显示不了当前值
+  const kindList = [...kinds]
+  for (const profile of profiles) {
+    const id = String(profile.business ?? '').trim()
+    if (id.length > 0 && !kindList.some((kind) => kind.id === id)) {
+      kindList.push({ id, label: profile.label ?? id, keywords: [] })
+    }
+  }
+  const kindOptions = (current) => kindList
+    .map((kind) => `<option value="${escapeHtml(kind.id)}"${kind.id === current ? ' selected' : ''}>${escapeHtml(kind.label)}</option>`)
+    .join('')
+  const kindChips = kindList
+    .map((kind) => `<span class="kindchip" title="${escapeHtml((kind.keywords ?? []).join('，') || '没有触发词')}">${escapeHtml(kind.label)}<button type="button" class="kindx" data-kind-remove="${escapeHtml(kind.id)}" title="删除该业务类（仍被配置引用时会拒绝）">✕</button></span>`)
+    .join('')
+  // 工作流候选：按来源分组的下拉（跑过的 / 我的工作流 / 本地文件 / 模板库 / 已配置），保证「有数据」
+  const wfList = (Array.isArray(workflows) ? workflows : [])
+    .map((entry) => (typeof entry === 'string'
+      ? { name: entry, origin: '本地文件' }
+      : { name: String(entry?.name ?? ''), origin: String(entry?.origin ?? '其它') }))
+    .filter((entry) => entry.name.length > 0)
+  const wfOrigins = [...new Set(wfList.map((entry) => entry.origin))]
+  const wfSelectOptions = (current) => {
+    const groups = wfOrigins.map((origin) => {
+      const items = wfList.filter((entry) => entry.origin === origin)
+      return `<optgroup label="${escapeHtml(origin)}（${items.length}）">${items
+        .map((entry) => `<option value="${escapeHtml(entry.name)}"${entry.name === current ? ' selected' : ''}>${escapeHtml(entry.name)}</option>`)
+        .join('')}</optgroup>`
+    }).join('')
+    const missing = current.length > 0 && !wfList.some((entry) => entry.name === current)
+      ? `<optgroup label="当前值"><option value="${escapeHtml(current)}" selected>${escapeHtml(current)}</option></optgroup>`
+      : ''
+    return `<option value=""${current.length === 0 ? ' selected' : ''}>（选择工作流…）</option>${missing}${groups}`
+  }
+  const wfCountText = wfList.length === 0
+    ? '还没发现任何工作流：先跑一次，或到「我的工作流 / 模板」里拉取一个再回来配置'
+    : `可选工作流 ${wfList.length} 个（${wfOrigins.map((origin) => `${origin} ${wfList.filter((entry) => entry.origin === origin).length}`).join(' · ')}）`
+      + (Number(hiddenRuns) > 0 ? ` · 另有 ${hiddenRuns} 个仅有运行记录、没有对应工作流文件（已隐藏，避免选了打不开）` : '')
+  const paramKeys = [
+    ['steps', '采样步数'],
+    ['width', '宽'],
+    ['height', '高'],
+    ['batch_size', '生成数'],
+    ['model', '模型'],
+  ]
+  const card = (profile, index) => {
+    const params = profile.params ?? {}
+    return `<section class="bizcard" data-biz="${escapeHtml(profile.id ?? String(index))}">
+<div class="bizhead">
+<span class="biztitle">${escapeHtml(profile.label ?? businessLabelOf(kinds, profile.business))}</span>
+<span class="chip">${escapeHtml(profile.business ?? 'other')}</span>
+${profile.auto === false ? '<span class="chip">手动</span>' : '<span class="chip">自动登记</span>'}
+<span class="grow"></span>
+<button type="button" class="mini danger" data-biz-remove="${escapeHtml(profile.id ?? '')}">✕ 删除</button>
+</div>
+<div class="bizfields">
+<label class="f"><span>业务类</span><select data-field="business">${kindOptions(profile.business)}</select></label>
+<label class="f"><span>显示名</span><input type="text" data-field="label" value="${escapeHtml(profile.label ?? '')}" placeholder="文生图"></label>
+<label class="f"><span>首选工作流</span><select data-field="workflow">${wfSelectOptions(String(profile.workflow ?? ''))}</select></label>
+<label class="f"><span>触发词（逗号分隔）</span><input type="text" data-field="keywords" value="${escapeHtml((profile.keywords ?? []).join('，'))}" placeholder="画，生成图片，出图"></label>
+<span class="bizparams" data-params-for="${escapeHtml(String(profile.workflow ?? ''))}">
+${paramKeys.map(([key, label]) => `<label class="f narrow"><span>${label}</span><input type="text" data-param="${key}" value="${escapeHtml(params[key] ?? '')}" placeholder="沿用工作流"></label>`).join('\n')}
+</span>
+<span class="bizparamtools"><button type="button" class="mini" data-params-load title="按所选工作流读取它实际有的参数（换工作流后参数区会跟着变）">⟳ 读取该工作流参数</button><span class="muted" data-params-note></span></span>
+<label class="f"><span>备注</span><input type="text" data-field="notes" value="${escapeHtml(profile.notes ?? '')}" placeholder="例如：出图走 turbo，8 步"></label>
+</div>
+<div class="bizfoot"><span>用过 ${Number(profile.uses) || 0} 次</span><span class="grow"></span>
+<span>${profile.lastUsedAt ? `最近 ${escapeHtml(String(profile.lastUsedAt).slice(0, 19).replace('T', ' '))}` : '还没用过'}</span></div>
+</section>`
+  }
+  const cards = profiles.map((profile, index) => card(profile, index)).join('\n')
+  // 不再渲染「已跑过但还没登记」历史栏：新增/编辑配置时工作流下拉已能直接选（候选合并了跑过的 /
+  // 本地文件 / 我的工作流 / 模板库），历史栏只是重复且噪音大；接口保留（工具侧 register 仍可用）。
+  const body = `
+<div class="pagehead"><h1>ComfyUI 工作台</h1>
+${workbenchTabs('business', token)}</div>
+<div class="biztoolbar">
+<button type="button" class="mini" id="biz-add">＋ 新增业务配置</button>
+<button type="button" class="primary" id="biz-save">保存配置</button>
+<span class="muted" id="biz-note">已装 ${profiles.length} 条 · ${escapeHtml(wfCountText)}</span>
+</div>
+<div class="bizkinds" id="biz-kinds">
+<span class="muted">业务类（可动态增删，卡片下拉即用这份清单）：</span>
+${kindChips}
+<span class="grow"></span>
+<input type="text" id="kind-label" placeholder="新业务类名称，如 换脸" size="14">
+<input type="text" id="kind-keywords" placeholder="触发词，逗号分隔，如 换脸，faceswap" size="24">
+<button type="button" class="mini" id="kind-add">＋ 添加业务类</button>
+</div>
+<div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
+<div class="bizhelp muted">每条配置＝一个业务类（默认给文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频，可自行添加）。
+模型在开工前会先用 <code>comfymcp_business</code> 按你说的话匹配：命中就直接用这张配置里的工作流与参数，
+不再去模板库里大海捞针；没命中才走完整探索流程，并把跑通的结果自动登记回来。</div>
+<script>
+var TOKEN = ${JSON.stringify(token)};
+function api(url, payload) {
+  return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
+}
+function bizCards() { return Array.prototype.slice.call(document.querySelectorAll('#biz-list .bizcard')); }
+function bizValues(card) {
+  var get = function (selector) { return card.querySelector(selector); };
+  var text = function (selector) { var el = get(selector); return el === null ? '' : String(el.value || '').trim(); };
+  var params = {};
+  Array.prototype.slice.call(card.querySelectorAll('[data-param]')).forEach(function (el) {
+    var value = String(el.value || '').trim();
+    if (value.length === 0) return;
+    var key = el.getAttribute('data-param');
+    params[key] = (key === 'steps' || key === 'width' || key === 'height' || key === 'batch_size') && /^-?\\d+$/.test(value) ? Number(value) : value;
+  });
+  var business = text('[data-field="business"]') || 'other';
+  return {
+    id: card.getAttribute('data-biz') || business,
+    business: business,
+    label: text('[data-field="label"]') || business,
+    workflow: text('[data-field="workflow"]'),
+    keywords: text('[data-field="keywords"]').split(/[,，]/).map(function (item) { return item.trim(); }).filter(Boolean),
+    notes: text('[data-field="notes"]'),
+    params: params,
+    source: 'saved',
+    auto: false
+  };
+}
+function bizNote(message, bad) {
+  var note = document.getElementById('biz-note');
+  if (!note) return;
+  note.textContent = message;
+  note.style.color = bad ? 'var(--err)' : '';
+}
+/**
+ * 按所选工作流重建参数区：拉「该工作流实际有哪些可调参数」，逐项生成输入框。
+ * 已经填过的值保留，未填的用工作流当前值占位（空＝沿用工作流），换工作流时参数区随之变化。
+ */
+function bizLoadParams(card, options) {
+  var select = card.querySelector('[data-field="workflow"]');
+  var holder = card.querySelector('.bizparams');
+  var note = card.querySelector('[data-params-note]');
+  if (select === null || holder === null) return;
+  var workflow = String(select.value || '').trim();
+  var previous = {};
+  Array.prototype.slice.call(holder.querySelectorAll('[data-param]')).forEach(function (el) {
+    var value = String(el.value || '').trim();
+    if (value.length > 0) previous[el.getAttribute('data-param')] = value;
+  });
+  if (workflow.length === 0) {
+    holder.setAttribute('data-params-for', '');
+    holder.innerHTML = '<span class="muted">先选工作流，再点「⟳ 读取该工作流参数」</span>';
+    if (note !== null) note.textContent = '';
+    return;
+  }
+  if (note !== null) note.textContent = '读取中…';
+  api('/api/business/schema', { workflow: workflow }).then(function (data) {
+    var payload = data && data.value !== undefined ? data.value : data;
+    if (!payload || payload.ok === false) throw new Error((payload && payload.error) || '读取失败');
+    var fields = Array.isArray(payload.fields) ? payload.fields : [];
+    if (fields.length === 0) {
+      holder.innerHTML = '<span class="muted">该工作流没有可调参数（或图里没有这些字段）</span>';
+      if (note !== null) note.textContent = '来源：' + (payload.origin || '-');
+      return;
+    }
+    holder.innerHTML = fields.map(function (field) {
+      var value = previous[field.key] !== undefined ? previous[field.key] : '';
+      return '<label class="f narrow" title="' + (field.classType || '') + ' ' + (field.nodeId || '') + '"><span>' + field.label +
+        '</span><input type="text" data-param="' + field.key + '" value="' + value + '" placeholder="' + field.value + '"></label>';
+    }).join('');
+    holder.setAttribute('data-params-for', workflow);
+    if (note !== null) note.textContent = fields.length + ' 个参数（来源：' + (payload.origin || '-') + '；留空＝沿用工作流当前值' + (options && options.auto ? '' : '') + '）';
+  }).catch(function (error) {
+    if (note !== null) note.textContent = '读取失败：' + error.message;
+  });
+}
+function bizAddCard() {
+  var list = document.getElementById('biz-list');
+  if (list === null) return;
+  var empty = list.querySelector('.card.muted');
+  if (empty !== null) empty.remove();
+  var html = ${JSON.stringify(card({ id: '', business: 'text2img', label: '', workflow: '', keywords: [], params: {}, notes: '', uses: 0, lastUsedAt: null, auto: false }, 0))};
+  var holder = document.createElement('div');
+  holder.innerHTML = html;
+  var node = holder.firstElementChild;
+  if (node !== null) { node.setAttribute('data-biz', ''); list.appendChild(node); }
+}
+function bizSave() {
+  var profiles = bizCards().map(bizValues).filter(function (profile) { return profile.workflow.length > 0; });
+  if (profiles.length === 0) { bizNote('至少填一个「首选工作流」', true); return; }
+  bizNote('保存中…');
+  api('/api/business/save', { profiles: profiles }).then(function (data) {
+    if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '保存失败');
+    bizNote('已保存 ' + profiles.length + ' 条业务配置 · 新会话即可自然语言命中');
+  }).catch(function (error) { bizNote('保存失败：' + error.message, true); });
+}
+/** 新增业务类：名称＋触发词写进存储，卡片下拉立刻可用（也就是「后续灵活增加数据」的入口）。 */
+function bizAddKind() {
+  var label = document.getElementById('kind-label');
+  var keywords = document.getElementById('kind-keywords');
+  var name = label === null ? '' : String(label.value || '').trim();
+  if (name.length === 0) { bizNote('业务类名称不能为空', true); return; }
+  bizNote('添加业务类中…');
+  api('/api/business/kind/save', { kind: { label: name, keywords: keywords === null ? '' : keywords.value } }).then(function (data) {
+    if (!data || data.ok === false) throw new Error((data && data.reason) || (data && data.error && data.error.message) || '添加失败');
+    location.reload();
+  }).catch(function (error) { bizNote('添加失败：' + error.message, true); });
+}
+document.addEventListener('click', function (event) {
+  var el = event.target;
+  if (el.id === 'biz-save') { bizSave(); return; }
+  if (el.id === 'biz-add') { bizAddCard(); return; }
+  if (el.id === 'kind-add') { bizAddKind(); return; }
+  if (el.getAttribute && el.getAttribute('data-params-load') !== null) {
+    var host = el.closest ? el.closest('.bizcard') : null;
+    if (host !== null) bizLoadParams(host);
+    return;
+  }
+  var kindId = el.getAttribute && el.getAttribute('data-kind-remove');
+  if (kindId) {
+    if (!confirm('删除业务类「' + kindId + '」？（仍被业务配置引用时会拒绝）')) return;
+    api('/api/business/kind/remove', { id: kindId }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.reason) || '删除失败');
+      location.reload();
+    }).catch(function (error) { bizNote('删除失败：' + error.message, true); });
+    return;
+  }
+  var removeId = el.getAttribute && el.getAttribute('data-biz-remove');
+  if (removeId !== null && removeId !== undefined) {
+    if (removeId.length === 0) {
+      var card = el.closest ? el.closest('.bizcard') : null;
+      if (card !== null) card.remove();
+      return;
+    }
+    if (!confirm('删除这条业务配置？')) return;
+    api('/api/business/remove', { id: removeId }).then(function () { location.reload(); });
+    return;
+  }
+});
+// 换了工作流 → 参数区跟着变（卡片里的下拉 change 事件冒泡到这里统一处理）
+document.addEventListener('change', function (event) {
+  var el = event.target;
+  if (!el || !el.getAttribute || el.getAttribute('data-field') !== 'workflow') return;
+  var card = el.closest ? el.closest('.bizcard') : null;
+  if (card !== null) bizLoadParams(card, { auto: true });
+});
+// 首屏：已有工作流的卡片自动读一次参数（这样打开页面就能看到该工作流真实的可调项）
+Array.prototype.slice.call(document.querySelectorAll('#biz-list .bizcard')).forEach(function (card) {
+  var select = card.querySelector('[data-field="workflow"]');
+  if (select !== null && String(select.value || '').trim().length > 0) bizLoadParams(card, { auto: true });
+});
+</script>`
+  return pageShell('ComfyUI 工作台 · 业务配置', body, { extraCss: `${BUSINESS_CSS}${TABS_CSS}`, wrapClass: 'wide' })
+}
+
+function businessLabelOf(kinds, id) {
+  const found = (Array.isArray(kinds) ? kinds : []).find((kind) => kind.id === String(id ?? ''))
+  return found === undefined ? String(id ?? '') : found.label
+}

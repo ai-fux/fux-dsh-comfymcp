@@ -2,6 +2,29 @@
 
 > 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
 
+## snapshot-0.3.0（稳定，2026-10-15 封板）✅
+
+> 开发分支 `dev-snapshot-20261015-0.3.0` → 已合并回 `dev`，打 tag `v0.3.0`；插件 `plugins/dsh-comfymcp-client` 版本 0.3.0。
+
+**MVP 主题：首次生成的工作流选择优化（业务配置）——把「跑过 / 加载过」的工作流按业务类沉淀成配置，后续会话用自然语言直接命中，不再每次捞模板 / 枚举模型烧 token；并随之补齐工作流候选来源、参数随工作流动态化、业务类动态增删、插件开发模式与设置页手风琴。**
+
+| # | 迭代内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | **业务配置存储与推断**：`lib/business.js` 新增 8 个预置业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频 / 其它）+ `inferBusiness(graph)`（按输出与输入模态判定：视频输出＋图像输入＝图生视频，纯文本＝文生视频/文生图，含 inpaint 节点＝局部重绘，只放大不采样＝放大）+ `extractBusinessParams(graph)`（摘 steps/尺寸/生成数/cfg/采样器/模型，找不到不猜）+ `createBusinessStore`（`<dataDir>/business.json`，一个业务类一条主配置 + candidates 候选） | `lib/business.js`（新）、`test/business.test.js`（新） | ✅ |
+| 2 | **自然语言匹配**：`matchBusiness(text, profiles)` 打分——自定义触发词 > 业务类名 > 预置触发词，中文多字插入用「最长公共子串 + 覆盖率打折」兜底（「做个视频」不再误判成图生视频），再加模态微调（提到图 → 图输入类加分）。实测 9 组口语命中全对，无关句子返回 null | `lib/business.js`、`test/business.test.js` | ✅ |
+| 3 | **模型侧工具 `comfymcp_business`**（开工第一步）：`match` 传用户原话 → 命中返回 workflow/params/keywords，本地 API 图直接附上 `graph`（省一次取图）；`register` 跑通后回写（可带 graph 自动判业务类）；`list`/`save`/`remove` 手工增删。技能首步改为「先查业务配置」，命中即跳过后面的模板检索与模型枚举 | `lib/catalog.js`、`lib/skills.js`、`test/catalog.test.js` | ✅ |
+| 4 | **自动登记**：工作台运行页每跑一次（`runPage`）就按推断出的业务类建档/记使用；同业务类已有主配置时不抢占，只把这次的工作流记进 candidates，供工作台一键切换 | `lib/workbench.js`（`runPage` 钩子）、`test/workbench.test.js` | ✅ |
+| 5 | **工作台「业务配置」Tab**（第 5 个 Tab）：卡片式编辑（业务类下拉 / 显示名 / 首选工作流（datalist 提示已有工作流）/ 触发词 / 参数覆盖 / 备注），页脚显示用过多少次与最近使用、自动登记还是手动；顶部「已跑过但还没登记的工作流」候选行支持一键登记；工具栏 ＋新增 / 保存配置 | `lib/wfpage.js` `renderBusinessHtml`、`lib/control-server.js`（`/ui/business` + `/api/business/*`）、`client.js`（第 5 个 Tab）、`scripts/check-page-*.mjs` | ✅ |
+| 6 | **业务类动态配置（不写死）**：原先业务类是代码里的 8 条常量，加新业务得改代码 → 改为**业务类与配置一起落盘**（`business.json` 的 `kinds`，首次读取用内置预置类播种）：工作台「业务配置」页顶部新增**业务类管理条**——一行 chip 列出当前全部业务类（点 ✕ 删除，仍被配置引用时拒绝并说明原因），右侧「名称 + 触发词 + ＋ 添加业务类」即时新增；卡片下拉与模型侧匹配都用这份存储清单，新增后立刻生效（例：加「换脸／触发词 换脸、faceswap」→ 说「把这张照片换脸」即命中）。工具侧同步支持 `action=kind_save` / `kind_remove`，id 由名称规整（中文/空格/标点折成连字符） | `lib/business.js`（`DEFAULT_BUSINESS_KINDS`/`saveKind`/`removeKind`/`normalizeKindId`/`matchBusiness(text, profiles, kinds)`）、`lib/workbench.js`、`lib/control-server.js`、`lib/wfpage.js`、`lib/catalog.js`、`test/business.test.js` | ✅ |
+| 7 | **工作流候选「没有数据」修复 + 参数随工作流动态变化**（用户回图）：①原下拉只有一个来源，实测常常空 → 改为合并**四个来源**：跑过的（运行记录，最贴预期）/ 本地工作流文件 / 服务端（我的工作流 + 模板库）/ 已配置引用过的，去重后带 origin 分组；页面用具名 `<optgroup>` 的 **select**（不再用看不出数据的 datalist），工具栏显示「可选工作流 N 个（跑过的 x · 本地文件 y · 我的工作流 z · 模板库 w）」便于一眼诊断；当前值不在清单里时补「当前值」分组保证能显示。②参数区原来写死 5 个静态输入框 → 新增 `businessSchema`（按工作流读图：本地 API 图直读 / 远端走 get_workflow）+ `extractBusinessParamFields`（只列图里**真实存在**的参数、当前值与来源节点），页面在**选择工作流时 / 首屏 / 点「⟳ 读取该工作流参数」**重建参数区：换工作流 ⇒ 参数项与占位值随之变化，留空＝沿用工作流当前值 | `lib/business.js`（`extractBusinessParamFields`/`BUSINESS_PARAM_LABELS`）、`lib/workbench.js`（`knownWorkflows`/`businessSchema`）、`lib/control-server.js`、`lib/wfpage.js`、`scripts/check-page-scripts.mjs`、`test/devlog.test.js` | ✅ |
+| 8 | **开发模式开关（devMode，默认关闭）**：默认**严禁修改任何插件源码**，必须遵循插件规则执行；开启后允许大模型在交互中自主排查并修复插件、生成日志报告。实现：①`lib/devlog.js`（环形缓冲 + `<dataDir>/dev-log.jsonl`，按内容去重、写盘失败不影响主流程）；②所有工具（`defineTool` 包装 12 个）异常自动入日志、控制端点 500 也入日志；③新工具 `comfymcp_dev`（`report` 按级别/来源汇总 + 最近错误明细 + 复现线索、`note` 记录发现、`clear` 清空），报告的 `guidance` 按 devMode 给出「可改代码 / 严禁改代码」两种指引；④配置项 `devMode`（默认 false，进布尔白名单）贯通设置页「开发模式」开关与技能规则 | `lib/devlog.js`（新）、`lib/catalog.js`、`lib/control-server.js`、`lib/config.js`、`index.js`、`client.js`、`lib/skills.js`、`test/devlog.test.js`（新） | ✅ |
+| 9 | **设置页重排 + 业务配置去掉历史栏**（用户回图）：①设置项按「连接 → 目录 → 运行 → 交互 → 存储 → 开发」重排为 **8 个编号分区**（①连接与服务 ②工作流目录 ③插件目录与产物 ④运行行为 ⑤快捷指令 ⑥文件存储 ⑦表单与交互 ⑧开发模式），同类项合并（MCP 宿主入口并入①；模型卸载与最大运行时间合并为④；产物下载/镜像目录并入②③），顶部新增**分区导航条**（点一下跳到该分区），每区描述重写为「这一区管什么、改了会怎样」。②业务配置页**取消「已跑过但还没登记」历史栏**——新增/编辑时工作流下拉已能直接选（候选含跑过的），历史栏只是重复噪音；同时**只列能真正打开的工作流名**：先收集本地文件 + 服务端（我的工作流/模板库）作为可解析集合，跑过的名字命中才标「跑过的」并排首位，解析不了的隐藏，工具栏提示「另有 N 个仅有运行记录、没有对应工作流文件（已隐藏，避免选了打不开）」——这正是上次「读取该工作流参数 → 工作流不存在」的根因 | `client.js`（`SettingsNav`/8 分区）、`lib/wfpage.js`（去候选栏 + 工具栏计数）、`lib/workbench.js`（`knownWorkflows` 返回 `{list, hiddenRuns}`）、`scripts/check-page-scripts.mjs`、`docs/operations.md` | ✅ |
+| 10 | **设置页改手风琴（一次只开一个区域）**（用户要求：配置太长要缩短，快捷跳转可取消）：上一版 8 个分区全展开、还要靠顶部分区导航条跳转 → 改为 **accordion**：标题行常显可点（▸/▾，支持 Enter/Space 键盘开合），**正文只在展开时渲染**，同一时刻只开一个区域（默认开①，再点标题收起）。为让收起态也看得懂，每区加**摘要**：①「内置服务 · http://127.0.0.1:8000」② 工作流目录值 ③ 当前布局 ④「跑完卸载模型 · 30 分钟上限」⑤「内置「抽卡」/已自定义」⑥「本地目录 / MinIO / OSS」⑦「倒计时 30 秒自动采用推荐值」⑧「关闭（严禁改插件源码）」。分区导航条与 `SETTINGS_GROUPS`/`SettingsNav` 一并删除。**踩坑**：包装组件若在组件体内每次渲染新建（`var Section = function …`），React 会视为新组件类型并重挂载子树——**打字会丢焦点**；改用 `react.useCallback(…, [openSection])` 稳定身份 | `client.js`（`SettingsSection` 手风琴化 / `Section` 包装 / `sectionSummary` / 删导航）、`docs/operations.md` | ✅ |
+
+**下个迭代候选**：业务配置的「优先命中提示」（命中时在表单标题里显示业务类）、多工作流候选排序（按成功率/最近使用自动选主配置）、业务级参数预设集、节点连线式画布。
+
+**封板校验（2026-10-15）**：插件 212 项测试全绿（20 个测试文件）· 页面模板体检 5 页完整 · 页面脚本体检 4 页语法 OK 且关键监听齐全（含业务配置页的 8 项）· 全仓 `pnpm test` 通过 · 无头浏览器逐项截图核对（工作流分组下拉 / 业务类动态增删 / 参数区随工作流重建 / 设置页 8 区手风琴）。
+
 ## snapshot-0.2.1（稳定，2026-10-15 封板）✅
 
 > 开发分支 `dev-snapshot-20261013-0.2.1` → 已合并回 `dev`，打 tag `v0.2.1`；插件 `plugins/dsh-comfymcp-client` 版本 0.2.1。

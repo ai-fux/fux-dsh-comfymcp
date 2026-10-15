@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTools, splitSteps } from '../lib/catalog.js'
+import { createBusinessStore } from '../lib/business.js'
 
 let workdir
 
@@ -13,6 +14,11 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(workdir, { recursive: true, force: true })
 })
+
+/** 每次调用拿一个落在本次临时目录的业务配置存储（避免测试互相污染）。 */
+function businessStoreForTest() {
+  return createBusinessStore({ dataDir: workdir })
+}
 
 /** Capture-only define(): records definitions, executes with a minimal runtime. */
 function fakeDefine() {
@@ -62,6 +68,7 @@ describe('createTools catalog', () => {
     expect(names).toEqual([
       'comfymcp_status',
       'comfymcp_discover',
+      'comfymcp_business',
       'comfymcp_analyze_workflow',
       'comfymcp_push_form',
       'comfymcp_apply_form',
@@ -70,12 +77,41 @@ describe('createTools catalog', () => {
       'comfymcp_files',
       'comfymcp_workflow_pull',
       'comfymcp_call_remote',
+      'comfymcp_dev',
     ])
     expect(new Set(names).size).toBe(names.length)
     for (const definition of definitions) {
       expect(definition.output.render({}, {}) instanceof Array).toBe(true)
       expect(typeof definition.execute).toBe('function')
     }
+  })
+
+  it('comfymcp_business：未命中→提示走完整流程；登记后命中→直接给工作流（本地图一并带上）', async () => {
+    const { define, definitions } = fakeDefine()
+    createTools({
+      define,
+      bridge: fakeBridge(),
+      askUser: async () => ({ answers: [] }),
+      business: businessStoreForTest(),
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_business')
+    // 空配置：不硬匹配
+    const miss = await tool.execute({ action: 'match', text: '帮我画一只猫' })
+    expect(miss.ok).toBe(true)
+    expect(miss.matched).toBeNull()
+    expect(miss.nextSteps).toMatch(/完整流程/)
+    // 登记一条（带图 → 自动判定业务类并摘参数）
+    const saved = await tool.execute({ action: 'register', workflow: 'beach', graph: GRAPH })
+    expect(saved.ok).toBe(true)
+    expect(saved.matched).toMatchObject({ business: 'text2img', workflow: 'beach' })
+    expect(saved.matched.params.steps).toBe(20)
+    // 再匹配即命中；本地存在同名工作流文件时附带 graph，省一次取图
+    const hit = await tool.execute({ action: 'match', text: '画一张海边日落' })
+    expect(hit.matched?.workflow).toBe('beach')
+    expect(hit.matched?.params?.steps).toBe(20)
+    expect(hit.nextSteps).toMatch(/跳过|不要再检索/)
+    expect((await tool.execute({ action: 'list' })).profiles.length).toBe(1)
+    expect((await tool.execute({ action: 'remove', id: 'text2img' })).profiles.length).toBe(0)
   })
 
   it('comfymcp_status folds probe results', async () => {

@@ -5,7 +5,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildPageDescriptor, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderIndexHtml } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { buildPageDescriptor, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, renderIndexHtml } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { BUSINESS_KINDS } from '../plugins/dsh-comfymcp-client/lib/business.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(root, 'tmp'), { recursive: true })
@@ -33,6 +34,13 @@ const pages = {
   commands: renderCommandsHtml({
     commands: [{ name: '抽卡', label: '🎲 抽卡', count: 2, batchMode: 'serial', seed: { mode: 'range', min: 1, max: 4294967295 } }],
     lastRun: { name: 'demo', seed: 1 },
+    token: 'tk',
+  }),
+  business: renderBusinessHtml({
+    profiles: [{ id: 'text2img', business: 'text2img', label: '文生图', workflow: 'z-image-turbo', keywords: ['画'], params: { steps: 8 }, uses: 2 }],
+    kinds: BUSINESS_KINDS,
+    candidates: [{ business: 'image2video', label: '图生视频', workflow: 'svd', runs: 2, current: null }],
+    workflows: ['z-image-turbo', 'svd'],
     token: 'tk',
   }),
 }
@@ -65,6 +73,16 @@ const PAGE_CHECKS = {
     '保存指令监听': /api\/quick\/save/,
     '立即执行监听': /api\/quick'/,
     '卡片集合查询': /#cmd-list \.cmdcard/,
+  },
+  business: {
+    '保存业务配置': /api\/business\/save/,
+    '删除业务配置': /api\/business\/remove/,
+    '业务类动态新增': /api\/business\/kind\/save/,
+    '业务类动态删除': /api\/business\/kind\/remove/,
+    '参数按所选工作流动态读取': /function bizLoadParams\(card, options\)[\s\S]*api\('\/api\/business\/schema'/,
+    '工作流变更即刷新参数': /!== 'workflow'[\s\S]*bizLoadParams\(card/,
+    '卡片取值（业务类/工作流/触发词/参数）': /function bizValues\(card\)[\s\S]*data-param/,
+    '新增卡片': /function bizAddCard\(/,
   },
   index: {
     'Tab 切换处理': /data-tab/,

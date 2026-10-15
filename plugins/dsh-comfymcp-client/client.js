@@ -36,6 +36,10 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         '.dshmcp-root{font-size:13px;line-height:1.5;color:' + T.text + ';display:flex;flex-direction:column;gap:8px}',
         '.dshmcp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
         '.dshmcp-row-tight{gap:6px}',
+        // 设置分区导航：一排小按钮，点一下跳到对应分区
+        '.dshmcp-nav{padding-bottom:6px}',
+        '.dshmcp-navrow{gap:6px}',
+        '.dshmcp-navrow a{text-decoration:none}',
         '.dshmcp-spacer{flex:1 1 auto}',
         '.dshmcp-field{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1}',
         '.dshmcp-label{font-size:11px;color:' + T.textSecondary + '}',
@@ -71,6 +75,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         '.dshmcp-section{display:flex;flex-direction:column;gap:6px}',
         '.dshmcp-section-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
         '.dshmcp-section-title{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:' + T.textSecondary + '}',
+        // 手风琴：标题行常显可点，正文只在展开时渲染；收起时用摘要说明当前取值
+        '.dshmcp-acc-head{cursor:pointer;user-select:none;margin:-2px 0}',
+        '.dshmcp-acc-arrow{width:12px;color:' + T.textSecondary + ';font-size:11px}',
+        '.dshmcp-acc-summary{font-size:12px;color:' + T.textSecondary + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46%}',
+        '.dshmcp-acc-body{display:flex;flex-direction:column;gap:8px;margin-top:6px}',
+        '.dshmcp-acc-open{border-color:' + (T.accent || T.brand) + '}',
         '.dshmcp-banner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-radius:8px;padding:6px 8px;background:' + T.surface2 + ';box-shadow:inset 3px 0 0 ' + T.error + '}',
         '.dshmcp-banner-info{box-shadow:inset 3px 0 0 ' + T.brand + '}',
         '.dshmcp-banner-warn{box-shadow:inset 3px 0 0 ' + T.warn + '}',
@@ -284,18 +294,50 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
       }
 
       /** 一个设置块：标题 +（悬浮）描述 + 子元素。 */
+      /**
+       * 配置区域（手风琴）：标题行常显并可点击开合，正文只在展开时渲染；
+       * summary 让收起状态也能一眼看出该区当前取值，description 走 ⓘ 悬浮。
+       */
       function SettingsSection(props) {
-        return h('section', { className: 'dshmcp-section dshmcp-panel' },
-          h('div', { className: 'dshmcp-section-head' },
+        var open = props.open !== false
+        return h('section', { className: 'dshmcp-section dshmcp-panel' + (open ? ' dshmcp-acc-open' : ''), id: props.id },
+          h('div', {
+            className: 'dshmcp-section-head dshmcp-acc-head',
+            role: 'button',
+            tabIndex: 0,
+            onClick: props.onToggle,
+            onKeyDown: function (event) {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                if (typeof props.onToggle === 'function') props.onToggle()
+              }
+            },
+          },
+            h('span', { className: 'dshmcp-acc-arrow' }, open ? '▾' : '▸'),
             h('span', { className: 'dshmcp-section-title' }, props.title),
-            h(Hint, { hint: props.description }),
+            props.summary ? h('span', { className: 'dshmcp-acc-summary' }, props.summary) : null,
             h('span', { className: 'dshmcp-spacer' }),
             props.extra || null,
+            h(Hint, { hint: props.description }),
           ),
-          props.children,
+          open ? h('div', { className: 'dshmcp-acc-body' }, props.children) : null,
         )
       }
 
+      /** 每个区域的收起态摘要：扫一眼就知道现在配的是什么（值在渲染处按 draft 现算）。 */
+      const sectionSummary = {
+        connect: function (d) { return (d.embeddedServer === true ? '内置服务' : '远程') + (text(d.comfyuiUrl).length > 0 && d.embeddedServer === true ? ' · ' + d.comfyuiUrl : text(d.endpoint).length > 0 ? ' · ' + d.endpoint : '') },
+        workflows: function (d) { return text(d.workflowDirs).length > 0 ? d.workflowDirs : '缺省目录' },
+        dirs: function (d) { return layoutSummary(d) },
+        run: function (d) { return (d.autoUnloadModel === true ? '跑完卸载模型' : '不卸载（热加载）') + ' · ' + (text(d.runTimeoutMin).length > 0 ? d.runTimeoutMin + ' 分钟上限' : '不限时长') },
+        quick: function (d) { return text(d.quickCommands).length > 0 ? '已自定义' : '内置「抽卡」' },
+        storage: function (d) { var kind = text(d.storage).toLowerCase(); return kind === 'minio' ? 'MinIO（S3）' : kind === 'oss' ? '阿里云 OSS' : '本地目录' },
+        form: function (d) { return d.autoAcceptForm === true ? '倒计时 ' + (text(d.autoAcceptFormSec).length > 0 ? d.autoAcceptFormSec : '30') + ' 秒自动采用推荐值' : '一直等待作答' },
+        dev: function (d) { return d.devMode === true ? '已开启（允许改插件源码）' : '关闭（严禁改插件源码）' },
+      }
+
+      /**
+       * 配置区域（手风琴）容器：一次只展开一个区域，避免整页太长。
       /** 开关行：switch + 标签 +（可选）状态说明。 */
       function SwitchRow(props) {
         return h('div', { className: 'dshmcp-switchrow' },
@@ -349,6 +391,18 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var uiState = react.useState({ loading: true, saving: false, testing: false, note: '' })
         var ui = uiState[0]
         var setUi = uiState[1]
+        // 手风琴：一次只展开一个配置区域（配置太长，默认只开第一区，其余收起来）
+        var openState = react.useState('sec-connect')
+        var openSection = openState[0]
+        var setOpenSection = openState[1]
+        /** 折叠区域包装：把 open / onToggle 注进去，8 个区域共用同一份开合状态。
+         *  用 useCallback 稳定组件身份——否则每次渲染都是新组件类型，输入框会被重挂载、打字丢焦点。 */
+        var Section = react.useCallback(function (sectionProps) {
+          return h(SettingsSection, Object.assign({}, sectionProps, {
+            open: openSection === sectionProps.id,
+            onToggle: function () { setOpenSection(openSection === sectionProps.id ? '' : sectionProps.id) },
+          }))
+        }, [openSection])
 
         function edit(key, value) {
           setDraft(function (previous) {
@@ -385,6 +439,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 dataDir: text(config.dataDir),
                 quickCommands: text(config.quickCommands),
                 autoAcceptForm: config.autoAcceptForm === true,
+              devMode: config.devMode === true,
                 autoAcceptFormSec: text(config.autoAcceptFormSec),
                 downloadDir: text(config.downloadDir),
                 runTimeoutMin: text(config.runTimeoutMin),
@@ -459,6 +514,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             homeDir: draft.homeDir,
             quickCommands: draft.quickCommands,
             autoAcceptForm: draft.autoAcceptForm === true,
+            devMode: draft.devMode === true,
             autoAcceptFormSec: draft.autoAcceptFormSec,
             downloadDir: draft.downloadDir,
             runTimeoutMin: draft.runTimeoutMin,
@@ -488,6 +544,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 quickCommands: text(applied.quickCommands),
               autoAcceptForm: applied.autoAcceptForm === true,
               autoAcceptFormSec: text(applied.autoAcceptFormSec),
+              devMode: applied.devMode === true,
                 downloadDir: text(applied.downloadDir),
                 runTimeoutMin: text(applied.runTimeoutMin),
               }
@@ -535,9 +592,11 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             retryLabel: '重新探测',
           }),
 
-          h(SettingsSection, {
-            title: '连接',
-            description: '内置＝插件自带服务端并自动启停（单机推荐）；远程＝用 Streamable HTTP 直连已部署的 comfy-mcp 端点。',
+          h(Section, {
+            id: 'sec-connect',
+            summary: sectionSummary.connect(draft),
+            title: '① 连接与服务',
+            description: '先定「服务从哪来」：内置＝插件自带 comfy-mcp 并自动启停（单机推荐）；远程＝Streamable HTTP 直连已部署端点。改完点下方「测试连接」验证。',
           },
             h(ModeSwitch, {
               label: '服务来源',
@@ -571,11 +630,15 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 ui.testing ? '探测中…' : '测试连接'),
               h('button', { className: 'dshmcp-btn dshmcp-btn-sm dshmcp-btn-ghost', onClick: refresh, disabled: ui.loading }, '重新加载'),
             ),
+            h(Field, { label: 'MCP 宿主入口（可选）', hint: 'DSH 与 comfy-mcp 之间的宿主进程；留空用环境变量 DSH_COMFYMCP_HOST_ENTRY' },
+              h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
           ),
 
-          h(SettingsSection, {
-            title: '工作流空间',
-            description: '模板检索与强制保存的目录；多个目录用分号分隔。生成保存子目录保证每次运行可回溯。',
+          h(Section, {
+            id: 'sec-workflows',
+            summary: sectionSummary.workflows(draft),
+            title: '② 工作流目录',
+            description: '模型检索模板与「必须先保存再运行」的落点；多个目录用分号分隔。保存子目录保证每次运行可回溯。',
           },
             h(Field, { label: '工作流目录（分号分隔）' },
               h(TextInput, { value: draft.workflowDirs, mono: true, placeholder: 'F:\\Comfy\\ComfyUI\\user\\default\\workflows', onChange: function (value) { edit('workflowDirs', value) } })),
@@ -585,23 +648,42 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               h(TextInput, { value: draft.artifactsDir, mono: true, placeholder: '', onChange: function (value) { edit('artifactsDir', value) } })),
           ),
 
-          h(SettingsSection, {
-            title: '目录布局',
-            description: '插件主目录（缺省 $DSH_HOME/comfymcp）下派生 workflows / artifacts / data 三个子目录；留空即用缺省。',
+          h(Section, {
+            id: 'sec-dirs',
+            summary: sectionSummary.dirs(draft),
+            title: '③ 插件目录与产物',
+            description: '插件主目录（缺省 $DSH_HOME/comfymcp）下派生 workflows / artifacts / data；留空即用缺省。产物可再镜像一份到指定子目录。',
           },
             h(Field, { label: '插件主目录', hint: '修改后保存即按新主目录重派生子目录；显式配置过的工作流/产物目录不受影响' },
               h(TextInput, { value: draft.homeDir, mono: true, placeholder: text(draft.dataDir).length > 0 ? draft.homeDir : '', onChange: function (value) { edit('homeDir', value) } })),
             h(LinkRow, { label: '当前布局', value: layoutSummary(draft) }),
-          ),
-
-          h(SettingsSection, {
-            title: '工作台与快捷指令',
-            description: '工作台静态页由环回控制端点提供（侧栏「ComfyUI 工作台」或浏览器直开）。快捷指令用于一键重跑，如抽卡＝仅重滚种子。',
-          },
             h(Field, { label: '成果物镜像目录', hint: '相对主目录解析；配置后每次运行产物额外复制一份到该子目录' },
               h(TextInput, { value: draft.downloadDir, mono: true, placeholder: 'downloads', onChange: function (value) { edit('downloadDir', value) } })),
+          ),
+
+          h(Section, {
+            id: 'sec-run',
+            summary: sectionSummary.run(draft),
+            title: '④ 运行行为',
+            description: '单次运行的时长上限，以及跑完是否释放显存（跨工作流生成建议开启；同一工作流连续抽卡建议关闭以便模型热加载）。',
+          },
             h(Field, { label: '最大运行时间（分钟）', hint: '超过该时长自动中断并提示（0 或留空＝不限制）；页面也可手动「中断执行」' },
               h(TextInput, { value: draft.runTimeoutMin, mono: true, placeholder: '30', onChange: function (value) { edit('runTimeoutMin', value) } })),
+            h(SwitchRow, {
+              label: '运行后自动卸载模型',
+              checked: draft.autoUnloadModel === true,
+              disabled: unloadDisabled,
+              onChange: function (value) { edit('autoUnloadModel', value) },
+            }),
+            h(Hint, { hint: unloadHint, always: true }),
+          ),
+
+          h(Section, {
+            id: 'sec-quick',
+            summary: sectionSummary.quick(draft),
+            title: '⑤ 快捷指令',
+            description: '工作台「指令」Tab 与聊天里的一键重跑（抽卡＝仅重滚种子）。页面可卡片式编辑，这里直接改 JSON。',
+          },
             h(Field, { label: '快捷指令（JSON）', hint: 'seed 策略：range(min/max)｜digits(length)｜timestamp(extraDigits)；留空用内置「抽卡」' },
               h('textarea', {
                 className: 'dshmcp-input dshmcp-mono',
@@ -626,9 +708,10 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
 
           (function () {
             var storageKind = text(draft.storage).toLowerCase()
-            var remoteStorage = storageKind === 'minio' || storageKind === 'oss'
-            return h(SettingsSection, {
-              title: '文件存储',
+            return h(Section, {
+              id: 'sec-storage',
+            summary: sectionSummary.storage(draft),
+              title: '⑥ 文件存储',
               description: '成果物与受管文件的存放位置。非本地时，运行产物在下载后额外推送一份到对象存储。',
             },
               h(ModeSwitch, {
@@ -659,30 +742,11 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             )
           })(),
 
-          h(SettingsSection, {
-            title: 'MCP 宿主',
-            description: '宿主入口留空时用环境变量 DSH_COMFYMCP_HOST_ENTRY。内置模式下宿主还会按需拉起 comfy-mcp 服务端。',
-          },
-            h(Field, { label: 'MCP 宿主入口（可选）' },
-              h(TextInput, { value: draft.hostEntry, mono: true, placeholder: '…\\projects\\dsh-comfymcp\\mcp\\bin\\fux-comfymcp-host.mjs', onChange: function (value) { edit('hostEntry', value) } })),
-          ),
-
-          h(SettingsSection, {
-            title: '模型卸载',
-            description: '开启＝跨工作流生成时跑完释放显存（工作流自带卸载节点则沿用，否则自动插桩）；关闭＝同一工作流连续生成（抽卡）不卸载，模型热加载更快，并移除工作流里自带的卸载节点。服务端无该节点时开关置灰。',
-          },
-            h(SwitchRow, {
-              label: '运行后自动卸载模型',
-              checked: draft.autoUnloadModel === true,
-              disabled: unloadDisabled,
-              onChange: function (value) { edit('autoUnloadModel', value) },
-            }),
-            h(Hint, { hint: unloadHint, always: true }),
-          ),
-
-          h(SettingsSection, {
-            title: '表单自动确认',
-            description: '开启后，推送创作参数表单时开始倒计时；超时未作答即自动采用推荐参数（种子沿用推送时随机值，其余保持推导值）直接进入执行。关闭则一直等待用户作答。',
+          h(Section, {
+            id: 'sec-form',
+            summary: sectionSummary.form(draft),
+            title: '⑦ 表单与交互',
+            description: '推送创作参数表单时的等待策略：开启倒计时则超时自动采用推荐参数直接执行；关闭则一直等用户作答。',
           },
             h(SwitchRow, {
               label: '倒计时自动采用推荐参数',
@@ -691,6 +755,20 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             }),
             h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间；缺省 30 秒（最少 1 秒，非法值按 30 秒处理），仅开关开启时生效' },
               h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } })),
+          ),
+
+          h(Section, {
+            id: 'sec-dev',
+            summary: sectionSummary.dev(draft),
+            title: '⑧ 开发模式',
+            description: '开启后允许大模型在交互中自主排查插件问题：读开发日志报告（记录工具异常/运行失败）、定位 plugins/dsh-comfymcp-client 源码并当场修复。关闭（默认）时严禁修改任何插件源码，必须遵循插件规则执行，只能把问题记录并转述给你。',
+          },
+            h(SwitchRow, {
+              label: '允许大模型自查自修插件（开发模式）',
+              checked: draft.devMode === true,
+              onChange: function (value) { edit('devMode', value) },
+            }),
+            h(Hint, { hint: '开发日志：<数据目录>/dev-log.jsonl；模型侧用 comfymcp_dev（action=report/note/clear）读取与记录。', always: true }),
           ),
 
           h('div', { className: 'dshmcp-row' },
@@ -881,7 +959,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         }, [ready])
 
         // 四 Tab 齐平：我的工作流 / 模板 / 成果物 / 指令（与宿主页顶部 Tab 一致）
-        var tabPath = tab === 'library' ? '/ui/library' : tab === 'artifacts' ? '/ui/artifacts' : tab === 'commands' ? '/ui/commands' : '/ui'
+        var tabPath = tab === 'library' ? '/ui/library' : tab === 'artifacts' ? '/ui/artifacts' : tab === 'business' ? '/ui/business' : tab === 'commands' ? '/ui/commands' : '/ui'
         var href = ready && base !== null ? workbenchUrl(tabPath) : null
         return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: T.base } },
           h('div', { className: 'dshmcp-row', style: { padding: '10px 14px', borderBottom: '1px solid ' + T.border, gap: 8 } },
@@ -889,6 +967,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'mine' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('mine') } }, '我的工作流'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'library' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('library') } }, '模板'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'artifacts' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('artifacts') } }, '成果物'),
+            h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'business' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('business') } }, '业务配置'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'commands' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('commands') } }, '指令'),
             h('span', { className: 'dshmcp-spacer' }),
             href !== null ? h('a', { href: href, target: '_blank', rel: 'noreferrer', className: 'dshmcp-hint' }, '在新窗口打开 ↗') : null,

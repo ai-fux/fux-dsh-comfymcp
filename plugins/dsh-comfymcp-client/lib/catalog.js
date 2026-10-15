@@ -12,12 +12,14 @@
  *   comfymcp_files           插件自有文件目录管理（本地/MinIO/OSS 统一接口）
  *   comfymcp_workflow_pull   从远端模板库拉取工作流文件到本地工作流空间
  */
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { deriveFields, normalizeNodeInfos, buildQuestions, applyAnswers, firstPromptText, firstSeed } from './forms.js'
 import { safeFileStem } from './bridge.js'
 import { resolveStorage } from './storage.js'
 import { createRunExecutor, distributeArtifacts } from './runcore.js'
+import { createBusinessStore, DEFAULT_BUSINESS_KINDS, inferBusiness, matchBusiness, extractBusinessParams } from './business.js'
+import { createDevLog } from './devlog.js'
 
 
 const REMOTE_TOOL_LIST = [
@@ -58,12 +60,75 @@ function oneLine(value) {
  * 工具目录：七个 comfymcp_* 模型工具 + comfymcp_call_remote 逃生舱。
  * define 注入（生产为 lib/define.js 的本地 defineTool；测试注入捕获桩）。
  */
-export function createTools({ define, bridge, askUser }) {
+/**
+ * 业务配置候选（工具侧）：把已跑过、但该业务类还没登记的运行列出来，提示模型/用户去登记。
+ * 与工作台 businessCandidates 同义，这里只依赖 bridge 的轻量列表。
+ */
+function businessCandidatesOf(bridge, profiles = []) {
+  const runs = typeof bridge?.listRuns === 'function' ? bridge.listRuns(80) : []
+  const grouped = new Map()
+  for (const run of runs) {
+    const graph = run?.form?.graph
+    if (graph === undefined || graph === null) continue
+    const business = inferBusiness(graph)
+    if (business === 'other') continue
+    const workflow = String(run.name ?? '').trim()
+    if (workflow.length === 0) continue
+    const profile = profiles.find((entry) => entry.business === business) ?? null
+    if (profile !== null && profile.workflow === workflow) continue
+    const key = `${business}:${workflow}`
+    const found = grouped.get(key)
+    if (found === undefined) grouped.set(key, { business, workflow, runs: 1, current: profile === null ? null : profile.workflow })
+    else found.runs += 1
+  }
+  return [...grouped.values()].slice(0, 8)
+}
+
+/** 读本地工作流文件（本地主目录优先）：只在 API 格式时返回图，UI 格式交给页面/工作台转换。 */
+function readLocalGraph(bridge, workflow) {
+  const name = String(workflow ?? '').trim()
+  if (name.length === 0) return null
+  const stem = safeFileStem(name.replace(/^(library|saved):/, '').replace(/\.json$/i, ''))
+  for (const dir of bridge?.config?.workflowDirs ?? []) {
+    try {
+      const file = join(dir, `${stem}.json`)
+      if (!existsSync(file)) continue
+      const parsed = JSON.parse(readFileSync(file, 'utf8'))
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed.nodes)) return null
+      return parsed
+    } catch {
+      // 读不动就当作没有（远端模板路径兜底）
+    }
+  }
+  return null
+}
+
+export function createTools({ define, bridge, askUser, business = null, devLog = null, devMode = false }) {
+  const businessStore = business
+  const log = devLog ?? createDevLog({ dataDir: bridge?.config?.dataDir, devMode })
+  // 每个工具的异常都进开发日志：开发模式下模型可直接读报告定位问题；非开发模式仅留档供反馈
+  const defineTool = (options) => define({
+    ...options,
+    execute: async (args, exec) => {
+      try {
+        return await options.execute(args, exec)
+      } catch (error) {
+        log.add({
+          level: 'error',
+          source: 'tool',
+          tool: options.name,
+          message: error instanceof Error ? error.message : String(error),
+          detail: error instanceof Error ? (error.stack ?? '') : String(error),
+        })
+        throw error
+      }
+    },
+  })
   const tools = []
   const executeRun = createRunExecutor({ bridge })
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_status',
       description:
         'Probe the comfy-mcp integration: MCP host process, comfy-mcp service reachability, ComfyUI snapshot, and whether the server-side unload-model plugin is available. ' +
@@ -81,7 +146,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_discover',
       description:
         'Inspect the workflow workspace and the remote template library: local workflow files under the configured directories plus remote saved workflows (list_workflows), optionally filtered by a query. ' +
@@ -132,7 +197,132 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
+      name: 'comfymcp_business',
+      description:
+        '业务配置（开工第一步，省 token 的关键）：把「跑过 / 加载过」的工作流按业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）沉淀成配置，后续会话用自然语言直接命中，' +
+        '命中就用该配置里的工作流与默认参数继续，**不要**再去 comfymcp_discover 捞模板或 list_models 枚举模型。' +
+        '用法：action=match 传用户原话 text（默认）→ 命中返回 matched{workflow, params, keywords}，本地 API 格式工作流还会带上 graph（可直接喂给 comfymcp_analyze_workflow 的 graph，省一次取图）；未命中返回 matched:null，再走完整探索流程。' +
+        '跑通后可用 action=register 把这次的工作流登记回来（可带 graph 自动判断业务类），下次就命中。action=list 看全部配置，action=save/remove 手工增删。' +
+        'Answers { ok, action, matched|null, profiles[], candidates[], nextSteps }.',
+      parameters: {
+        action: { type: 'string', description: 'match（默认）| list | register | save | remove | kind_save | kind_remove' },
+        text: { type: 'string', description: '用户原话（action=match 时用于自然语言匹配业务类）' },
+        business: { type: 'string', description: '业务类 id（预置 text2img/image2img/text2video/image2video/edit/upscale/audio/other，也可用自定义 id）' },
+        label: { type: 'string', description: 'action=kind_save 时的业务类显示名（如「换脸」）' },
+        workflow: { type: 'string', description: '工作流名（本地文件词干或远端模板 id）' },
+        graph: { type: 'json', description: '可选：内联图，用于 register 时自动判断业务类并摘取默认参数' },
+        params: { type: 'json', description: '可选：该业务类的默认参数覆盖（steps/width/height/batch_size/model…）' },
+        keywords: { type: 'string', description: '可选：自定义触发词（逗号分隔；kind_save 时即该业务类的触发词）' },
+        notes: { type: 'string', description: '可选：备注' },
+        id: { type: 'string', description: 'action=remove/kind_remove 时的 id（业务配置 id＝业务类 id）' },
+        includeGraph: { type: 'boolean', description: 'match 是否附带本地图（默认 true；只是想确认命中可设 false）' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+      },
+      async execute(args = {}) {
+        const action = String(args.action ?? 'match').trim() || 'match'
+        const store = businessStore !== null ? businessStore : createBusinessStore({ dataDir: bridge.config?.dataDir })
+        const currentKinds = () => (typeof store.kinds === 'function' ? store.kinds() : DEFAULT_BUSINESS_KINDS)
+        if (action === 'list') {
+          const profiles = store.all()
+          return {
+            ok: true,
+            action,
+            matched: null,
+            profiles,
+            kinds: currentKinds(),
+            candidates: businessCandidatesOf(bridge, profiles),
+            nextSteps: '命中后直接执行该工作流；未配置的业务类先跑一次再用 register 登记。业务类可在工作台「业务配置」页动态增删，或用 action=kind_save。',
+          }
+        }
+        if (action === 'kind_save' || action === 'kind_remove') {
+          const outcome = action === 'kind_save'
+            ? store.saveKind({ id: args.business ?? args.id, label: args.label, keywords: args.keywords })
+            : store.removeKind(args.id ?? args.business)
+          return {
+            ok: outcome.ok !== false,
+            action,
+            matched: null,
+            kind: outcome.kind ?? null,
+            kinds: outcome.kinds ?? currentKinds(),
+            profiles: store.all(),
+            ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+            nextSteps: outcome.ok === false
+              ? '业务类还有配置在用（或名称不合法）：先改掉/删除相关配置，或换个名称。'
+              : '业务类清单已更新：后续 match 会按新的触发词匹配。',
+          }
+        }
+        if (action === 'remove') {
+          const removed = store.remove(args.id ?? args.business)
+          return { ok: removed, action, matched: null, profiles: store.all(), kinds: currentKinds(), candidates: businessCandidatesOf(bridge, store.all()) }
+        }
+        if (action === 'save' || action === 'register') {
+          const graph = args.graph ?? null
+          const business = String(args.business ?? '').trim() || (graph === null ? 'other' : inferBusiness(graph))
+          const workflow = String(args.workflow ?? '').trim()
+          if (workflow.length === 0) return { ok: false, action, error: 'register/save 需要 workflow' }
+          const saved = store.save({
+            id: business,
+            business,
+            workflow,
+            source: String(args.source ?? 'saved'),
+            params: args.params ?? (graph === null ? {} : extractBusinessParams(graph)),
+            keywords: args.keywords,
+            notes: args.notes ?? (action === 'register' ? '由一次成功的运行登记' : ''),
+            auto: false,
+          })
+          return {
+            ok: true,
+            action,
+            matched: saved,
+            profiles: store.all(),
+            nextSteps: `已登记：${business} → ${workflow}。下次同类需求会直接命中，不再检索模板库。`,
+          }
+        }
+        // 默认：自然语言匹配（用当前动态业务类清单打分）
+        const profiles = store.all()
+        const hit = matchBusiness(String(args.text ?? ''), profiles, currentKinds())
+        if (hit === null) {
+          return {
+            ok: true,
+            action: 'match',
+            matched: null,
+            profiles,
+            candidates: businessCandidatesOf(bridge, profiles),
+            nextSteps: '没有命中业务配置：按技能走完整流程（discover → analyze → 表单 → 运行），跑通后用 action=register 登记回来。',
+          }
+        }
+        const local = args.includeGraph === false ? null : readLocalGraph(bridge, hit.profile.workflow)
+        store.touch(hit.profile.id)
+        return {
+          ok: true,
+          action: 'match',
+          matched: {
+            id: hit.profile.id,
+            business: hit.profile.business,
+            label: hit.profile.label,
+            workflow: hit.profile.workflow,
+            params: hit.profile.params ?? {},
+            keywords: hit.profile.keywords ?? [],
+            notes: hit.profile.notes ?? '',
+            score: hit.score,
+            hits: hit.hits,
+          },
+          ...(local === null ? {} : { graph: local }),
+          profiles: store.all(),
+          nextSteps: local === null
+            ? `命中「${hit.profile.label}」→ 直接用 comfymcp_analyze_workflow 传 workflowId="${hit.profile.workflow}"（远端模板），跳过 discover 与模型枚举。`
+            : `命中「${hit.profile.label}」→ 已附上本地图 graph，直接把它与需求一起喂给 comfymcp_analyze_workflow，不要再检索模板库。`,
+        }
+      },
+    }),
+  )
+
+  tools.push(
+    defineTool({
       name: 'comfymcp_analyze_workflow',
       description:
         'Turn a requirement plus a candidate graph into an analysis and a tailored form draft: fetches the template graph (workflowId) or accepts an inline graph, reads node declarations, and derives form fields (prompts, seeds, numeric params, model choices). ' +
@@ -200,7 +390,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_push_form',
       description:
         'Push the tailored parameter form to the user as structured questions and wait for answers (ask-user-question). ' +
@@ -321,7 +511,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_apply_form',
       description:
         'Apply form answers onto the graph (custom text wins, seed re-roll honored), then validate the runnable graph remotely. ' +
@@ -372,7 +562,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_run_workflow',
       description:
         'Save the graph into the workflow workspace subdirectory (mandatory, every run is traceable), optionally integrate the UnloadAllModels node when config enables it and the server supports it, run remotely, wait for completion, and return artifacts with local download paths. ' +
@@ -399,7 +589,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_fetch_artifacts',
       description:
         'Download artifact refs (the artifacts[] entries a previous run returned) into the local artifacts dir and return their absolute paths for echo/preview. ' +
@@ -423,7 +613,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_files',
       description:
         'Manage the plugin-owned file space: list managed files (local artifacts dir, MinIO or Aliyun OSS depending on the storage setting) with key/size/kind and an access url. ' +
@@ -453,7 +643,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_workflow_pull',
       description:
         'Pull a workflow file from the remote template library (comfymcp_discover remote entries) into the local workflow workspace, making it editable/inspectable offline. ' +
@@ -485,7 +675,7 @@ export function createTools({ define, bridge, askUser }) {
   )
 
   tools.push(
-    define({
+    defineTool({
       name: 'comfymcp_call_remote',
       description:
         `Escape hatch: invoke any remote tool of the comfy-mcp service verbatim (${REMOTE_TOOL_LIST.join(', ')} among others; list with list_remote_tools via this tool's sibling status info). ` +
@@ -507,6 +697,41 @@ export function createTools({ define, bridge, askUser }) {
           tool: args.tool,
           data,
         }
+      },
+    }),
+  )
+
+  tools.push(
+    defineTool({
+      name: 'comfymcp_dev',
+      description:
+        '开发模式工具（插件自查自修）：开发模式（配置 devMode）开启时，允许定位并修复插件源码（plugins/dsh-comfymcp-client/**）、把结论记录到日志；**未开启时严禁修改任何插件源码**，只能按插件规则执行并把问题记录/转述给用户。' +
+        'action=report 读最近异常报告（按级别/来源汇总 + 最近的错误明细 + 复现线索）；action=note 记录一条发现（message 必填，level 可选 info/warn/error）；action=clear 清空日志。' +
+        'Answers { ok, devMode, report? | entry?, guidance }。',
+      parameters: {
+        action: { type: 'string', description: 'report（默认）| note | clear' },
+        message: { type: 'string', description: 'action=note 时的发现描述（必填）' },
+        level: { type: 'string', description: 'action=note 时的级别：info（默认）| warn | error' },
+        limit: { type: 'number', description: 'report/note 返回的条数上限（默认 40）' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+      },
+      async execute(args = {}) {
+        const action = String(args.action ?? 'report').trim() || 'report'
+        if (action === 'clear') {
+          log.clear()
+          return { ok: true, devMode, action, guidance: '开发日志已清空。' }
+        }
+        if (action === 'note') {
+          const message = String(args.message ?? '').trim()
+          if (message.length === 0) return { ok: false, devMode, action, error: 'note 需要 message' }
+          const entry = log.add({ level: String(args.level ?? 'info'), source: 'model', message })
+          return { ok: true, devMode, action, entry, guidance: log.report({ limit: 1 }).guidance }
+        }
+        const report = log.report({ limit: Number(args.limit) || 40 })
+        return { ok: true, devMode, action: 'report', report, guidance: report.guidance }
       },
     }),
   )
