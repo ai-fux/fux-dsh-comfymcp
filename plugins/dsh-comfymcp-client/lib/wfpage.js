@@ -136,7 +136,7 @@ h1{font-size:17px;margin:0 0 2px}.sub{color:var(--muted);font-size:12px;margin-b
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
 .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}
-.row:last-child{margin-bottom:0}label{min-width:130px;max-width:100%;color:var(--muted);font-size:12px;word-break:break-all}
+.row:last-child{margin-bottom:0}.row label{min-width:130px;max-width:100%;color:var(--muted);font-size:12px;word-break:break-all}
 .row.fromLast label{color:var(--accent)}
 .row.fromLast input,.row.fromLast textarea,.row.fromLast select{border-color:var(--accent)}
 input[type=text],input[type=number],textarea,select{flex:1;min-width:180px;padding:5px 9px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--text);font:inherit}
@@ -1025,7 +1025,6 @@ function layoutMasonry() {
   // 常量写死在函数里：本脚本拼在 bootstrap 之后，模块级 var 赋值早于它执行时还是 undefined
   var gap = 12;
   var target = 300;
-  var ROW_SLACK = 48; // 同排判定容差：列高差在此以内 → 视作同一排，继续从左往右排
   runs.forEach(function (run, index) {
     if (run.getAttribute('data-order') === null) run.setAttribute('data-order', String(index));
   });
@@ -1048,15 +1047,9 @@ function layoutMasonry() {
   Array.prototype.slice.call(box.querySelectorAll('.mcol')).forEach(function (column) {
     if (Number(column.getAttribute('data-col')) >= columns) column.remove();
   });
-  runs.forEach(function (run) {
-    // 取最矮的列高做基准；同排高度差在 ROW_SLACK 以内视为「同一排」，仍往最左侧的空列排，
-    // 这样每排都从最左边开始（不会出现左侧大片空白、卡片孤零零落在中间）；真矮很多的列才优先补位。
-    var min = Infinity;
-    for (var i = 0; i < heights.length; i++) { if (heights[i] < min) min = heights[i]; }
-    var pick = 0;
-    for (var j = 0; j < heights.length; j++) {
-      if (heights[j] <= min + ROW_SLACK) { pick = j; break; }
-    }
+  runs.forEach(function (run, index) {
+    // 按列序轮转填充：第 1 排从左到右、第 2 排仍从第 1 列开始，绝不出现「中间插一张、左边空一片」。
+    var pick = index % columns;
     if (list[pick] === undefined) return;
     list[pick].appendChild(run);
     heights[pick] += (run.offsetHeight || 0) + gap;
@@ -1122,6 +1115,16 @@ document.addEventListener('click', function (event) {
   var el = event.target;
   // 灯箱的关闭/缩放统一由 bindPreviewEvents('preview') 处理，这里不再重复
   if (el.id === 'q-run') { runSearch(); return; }
+  // 卡片操作「⋯ 更多」：就地展开/收起次要操作，避免 9 个按钮铺满卡片
+  if (el.classList && el.classList.contains('ops-more')) {
+    var ops = el.closest ? el.closest('.ops') : null;
+    if (ops) {
+      var opened = ops.classList.toggle('more-open');
+      el.textContent = opened ? '⋯ 收起' : '⋯ 更多';
+      el.setAttribute('title', opened ? '收起次要操作' : '更多操作（标签集合/字段/绑定/来源/导出）');
+    }
+    return;
+  }
   if (el.id === 'q-help-toggle') {
     var help = document.getElementById('q-help');
     help.hidden = !help.hidden;
@@ -1230,18 +1233,37 @@ const ARTIFACTS_CSS = `
 .mediacard{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;padding:10px;align-items:flex-start}
 .mediacard .thumb{position:relative;flex:0 0 132px;width:132px;height:132px;background:var(--accent-weak);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;overflow:hidden}
 /* 卡片式样式：瀑布流 / 两列平铺（竖向卡：缩略图占满卡片宽度） */
-/* 瀑布流：列容器 + JS 最短列装填（真瀑布流）——CSS 多列在卡片高度差异大时会平衡失败，
-   留下大片空白；这里固定列宽 300px 自适应列数，按顺序把每组塞进当前最短的列，从左侧起排。 */
+/* 瀑布流：列容器 + JS 轮转填充（真瀑布流）——CSS 多列在卡片高度差异大时会平衡失败，
+   留下大片空白；这里固定列宽 300px 自适应列数，按列序轮转（每排都从最左侧开始）。 */
 #runs.style-masonry{display:flex;align-items:flex-start;gap:12px;justify-content:flex-start;text-align:left}
 #runs.style-masonry .mcol{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:12px}
 #runs.style-masonry .run{break-inside:avoid;display:block;width:100%;margin:0}
 #runs.style-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;justify-content:start}
 #runs.style-grid2 .run{break-inside:avoid;width:100%;margin:0}
-#runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{display:flex;flex-direction:column;gap:10px}
-#runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
+/* 一次运行＝一张整卡：头 / 提示词 / 媒体 / 操作 四区，用发丝线分区，信息层级一眼可读 */
+#runs.style-masonry .run,#runs.style-grid2 .run{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.mediacard .chips{display:flex;flex-wrap:wrap;gap:4px;overflow:hidden;max-height:24px}
+.mediacard .chips .chip{font-size:11px;padding:0 6px}
+.mediacard .chips .chip-more{cursor:help;opacity:.8}
+.mediacard .ops .op-secondary{display:none}
+.mediacard .ops.more-open .op-secondary{display:contents}
+.mediacard .ops .ops-more{opacity:.85}
+.mediacard .bind{font-size:11.5px;line-height:1.45}
+#runs.style-masonry .run .head,#runs.style-grid2 .run .head{margin:0;padding:9px 12px;gap:8px;flex-wrap:nowrap;align-items:center;border-bottom:1px solid var(--line)}
+#runs.style-masonry .run .head b,#runs.style-grid2 .run .head b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:44%}
+#runs.style-masonry .run .head .chip,#runs.style-grid2 .run .head .chip{flex:0 0 auto;font-size:11px}
+#runs.style-masonry .run .head .meta-line,#runs.style-grid2 .run .head .meta-line{flex:1;min-width:0;margin-left:auto;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
+#runs.style-masonry .promptBox,#runs.style-grid2 .promptBox{padding:8px 12px;border-bottom:1px solid var(--line)}
+#runs.style-masonry .mediaList,#runs.style-grid2 .mediaList{gap:0}
+#runs.style-masonry .mediacard,#runs.style-grid2 .mediacard{position:relative;display:flex;flex-direction:column;align-items:stretch;gap:0;padding:0;border:0;border-radius:0;background:transparent;overflow:visible}
+#runs.style-masonry .mediacard + .mediacard,#runs.style-grid2 .mediacard + .mediacard{border-top:1px solid var(--line)}
 #runs.style-masonry .mediacard .thumb,#runs.style-grid2 .mediacard .thumb{flex:none;width:100%;height:auto;aspect-ratio:1/1;border-radius:0}
-#runs.style-masonry .mediacard .meta,#runs.style-grid2 .mediacard .meta{padding:10px 12px}
+#runs.style-masonry .mediacard .meta,#runs.style-grid2 .mediacard .meta{padding:10px 12px;gap:6px}
+#runs.style-masonry .mediacard .fname,#runs.style-grid2 .mediacard .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 勾选框浮在缩略图左上角：不再占一行高度，卡片高度更一致 */
+#runs.style-masonry .mediacard .pick,#runs.style-grid2 .mediacard .pick{position:absolute;left:8px;top:8px;z-index:2;margin:0;padding:2px 4px;border-radius:6px;background:rgba(10,12,15,.5);line-height:0}
 #runs.style-fan .mediacard{flex-direction:row}
+#runs.style-masonry .mediacard .ops,#runs.style-grid2 .mediacard .ops{margin-top:4px}
 .dshmcp-on{border-color:var(--accent);color:var(--accent);font-weight:600}
 .exportBar .sep{width:1px;height:16px;background:var(--line);margin:0 2px}
 .qhelp{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);font-size:12px}
@@ -1270,7 +1292,7 @@ const ARTIFACTS_CSS = `
 .searchbar .srow{display:flex;gap:8px;flex-wrap:wrap}
 .searchbar input[type=text]{flex:1;min-width:220px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 .searchbar select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
-.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;cursor:pointer}
+.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0;max-width:none;cursor:pointer}
 .mediacard .pick{margin-right:2px}
 .run .head .pick{margin-right:4px}
 button.mini.danger{border-color:var(--err);color:var(--err)}
@@ -1321,15 +1343,24 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
         .map((file) => {
           const key = file.key ?? file.path ?? file.filename
           const meta = tagOf(key)
-          const chips = [
-            ...(meta?.tags ?? []).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`),
-            ...(meta?.collections ?? []).map((collection) => `<span class="chip" title="标签集合">🗃 ${escapeHtml(collection)}</span>`),
-          ].join('')
-          const fields = Object.entries(meta?.fields ?? {})
-            .map(([name, value]) => `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`)
-            .join('')
+          // 标签/集合/动态字段：最多各展示 3/2 个，其余折叠成「+n」（悬浮看全），保证卡片高度稳定
+          const chipItems = [
+            ...(meta?.tags ?? []).map((tag) => ({ html: `<span class="chip">${escapeHtml(tag)}</span>`, label: tag })),
+            ...(meta?.collections ?? []).map((collection) => ({ html: `<span class="chip" title="标签集合">🗃 ${escapeHtml(collection)}</span>`, label: collection })),
+          ]
+          const chipShown = chipItems.slice(0, 3).map((item) => item.html).join('')
+          const chipRest = chipItems.slice(3)
+          const fieldItems = Object.entries(meta?.fields ?? {})
+            .map(([name, value]) => ({ html: `<span class="chip" title="动态字段">${escapeHtml(name)}=${escapeHtml(value)}</span>`, label: `${name}=${value}` }))
+          const fieldShown = fieldItems.slice(0, 2).map((item) => item.html).join('')
+          const fieldRest = fieldItems.slice(2)
+          const restLabels = [...chipRest, ...fieldRest].map((item) => item.label).join('、')
+          const restShown = restLabels.length > 0
+            ? `<span class="chip chip-more" title="${escapeHtml(restLabels)}">+${chipRest.length + fieldRest.length}</span>`
+            : ''
+          const chipsHtml = chipShown + fieldShown + restShown
           const bind = meta?.prompt || meta?.source
-            ? `<div class="muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
+            ? `<div class="bind muted">${meta?.prompt ? `绑定提示词：${escapeHtml(meta.prompt)}<br>` : ''}${meta?.source ? `来源：${escapeHtml(meta.source)}` : ''}</div>`
             : ''
           const src = `/artifact?path=${encodeURIComponent(file.path ?? '')}&token=${encodeURIComponent(token)}`
           const name = escapeHtml(file.filename ?? key)
@@ -1339,20 +1370,24 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
             ? `<img src="${src}" alt="${name}" loading="lazy">`
             : `<span class="big">${big}</span>`
           const sizeText = file.bytes ? `${Math.round(file.bytes / 1024)} KB` : ''
+          // 操作分主次：常看的 3 个 + 「⋯ 更多」展开其余，避免 9 个按钮铺满卡片
           return `<div class="mediacard">
 <label class="pick" title="勾选后可批量删除"><input type="checkbox" class="rowpick" data-run="${escapeHtml(run.id ?? '')}" data-path="${escapeHtml(file.path ?? '')}"></label>
 <div class="thumb" data-preview="${escapeHtml(file.path ?? '')}" data-kind="${escapeHtml(file.kind ?? 'file')}" data-name="${name}" title="点击预览（图片可滚轮缩放）">${thumb}<span class="badge">${kindLabel}${sizeText ? ` · ${sizeText}` : ''}</span></div>
-<div class="meta"><span class="fname" title="${name}">${name}</span>${chips}${fields}${bind}
+<div class="meta"><span class="fname" title="${name}">${name}</span>${chipsHtml ? `<div class="chips">${chipsHtml}</div>` : ''}${bind}
 <div class="ops">
-<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add">＋标签</button>
+<button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-add" title="给这张图加标签">＋标签</button>
+<a class="mini" href="${src}" download title="下载原文件">⬇ 下载</a>
+<button type="button" class="mini danger" data-remove-file="${escapeHtml(file.path ?? '')}" data-remove-run="${escapeHtml(run.id ?? '')}" title="删除该成果物（含磁盘文件）">✕ 删除</button>
+<button type="button" class="mini ops-more" data-ops-more title="更多操作（标签集合/字段/绑定/来源/导出）">⋯ 更多</button>
+<span class="op-secondary">
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="tag-edit">标签集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="collection">🗃 集合</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="field">字段</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="prompt">绑定提示词</button>
 <button type="button" class="mini" data-key="${escapeHtml(key)}" data-op="source">来源</button>
-<a class="mini" style="padding:2px 8px" href="${src}" download>下载</a>
 <button type="button" class="mini" data-export-run="${escapeHtml(run.id ?? '')}" title="导出该次运行（字段 + 文件 base64）">⇩ 导出 JSON</button>
-<button type="button" class="mini danger" data-remove-file="${escapeHtml(file.path ?? '')}" data-remove-run="${escapeHtml(run.id ?? '')}" title="删除该成果物（含磁盘文件）">✕ 删除</button>
+</span>
 </div></div></div>`
         })
         .join('\n')
@@ -1361,16 +1396,16 @@ export function artifactsRunsHtml({ runs = [], tags = {}, token = '' }) {
         : (run.finishedAt && run.startedAt ? `${Math.round((run.finishedAt - run.startedAt) / 1000)}s` : '-')
       const time = run.startedAt ? new Date(run.startedAt).toLocaleString('zh-CN') : ''
       const hits = Array.isArray(run.hits) && run.hits.length > 0
-        ? `<span class="muted">命中：${escapeHtml(run.hits.slice(0, 4).join(' / '))}</span>`
+        ? `<span class="chip" title="${escapeHtml(run.hits.join(' / '))}">命中 ${run.hits.length}</span>`
         : ''
       const files = Array.isArray(run.localFiles) ? run.localFiles : []
       const fanned = files.length >= 4 // 同组多张 → 扑克牌摊开（重叠）样式
+      // 卡片头：一行放完（勾选 + 工作流 + 状态 + 命中），元信息靠右单行省略 → 卡片高度稳定
       return `<section class="run"><div class="head">
 <label class="pick" title="勾选整组"><input type="checkbox" class="runpick" data-run="${escapeHtml(run.id ?? '')}"></label>
-<b>${escapeHtml(run.name ?? 'workflow')}</b>
-<span class="chip">${escapeHtml(run.state ?? '')}</span>
-<span class="muted">种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件${fanned ? ' · 重叠展示' : ''}</span>
-${hits}
+<b title="${escapeHtml(run.name ?? 'workflow')}">${escapeHtml(run.name ?? 'workflow')}</b>
+<span class="chip">${escapeHtml(run.state ?? '')}</span>${hits}
+<span class="muted meta-line" title="种子 ${escapeHtml(String(run.seed ?? '-'))} · 用时 ${escapeHtml(duration)}${time ? ` · ${escapeHtml(time)}` : ''} · ${files.length} 件">种子 ${escapeHtml(String(run.seed ?? '-'))} · ${escapeHtml(duration)} · ${files.length} 件${fanned ? ' · 重叠' : ''}</span>
 </div>
 ${promptBlock(run, token)}
 <div class="${fanned ? 'fan' : 'mediaList'}">${cards}</div></section>`

@@ -279,9 +279,9 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
     expect(code).toContain('function layoutMasonry()')
     expect(code).toContain('function unwrapMasonry(')
-    // 每排从最左侧开始：同排（列高差在 ROW_SLACK 内）继续往右排，只有真矮很多的列才优先补位
-    expect(code).toContain('var ROW_SLACK = 48;')
-    expect(code).toContain('heights[j] <= min + ROW_SLACK')
+    // 每排从最左侧开始：按列序轮转填充（第 2 排仍从第 1 列开始）
+    expect(code).toContain('var pick = index % columns;')
+    expect(code).not.toContain('ROW_SLACK')
     expect(code).not.toContain('heights[i] < heights[pick] - 1')
     expect(code).toContain('data-order')
     // 常量必须在函数内：页面脚本的 bootstrap 先于模块级 var 赋值执行（否则列数算出 NaN）
@@ -335,6 +335,51 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(html).toContain('user-select:none')
     // 页面自身的点击处理不再重复处理灯箱按钮（避免缩放两次）
     expect(code).not.toContain("el.id === 'preview-close'")
+  })
+
+  it('卡片内容分层：一次运行＝一张整卡，操作分主次（⋯ 更多 收纳次要按钮）', () => {
+    const runs = [{
+      id: 'r1', name: 'fox-tiger', state: 'completed', seed: 730375400, durationMs: 37000,
+      startedAt: Date.parse('2026-10-13T20:57:16'), prompt: '夕阳西下',
+      localFiles: [{ path: 'C:\\a\\out.png', filename: 'out.png', kind: 'image', bytes: 2191000, key: 'k1' }],
+    }]
+    const tags = {
+      k1: {
+        tags: ['夕阳', '森林', '老虎', '狐狸'],
+        collections: ['旅拍'],
+        fields: { 尺寸: '768x512', 步数: '25', 采样器: 'euler' },
+      },
+    }
+    const html = renderArtifactsHtml({ runs, tags, token: 'tk' })
+    // 卡片头：勾选 + 工作流 + 状态 + 单行省略的元信息（完整信息在 title）
+    expect(html).toContain('class="muted meta-line"')
+    expect(html).toContain('种子 730375400 · 37s · 1 件')
+    expect(html).toContain('用时 37s · ')
+    // 标签/字段超额折叠成「+n」，避免长标签把卡片撑高
+    expect(html).toContain('class="chip chip-more"')
+    expect(html).toContain('>+3<')
+    expect(html).toContain('title="狐狸、旅拍、采样器=euler"')
+    // 操作分主次：常看的 3 个 + 更多；次要按钮仍在 DOM 里（可被展开）
+    expect(html).toContain('data-ops-more')
+    expect(html).toContain('class="op-secondary"')
+    expect(html).toContain('data-op="tag-add"')
+    expect(html).toContain('data-op="tag-edit"')
+    expect(html).toContain('data-op="collection"')
+    expect(html).toContain('data-op="field"')
+    expect(html).toContain('data-op="prompt"')
+    expect(html).toContain('data-op="source"')
+    expect(html).toContain('data-export-run=')
+    expect(html).toContain('data-remove-file=')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain("el.classList.contains('ops-more')")
+    expect(code).toContain("ops.classList.toggle('more-open')")
+  })
+
+  it('全局 label 规则不再污染勾选框：label{min-width:130px} 只作用于表单行', () => {
+    const html = renderArtifactsHtml({ runs: [], tags: {}, token: 'tk' })
+    expect(html).toContain('.row label{min-width:130px')
+    expect(html).not.toMatch(/(^|[};])label\{min-width:130px/m)
+    expect(html).toContain('.pick{display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0')
   })
 
   it('工作流页共用同一灯箱（preview2 也是整屏遮罩）', () => {
