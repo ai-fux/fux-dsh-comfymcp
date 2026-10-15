@@ -279,7 +279,10 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
     expect(code).toContain('function layoutMasonry()')
     expect(code).toContain('function unwrapMasonry(')
-    expect(code).toContain('heights[i] < heights[pick] - 1')
+    // 每排从最左侧开始：同排（列高差在 ROW_SLACK 内）继续往右排，只有真矮很多的列才优先补位
+    expect(code).toContain('var ROW_SLACK = 48;')
+    expect(code).toContain('heights[j] <= min + ROW_SLACK')
+    expect(code).not.toContain('heights[i] < heights[pick] - 1')
     expect(code).toContain('data-order')
     // 常量必须在函数内：页面脚本的 bootstrap 先于模块级 var 赋值执行（否则列数算出 NaN）
     expect(code).not.toContain('MASONRY_TARGET')
@@ -310,7 +313,12 @@ describe('renderIndexHtml / renderArtifactsHtml', () => {
     expect(html).toContain('id="preview-save"')
     expect(html).toContain('id="preview-hint"')
     expect(html).not.toContain('id="zoom-hint"')
+    // 关闭按钮对称：上 16px／右 16px（含滚动条补偿），✕ 在圆内 flex 居中
+    expect(html).toContain('padding:16px var(--lb-pad,16px) 12px 16px')
+    expect(html).toContain('.modal.lightbox .lb-close{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px')
+    expect(html).toContain('--lb-pad')
     const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain("modal.style.setProperty('--lb-pad'")
     // 打开/关闭（锁页面滚动）、以光标为锚点缩放、适应窗口、1:1、边界收敛
     expect(code).toContain('function showPreview(modalId, kind, url, name)')
     expect(code).toContain("document.documentElement.classList.add('lb-open')")

@@ -362,9 +362,10 @@ const PREVIEW_CSS = `
 html.lb-open,body.lb-open{overflow:hidden}
 .modal.lightbox{position:fixed;inset:0;background:rgba(6,7,9,.96);display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0;z-index:80}
 .modal.lightbox[hidden]{display:none}
-.modal.lightbox .lb-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;z-index:3;color:#e9ecef;font-size:13px;background:linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px var(--lb-pad,16px) 12px 16px;z-index:3;color:#e9ecef;font-size:13px;background:linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
 .modal.lightbox .lb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:74vw;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.modal.lightbox .lb-close{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.24);color:#f1f3f5;font-size:15px;line-height:1;cursor:pointer}
+/* 圆形关闭：flex 居中保证 ✕ 落在圆心；上 16px／右 16px（含滚动条补偿）左右上下等距 */
+.modal.lightbox .lb-close{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.24);color:#f1f3f5;font-size:14px;line-height:1;cursor:pointer}
 .modal.lightbox .lb-close:hover{background:rgba(255,255,255,.24);color:#fff}
 /* 舞台铺满整个浏览器窗口，图片在其中缩放/平移（超出的部分被遮罩裁掉） */
 .modal.lightbox .lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab;touch-action:none}
@@ -373,7 +374,7 @@ html.lb-open,body.lb-open{overflow:hidden}
 .modal.lightbox .lb-stage video{max-width:100%;max-height:100%;display:block;background:#000;border-radius:6px}
 .modal.lightbox .lb-stage audio{width:min(560px,84vw);display:block}
 .modal.lightbox .lb-empty{color:#e9ecef;font-size:13px;max-width:80vw;word-break:break-all}
-.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 16px 14px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
+.modal.lightbox .lb-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px var(--lb-pad,16px) 16px;z-index:3;color:#e9ecef;font-size:12px;background:linear-gradient(0deg,rgba(0,0,0,.6),rgba(0,0,0,0))}
 .modal.lightbox .lb-bottom .mini{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2);color:#e9ecef}
 .modal.lightbox .lb-bottom .mini:hover{background:rgba(255,255,255,.2);color:#fff}
 .modal.lightbox .lb-bottom a.mini{text-decoration:none;display:inline-flex;align-items:center}
@@ -497,6 +498,9 @@ function showPreview(modalId, kind, url, name) {
   fillPreview(modalId + '-body', kind, url, name);
   modal.hidden = false;
   document.documentElement.classList.add('lb-open');
+  // 若页面仍留着滚动条，给浮层补上等宽内边距，避免关闭按钮被压在滚动条下（看起来被切、不对称）
+  var scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+  modal.style.setProperty('--lb-pad', (16 + scrollbar) + 'px');
 }
 function closePreviewModal(modalId) {
   var body = document.getElementById(modalId + '-body');
@@ -1021,6 +1025,7 @@ function layoutMasonry() {
   // 常量写死在函数里：本脚本拼在 bootstrap 之后，模块级 var 赋值早于它执行时还是 undefined
   var gap = 12;
   var target = 300;
+  var ROW_SLACK = 48; // 同排判定容差：列高差在此以内 → 视作同一排，继续从左往右排
   runs.forEach(function (run, index) {
     if (run.getAttribute('data-order') === null) run.setAttribute('data-order', String(index));
   });
@@ -1044,9 +1049,13 @@ function layoutMasonry() {
     if (Number(column.getAttribute('data-col')) >= columns) column.remove();
   });
   runs.forEach(function (run) {
+    // 取最矮的列高做基准；同排高度差在 ROW_SLACK 以内视为「同一排」，仍往最左侧的空列排，
+    // 这样每排都从最左边开始（不会出现左侧大片空白、卡片孤零零落在中间）；真矮很多的列才优先补位。
+    var min = Infinity;
+    for (var i = 0; i < heights.length; i++) { if (heights[i] < min) min = heights[i]; }
     var pick = 0;
-    for (var i = 1; i < heights.length; i++) {
-      if (heights[i] < heights[pick] - 1) pick = i; // 明显更矮才换列 → 并列时偏向左侧
+    for (var j = 0; j < heights.length; j++) {
+      if (heights[j] <= min + ROW_SLACK) { pick = j; break; }
     }
     if (list[pick] === undefined) return;
     list[pick].appendChild(run);
