@@ -610,7 +610,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             embeddedMode
               ? h('div', { className: 'dshmcp-section' },
                 h(Field, { label: 'ComfyUI 地址', hint: '内置 comfy-mcp 指向的 ComfyUI；保存后自动重启内置服务生效' },
-                  h(TextInput, { value: draft.comfyuiUrl, mono: true, placeholder: 'http://127.0.0.1:8000', onChange: function (value) { edit('comfyuiUrl', value) } })),
+                  h(TextInput, { value: draft.comfyuiUrl, mono: true, placeholder: 'http://127.0.0.1:8188', onChange: function (value) { edit('comfyuiUrl', value) } })),
                 h(Field, { label: '后端入口（高级）', hint: 'stdio 后端 MCP 程序路径；留空用部署时的默认兄弟项目入口' },
                   h(TextInput, { value: draft.backendEntry, mono: true, placeholder: '…\\projects\\dsh-comfyui\\mcp\\bin\\fux-comfyui-mcp.mjs', onChange: function (value) { edit('backendEntry', value) } })),
                 host ? h(LinkRow, { label: '当前端点', value: text(draft.endpoint).length > 0 ? draft.endpoint : '待首次运行时分配' }) : null)

@@ -22,7 +22,8 @@
         # env DSH_COMFYMCP_SERVER_ENTRY 或设置页可显式覆盖。
         # 关闭（设置页「远程地址」模式）则连接上方 endpoint 指向的外置服务。
         embeddedServer: true
-        comfyuiUrl: http://127.0.0.1:8000
+        # ComfyUI 服务地址：官方默认端口 8188；ComfyUI 在别的机器时改成 http://<IP>:8188（设置页可改，保存热重启内置服务）
+        comfyuiUrl: http://127.0.0.1:8188
         embeddedBackend: stdio
         embeddedBackendCommand: node
         embeddedBackendArgs: F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs

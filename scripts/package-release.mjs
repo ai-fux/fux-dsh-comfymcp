@@ -53,7 +53,7 @@ const installMd = (pkgName) => `# INSTALL —— 交给 DSH 大模型自动执�
 3. 会话内调用 \`comfymcp_status\` → \`ok: true\`（内嵌模式默认 embeddedServer=true，服务端由插件内置 vendor 包自动拉起，随机端口随 DSH 启停）。
 
 ## 5. ComfyUI 不在本机时
-设置页「ComfyUI MCP」→ comfyuiUrl 改 \`http://<局域网IP>:8000\` 并保存（热重启内置服务）。
+设置页「ComfyUI MCP」→ comfyuiUrl 改为 ComfyUI 实际地址（官方默认端口 \`8188\`，如 \`http://<局域网IP>:8188\`）并保存（热重启内置服务）。
 ComfyUI 原版服务即可，无需装任何 MCP 组件（可选 custom_nodes/comfyui-unload-model 用于运行后释放显存）。
 
 ## 6. 备注
@@ -94,7 +94,7 @@ mkdirSync(outDir, { recursive: true })
 // ---- 包 1：source（纯插件，零依赖）----
 const sourceStage = join(outDir, '_stage-source')
 mkdirSync(sourceStage, { recursive: true })
-for (const name of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json', 'lib', 'locale', 'vendor']) {
+for (const name of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json', 'README.md', 'lib', 'locale', 'vendor']) {
   const src = join(root, 'plugins/dsh-comfymcp-client', name)
   if (!existsSync(src)) throw new Error(`source 包缺少必需项：${name}`)
   if (statSync(src).isDirectory()) stageCopy(src, join(sourceStage, name))

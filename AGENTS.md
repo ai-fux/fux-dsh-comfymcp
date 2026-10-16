@@ -24,6 +24,36 @@
 - 严禁推送 `main`/`master`；远程推送与分支合并需用户二次确认。
 - 本地验证补充：`node scripts/check-page-templates.mjs`（页面模板完整性）、`node scripts/check-page-scripts.mjs`（页面脚本语法与关键监听）。
 
+## 版本升级说明（0.4.0）
+
+**新版本升级优化功能**：
+
+1. **命中业务类 → 表单标题提示**：`comfymcp_business match` 命中后，`comfymcp_push_form`
+   确认表单标题自动以业务类显示名开头（模型写了同名开头不重复拼），用户一眼可见本次按哪类执行；
+   match 的 nextSteps 同步提示。
+2. **候选智能排序 + 自动/手动换主**：新增 `workflowOutcomeStats`（只认 completed/failed）与
+   `businessRanking`（得分 = 成功×3 + 使用 − 失败 +（成功过再 +1））；`auto=true` 的业务配置在
+   候选明显更好（≥2 次成功且得分超主配置 3 分）时自动提升为主配置，手动配置永不自动改；
+   工作台业务卡候选条带 ✓/✗ 战绩、一键「设为主配置」（原主退候选 demoted）。
+3. **业务级参数预设集**：业务配置可存 ≤12 条参数预设（同名覆盖、空参数拒绝）；
+   模型侧 `preset_save` / `preset_remove` / register 带 `presetName`，match 带出
+   `matched.presets`；工作台业务卡预设 chip（套用/删除/存当前参数）、工作流页「业务预设」条
+   按字段名一键填表。
+4. **发布工程**：GitHub 快照发布约定 + 离线安装包（source 零依赖插件包 / full 全工程源码包，
+   包内 INSTALL.md 供 DSH 对话框大模型自动安装）；README 按公开发布重写。
+5. **默认端口对齐官方**：ComfyUI 默认地址从本机测试端口 8000 改为官方默认 **8188**
+   （代码默认 / 行配置 / 设置页占位 / 文档同步）；老部署若 ComfyUI 仍在非 8188 端口，
+   重启后在设置页确认 comfyuiUrl 即可（已有显式配置不受影响）。
+
+**修复问题**（含 0.3.1）：
+
+- 0.3.1：devMode 经设置页保存后丢失/不即时生效 → 活值化（写入即时生效）+ 落盘原子写。
+- 0.4.0：运行战绩统计只认已结论运行（running/aborted 不计），避免误判候选优劣；
+  预设保存合并不丢已有 createdAt；远端模板命中时预设提示两路（本地图/远端）都带出。
+
+**升级注意**：宿主半区改动需**重启 DSH** 加载；`business.json` 向后兼容自动补 `presets`
+字段，无迁移动作；升级后建议跑一遍 `comfymcp_status` 与工作台业务页确认。
+
 ## 本地验证
 
 ```powershell
