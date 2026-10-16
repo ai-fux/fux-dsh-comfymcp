@@ -229,6 +229,16 @@ describe('ComfymcpBridge.applyOverlay', () => {
     expect(bridge.config.workflowDirs).toEqual(['C:\\new'])
     expect(bridge.unloadProbe.at).toBe(0)
   })
+
+  it('applies a devMode patch immediately（设置页保存路径，无需重启）', () => {
+    const bridge = makeBridge()
+    expect(bridge.config.devMode === true).toBe(false)
+    const next = bridge.applyOverlay({ devMode: true })
+    expect(bridge.config.devMode).toBe(true)
+    expect(next.devMode).toBe(true)
+    bridge.applyOverlay({ devMode: false })
+    expect(bridge.config.devMode).toBe(false)
+  })
 })
 
 describe('ComfymcpBridge 传输选择（远程＝Streamable HTTP，内置＝stdio 宿主）', () => {

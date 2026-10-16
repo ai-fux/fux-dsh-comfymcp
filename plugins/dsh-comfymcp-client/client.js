@@ -378,7 +378,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var initial = react.useState({
           endpoint: '', authToken: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
           storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
-          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '', autoAcceptForm: false, autoAcceptFormSec: '30',
+          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '', autoAcceptForm: false, autoAcceptFormSec: '30', devMode: false,
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -463,7 +463,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         function isDirty() {
           return ['endpoint', 'authToken', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
             'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
-            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin', 'autoAcceptForm', 'autoAcceptFormSec'].some(function (key) {
+            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin', 'autoAcceptForm', 'autoAcceptFormSec', 'devMode'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -768,7 +768,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               checked: draft.devMode === true,
               onChange: function (value) { edit('devMode', value) },
             }),
-            h(Hint, { hint: '开发日志：<数据目录>/dev-log.jsonl；模型侧用 comfymcp_dev（action=report/note/clear）读取与记录。', always: true }),
+            h(Hint, { hint: '保存后即时生效（写入覆盖层，重启 DSH 后仍保持）；开发日志：<数据目录>/dev-log.jsonl；模型侧用 comfymcp_dev（action=report/note/clear）读取与记录。', always: true }),
           ),
 
           h('div', { className: 'dshmcp-row' },

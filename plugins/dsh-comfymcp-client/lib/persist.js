@@ -73,6 +73,7 @@ export const OVERLAY_KEYS = [
   'runTimeoutMin',
   'autoAcceptForm',
   'autoAcceptFormSec',
+  'devMode',
 ]
 
 /** Reduce a config/write payload to the writable keys (drop empties except explicit booleans). */

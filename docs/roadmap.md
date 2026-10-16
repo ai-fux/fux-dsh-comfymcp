@@ -2,6 +2,24 @@
 
 > 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
 
+## snapshot-0.3.1（小修迭代，2026-10-16）
+
+> 开发分支 `dev-snapshot-20261016-0.3.1`（自 `dev` 拉取）；插件 `plugins/dsh-comfymcp-client` 版本 0.3.1。
+
+**MVP 主题：修「开发模式（devMode）配置无法保存、无法即时测试」。用户在设置页打开开发模式并保存后，开关永远弹回关闭、`comfymcp_dev` 始终报 `devMode:false`。**
+
+| # | 修复内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | **根因①（保存被静默丢弃）**：设置页保存的 patch 经 `sanitizeOverlayPatch` 白名单过滤，而 `OVERLAY_KEYS` 漏了 `devMode` → 开关写入覆盖层前被丢掉（实测 `POST /set-config {"devMode":true}` 返回 ok 但落盘与 applied 均为 false）。补入白名单，布尔 true/false 均可落盘 | `lib/persist.js` | ✅ |
+| 2 | **根因②（保存后仍不生效/不能测）**：devMode 在激活时被捕获成布尔快照（`createDevLog`/`createTools`），`applyOverlay` 更新了 `bridge.config.devMode` 但工具与日志的指引永远用旧值 → 活值化：`devMode` 参数支持「活值函数」，`comfymcp_dev` 与报告 `guidance` 按调用时取值，保存后即时生效、无需重启；旧布尔参数保持兼容 | `lib/catalog.js`（`isDevMode`）、`lib/devlog.js`、`index.js` | ✅ |
+| 3 | **根因③（UI 脏标记失灵）**：设置页 `isDirty()` 键表与 draft 初始态都漏了 `devMode` → 拨动开关不显示「有未保存的改动」；补齐并把「⑧ 开发模式」提示更新为「保存后即时生效（写入覆盖层，重启后仍保持）」 | `client.js` | ✅ |
+| 4 | **版本对齐**：`index.js` 导出版本 0.2.1 与 `package.json` 0.3.0 不一致（违反版本规约），一并修正为 0.3.1（工程根 package.json 同步） | `index.js`、两处 `package.json` | ✅ |
+| 5 | **测试回归**：overlay 白名单保留 devMode（true/false）+ 落盘回读；`applyOverlay({devMode})` 原地即时生效；活值函数 devMode 报告/指引切换；`comfymcp_dev` 读运行时 devMode（bridge.config 翻转后响应跟着变） | `test/rpc.test.js`、`test/bridge.test.js`、`test/devlog.test.js` | ✅ |
+
+**迁移提示**：宿主半区改动需**重启 DSH** 加载（长驻进程模块按进程冻结，`set_plugin` 禁用/启用不会重载 ESM）。已在 `config-overlay.json` 手工补写 `"devMode": true`（用户原意图），重启后开发模式即从激活起生效；此后在设置页保存的 devMode 不再丢失。
+
+**校验（2026-10-16）**：`pnpm verify:dsh-plugin` 语法 OK · 插件 vitest 215 例全绿（20 文件，含本次 +4 断言）· 工程全仓 `pnpm test` / `pnpm typecheck` 通过。
+
 ## snapshot-0.3.0（稳定，2026-10-15 封板）✅
 
 > 开发分支 `dev-snapshot-20261015-0.3.0` → 已合并回 `dev`，打 tag `v0.3.0`；插件 `plugins/dsh-comfymcp-client` 版本 0.3.0。
