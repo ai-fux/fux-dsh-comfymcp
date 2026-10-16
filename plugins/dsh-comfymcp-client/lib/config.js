@@ -21,7 +21,7 @@ export const DEFAULTS = Object.freeze({
   embeddedBackend: 'mock',
   embeddedBackendCommand: 'node',
   embeddedBackendArgs: '',
-  comfyuiUrl: 'http://127.0.0.1:8000',
+  comfyuiUrl: 'http://127.0.0.1:8188',
   controlPort: 18801,
   controlToken: '',
   storage: 'local',
