@@ -452,6 +452,33 @@ export function createControlServer(options = {}) {
         sendJson(response, 200, { ok: true, value: await methods.businessSchema(payload) }, allowedOrigin)
         return
       }
+      if (pathname === '/api/business/promote') {
+        const outcome = await methods.promoteBusiness(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'promote_rejected', message: outcome?.reason ?? '设为主配置失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/preset/save') {
+        const outcome = await methods.saveBusinessPreset(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'preset_rejected', message: outcome?.reason ?? '保存预设失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/preset/remove') {
+        const outcome = await methods.removeBusinessPreset(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'preset_rejected', message: outcome?.reason ?? '删除预设失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
       if (pathname === '/api/business/list') {
         sendJson(response, 200, { ok: true, value: await methods.listBusiness(payload) }, allowedOrigin)
         return

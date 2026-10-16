@@ -32,4 +32,16 @@ describe('generation flow skill: autoAcceptForm 表单倒计时策略', () => {
   it('keeps the stable skill identity', () => {
     expect(SKILL_NAME).toBe('comfymcp-generation-flow')
   })
+
+  it('业务配置命中提示与参数预设（0.4.0）：标题自动带业务类、预设按名套用', () => {
+    // 第 2 步：matched.presets 预设集语义
+    expect(GENERATION_FLOW_CONTENT).toContain('matched.presets')
+    expect(GENERATION_FLOW_CONTENT).toContain('参数预设集')
+    expect(GENERATION_FLOW_CONTENT).toContain('用户点名预设')
+    // 命中后表单标题自动带业务类显示名；模型不要重复拼
+    expect(GENERATION_FLOW_CONTENT).toContain('业务类显示名')
+    expect(GENERATION_FLOW_CONTENT).toMatch(/自动在前面拼上业务类显示名[\s\S]{0,60}不要自己重复拼/)
+    // register 可带 presetName 存预设
+    expect(GENERATION_FLOW_CONTENT).toContain('presetName')
+  })
 })

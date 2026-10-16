@@ -2,6 +2,24 @@
 
 > 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
 
+## snapshot-0.4.0（功能迭代，2026-10-16）
+
+> 开发分支 `dev-snapshot-20261016-0.4.0`（自 0.3.1 分支拉取）；插件 `plugins/dsh-comfymcp-client` 版本 0.4.0。
+
+**MVP 主题：业务配置增强包——命中业务类时表单标题直接亮出业务类；多工作流候选按「成功率/最近使用」智能排序并支持自动换主；业务级参数预设集一键套用（工作台 + 模型侧双端）。**
+
+| # | 迭代内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | **命中业务类 → 表单标题提示**：`comfymcp_business match` 命中后记录 `lastBusinessMatch`，`comfymcp_push_form` 的标题自动以业务类显示名开头（如「文生图 · 白色机甲 · 生成参数」），用户在表单上第一眼就看到这次按哪个业务类跑；模型自己写了同名开头则不重复拼；match 的 nextSteps 同步提示。技能文本同步（title 规则 + 不重复拼） | `lib/catalog.js`（`lastBusinessMatch`）、`lib/skills.js` | ✅ |
+| 2 | **候选智能排序 + 自动换主**：新增 `workflowOutcomeStats`（只认 completed/failed，running/aborted 不计）与 `businessRanking`（得分 = 成功×3 + 使用 − 失败 +（成功过再 +1），快捷指令连跑的「名字-N」后缀并入同前缀统计）。`autoRegister` 带入近期运行记录后支持**自动换主**：仅 `auto=true` 的配置参与，候选至少成功 2 次且得分超过主配置 3 分才提升，原主退回候选（source=demoted）；手动配置永不自动改。工作台业务卡新增候选条（带 ✓/✗ 战绩，点击「设为主配置」）与 `promote` 手动换主 | `lib/business.js`、`lib/workbench.js`（`runPage` 传 runs、`promoteBusiness`）、`lib/wfpage.js`（候选条）、`lib/control-server.js`（`/api/business/promote`） | ✅ |
+| 3 | **业务级参数预设集**：profile 新增 `presets`（≤12 条：id/名称/params/createdAt，同名覆盖、空参数拒绝，UI 保存合并不丢）。存储侧 `savePreset`/`removePreset`（按 id 或名称删）；模型侧 `comfymcp_business` 新增 `preset_save`/`preset_remove`，match 命中时 `matched.presets` 一并带出（两路 nextSteps 都提示），register 可带 `presetName` 顺手把本次参数存成预设；工作台业务卡新增「参数预设」chip 行（一键套用进参数区 / ✕ 删除 / ＋存当前参数为预设），工作流页在属于某业务配置时渲染「业务预设」条（按复合键末段字段名匹配，一键把成套参数填进表单，checkbox 特判）；技能文本说明用户点名预设就用其 params 当推荐值 | `lib/business.js`、`lib/catalog.js`、`lib/workbench.js`（`saveBusinessPreset`/`removeBusinessPreset`、`pageWorkflow` 带 presets）、`lib/wfpage.js`（预设 chip + 预设条 + `BIZ_PRESETS` 下发）、`lib/control-server.js`（`/api/business/preset/*`）、`lib/skills.js` | ✅ |
+| 4 | **版本对齐**：插件 `index.js` / `package.json` 与工程根 `package.json` 同步 0.4.0 | `index.js`、两处 `package.json` | ✅ |
+| 5 | **测试回归**：新增 16 项断言/用例（预设集存删与合并保留、战绩统计边界、排序计分、自动换主三态、手动换主、promote/preset 路由成功与拒绝、push_form 标题四态、register 带 presetName、业务页/工作流页渲染与脚本体检）；页面体检 2 脚本扩展（预设/候选监听） | `test/business.test.js`、`test/catalog.test.js`、`test/workbench.test.js`、`test/wfpage.test.js`、`test/skills.test.js`、`test/control-server.test.js`、`scripts/check-page-*.mjs` | ✅ |
+
+**校验（2026-10-16）**：`verify:dsh-plugin` 语法 OK（14 文件）· 插件 vitest **231 例全绿**（20 文件，含本次 +16）· comfy-mcp-server 13 例 / mcp 5 例全绿 · 双包 `tsc --noEmit` 通过 · 两组件 `--selftest` OK · 页面体检（脚本语法 + 关键监听 / 模板完整性）通过。
+
+**迁移提示**：宿主改动需**重启 DSH** 加载（长驻进程 ESM 冻结）。重启前运行中的仍是 0.3.1：命中提示、预设条、候选条要等重启后才出现在实际页面/工具里；数据结构向后兼容（business.json 旧文件自动补 presets，无迁移动作）。
+
 ## snapshot-0.3.1（小修迭代，2026-10-16）
 
 > 开发分支 `dev-snapshot-20261016-0.3.1`（自 `dev` 拉取）；插件 `plugins/dsh-comfymcp-client` 版本 0.3.1。
@@ -19,6 +37,8 @@
 **迁移提示**：宿主半区改动需**重启 DSH** 加载（长驻进程模块按进程冻结，`set_plugin` 禁用/启用不会重载 ESM）。已在 `config-overlay.json` 手工补写 `"devMode": true`（用户原意图），重启后开发模式即从激活起生效；此后在设置页保存的 devMode 不再丢失。
 
 **校验（2026-10-16）**：`pnpm verify:dsh-plugin` 语法 OK · 插件 vitest 215 例全绿（20 文件，含本次 +4 断言）· 工程全仓 `pnpm test` / `pnpm typecheck` 通过。
+
+**复验（2026-10-16，重启后）**：控制端点 `/health` 报 version 0.3.1（新代码已加载）→ `POST /set-config {"devMode":true}` → `/config` 回读 true → 落盘 overlay true → `comfymcp_dev` 不重启即时报告 `devMode:true`（活值化生效）。已合并回 `dev`（merge 1d4c4f2）并打 tag `v0.3.1`。
 
 ## snapshot-0.3.0（稳定，2026-10-15 封板）✅
 

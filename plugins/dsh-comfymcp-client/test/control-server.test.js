@@ -226,6 +226,43 @@ describe('control-server', () => {
     ).json()
     expect(tags.value.tags).toEqual(['夕阳'])
   })
+
+  it('业务配置路由：promote / preset save+remove（成功与拒绝两路）', async () => {
+    const calls = []
+    const methods = {
+      promoteBusiness: async (payload) => {
+        calls.push(['promote', payload])
+        return payload.workflow === 'sunset'
+          ? { ok: true, swapped: true, from: 'beach', profile: { id: 'text2img', workflow: 'sunset' } }
+          : { ok: false, reason: '业务配置 nope 不存在' }
+      },
+      saveBusinessPreset: async (payload) => {
+        calls.push(['preset-save', payload])
+        return payload.preset?.name === '空'
+          ? { ok: false, reason: '预设参数为空（至少填一项，如 steps/width）' }
+          : { ok: true, preset: { id: 'p1', name: payload.preset?.name ?? '' } }
+      },
+      removeBusinessPreset: async (payload) => {
+        calls.push(['preset-remove', payload])
+        return { ok: true, profile: { id: 'text2img', presets: [] } }
+      },
+    }
+    const { base } = await startServer({ extraMethods: methods })
+    const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { ...MARKER, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const promoted = await (await post('/api/business/promote', { id: 'text2img', workflow: 'sunset' })).json()
+    expect(promoted.value).toMatchObject({ ok: true, swapped: true, from: 'beach' })
+    const rejected = await post('/api/business/promote', { id: 'nope', workflow: 'x' })
+    expect(rejected.status).toBe(400)
+    expect((await rejected.json()).error.message).toMatch(/不存在/)
+    const saved = await (await post('/api/business/preset/save', { id: 'text2img', preset: { name: '高清', params: { steps: 30 } } })).json()
+    expect(saved.value.preset.name).toBe('高清')
+    const emptyPreset = await post('/api/business/preset/save', { id: 'text2img', preset: { name: '空', params: {} } })
+    expect(emptyPreset.status).toBe(400)
+    expect((await emptyPreset.json()).error.message).toMatch(/参数为空/)
+    const removed = await (await post('/api/business/preset/remove', { id: 'text2img', presetId: '高清' })).json()
+    expect(removed.value.ok).toBe(true)
+    expect(calls.map((entry) => entry[0])).toEqual(['promote', 'promote', 'preset-save', 'preset-save', 'preset-remove'])
+  })
 })
 
 describe('isLoopbackOrigin', () => {

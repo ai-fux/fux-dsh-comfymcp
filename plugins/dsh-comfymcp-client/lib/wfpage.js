@@ -262,6 +262,8 @@ function fieldControlHtml(field, fieldId, dataKey) {
 export function renderPageHtml(descriptor, options = {}) {
   const token = String(options.token ?? '')
   const quickCommands = Array.isArray(options.quickCommands) ? options.quickCommands : DEFAULT_QUICK_COMMANDS
+  const bizPresets = Array.isArray(options.presets) ? options.presets.filter((preset) => preset !== null && typeof preset === 'object') : []
+  const bizLabelText = String(options.businessLabel ?? '').trim()
   const apiCfg = { token }
   const sections = (descriptor.sections ?? [])
     .map((section) => {
@@ -280,6 +282,10 @@ export function renderPageHtml(descriptor, options = {}) {
   const quickBar = quickCommands.length > 0
     ? `<div class="row" style="margin-bottom:10px">${quickCommands.map((command) => `<button type="button" data-quick="${escapeHtml(command.name)}">${escapeHtml(command.label ?? command.name)}</button>`).join('')}</div>`
     : ''
+  // 业务参数预设条：该工作流属于某条业务配置时，一键把成套参数（如高清 1024·25 步）填进表单
+  const presetBar = bizPresets.length > 0
+    ? `<div class="row" style="margin-bottom:10px"><span class="muted">业务预设${bizLabelText.length > 0 ? `（${escapeHtml(bizLabelText)}）` : ''}：</span>${bizPresets.map((preset) => `<button type="button" class="mini" data-biz-preset="${escapeHtml(String(preset.id ?? preset.name ?? ''))}" title="${escapeHtml(Object.keys(preset.params ?? {}).map((key) => `${key}=${preset.params[key]}`).join('，') || '空预设')}">${escapeHtml(String(preset.name ?? ''))}</button>`).join('')}<span class="muted">点按把预设参数填进下方表单</span></div>`
+    : ''
   const refreshBtn = `<button type="button" class="mini" data-refresh="1" title="丢弃解析缓存，重新拉取工作流与节点元数据并重渲染">↻ 重新解析</button>`
   const notes = Array.isArray(descriptor.notes) ? descriptor.notes : []
   const noteBar = notes.length > 0
@@ -293,6 +299,7 @@ export function renderPageHtml(descriptor, options = {}) {
 <div class="sub">工作流 ${escapeHtml(descriptor.workflow)} · ${descriptor.nodeCount} 节点 · ${sections.length} 组参数 · 生成于 ${escapeHtml(descriptor.generatedAt)} · ${refreshBtn}</div></div>
 <a href="/ui?token=${encodeURIComponent(token)}">← 全部页面</a></div>${noteBar}
 ${quickBar}
+${presetBar}
 <form id="run-form" onsubmit="return false">
 ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 <div class="actions">
@@ -341,6 +348,34 @@ ${sections || `<div class="card">${escapeHtml(emptyHint)}</div>`}
 var API_CFG = ${JSON.stringify(apiCfg)};
 var WORKFLOW = ${JSON.stringify(descriptor.workflow)};
 ${PAGE_RUN_JS}
+${bizPresets.length > 0 ? `var BIZ_PRESETS = ${JSON.stringify(bizPresets)};
+// 业务参数预设：按字段名（复合键最后一冒号后的名字）匹配，把预设值填进表单控件
+document.addEventListener('click', function (event) {
+  var el = event.target;
+  if (!el || !el.getAttribute) return;
+  var id = el.getAttribute('data-biz-preset');
+  if (id === null || id === undefined) return;
+  var preset = null;
+  Array.prototype.slice.call(BIZ_PRESETS).forEach(function (entry) {
+    if (preset === null && (String(entry.id) === String(id) || String(entry.name) === String(id))) preset = entry;
+  });
+  if (preset === null) return;
+  var applied = 0;
+  var controls = document.querySelectorAll('#run-form [data-field]');
+  Object.keys(preset.params || {}).forEach(function (key) {
+    Array.prototype.slice.call(controls).forEach(function (node) {
+      var dataKey = node.getAttribute('data-field') || '';
+      var name = dataKey.slice(dataKey.lastIndexOf(':') + 1);
+      if (name !== key) return;
+      if (node.type === 'checkbox') { node.checked = preset.params[key] === true || preset.params[key] === 'true'; }
+      else { node.value = String(preset.params[key]); }
+      try { node.dispatchEvent(new Event('change', { bubbles: true })); } catch (error) {}
+      applied += 1;
+    });
+  });
+  var hint = document.getElementById('timing');
+  if (hint !== null) hint.textContent = '已应用业务预设「' + (preset.name || '') + '」（' + applied + ' 项）';
+});` : ''}
 </script>`
   return pageShell(descriptor.title, body, { extraCss: PREVIEW_CSS })
 }
@@ -1899,6 +1934,21 @@ const BUSINESS_CSS = `
 .bizparamtools .muted{font-size:11.5px}
 .bizfoot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
 .bizfoot .grow{flex:1}
+.bizfoot .okmark{color:var(--ok)}
+.bizfoot .errmark{color:var(--err)}
+/* 参数预设集：一键把预设参数填进卡片参数区；✕ 删除；＋ 存当前参数 */
+.bizpresets{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;margin-top:8px}
+.bizpresets .muted{font-size:11.5px}
+.presetchip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--bg);overflow:hidden}
+.presetchip .presetname{border:0;background:transparent;color:var(--accent);cursor:pointer;font:inherit;font-size:11.5px;padding:2px 4px 2px 10px}
+.presetchip .presetname:hover{filter:brightness(1.1)}
+.presetchip .presetx{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;padding:2px 4px;border-radius:999px}
+.presetchip .presetx:hover{background:rgba(192,57,43,.18);color:var(--err)}
+/* 候选工作流：点击设为主配置（原首选退回候选），括号内是运行战绩 */
+.bizcands{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;margin-top:6px}
+.bizcands .muted{font-size:11.5px}
+.candchip{padding:2px 10px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--text);cursor:pointer;font:inherit;font-size:11.5px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.candchip:hover{border-color:var(--accent);color:var(--accent)}
 .bizhelp{margin-top:10px;font-size:12px;line-height:1.5}
 .bizhelp code{background:var(--accent-weak);color:var(--accent);border-radius:4px;padding:0 4px}
 `
@@ -1908,7 +1958,16 @@ const BUSINESS_CSS = `
  * 把「跑过/加载过」的工作流按业务类固定下来，后续会话用自然语言直接命中，
  * 不再每次去服务端捞模板、枚举模型挑最优解（省 token）。
  */
-export function renderBusinessHtml({ profiles = [], kinds = [], workflows = [], hiddenRuns = 0, token = '' } = {}) {
+export function renderBusinessHtml({ profiles = [], kinds = [], workflows = [], hiddenRuns = 0, runStats = {}, token = '' } = {}) {
+  // 各工作流运行战绩（成功/失败）：候选 chip 与主配置统计的展示依据
+  const statsOf = (name) => {
+    const entry = runStats?.[String(name ?? '')]
+    return entry === null || entry === undefined || typeof entry !== 'object' ? { ok: 0, failed: 0 } : { ok: Number(entry.ok) || 0, failed: Number(entry.failed) || 0 }
+  }
+  const markText = (name) => {
+    const entry = statsOf(name)
+    return entry.ok === 0 && entry.failed === 0 ? '无运行' : `${entry.ok}✓${entry.failed > 0 ? ` ${entry.failed}✗` : ''}`
+  }
   // 业务类来自存储（页面可动态增删）；卡片引用到清单外的 id 时也补进下拉，避免显示不了当前值
   const kindList = [...kinds]
   for (const profile of profiles) {
@@ -1955,6 +2014,18 @@ export function renderBusinessHtml({ profiles = [], kinds = [], workflows = [], 
   ]
   const card = (profile, index) => {
     const params = profile.params ?? {}
+    const presets = Array.isArray(profile.presets) ? profile.presets : []
+    const candidates = Array.isArray(profile.candidates) ? profile.candidates.filter((entry) => entry && String(entry.workflow ?? '').length > 0) : []
+    const primaryStat = markText(profile.workflow)
+    const presetsRow = `<div class="bizpresets"><span class="muted">参数预设：</span>${
+      presets.map((preset) => `<span class="presetchip"><button type="button" class="presetname" data-biz-preset-apply="${escapeHtml(String(preset.id ?? ''))}" title="${escapeHtml(Object.keys(preset.params ?? {}).join('，') || '空预设')}：把参数填进本卡参数区">${escapeHtml(String(preset.name ?? ''))}</button><button type="button" class="presetx" data-biz-preset-remove="${escapeHtml(String(preset.id ?? preset.name ?? ''))}" title="删除该预设">✕</button></span>`).join('')
+    }<button type="button" class="mini" data-biz-preset-add title="把当前参数区的值存成一条预设">＋ 存当前参数为预设</button></div>`
+    const candidatesRow = candidates.length > 0
+      ? `<div class="bizcands"><span class="muted">候选（点击设为主配置）：</span>${candidates.map((entry) => {
+          const name = String(entry.workflow ?? '')
+          return `<button type="button" class="candchip" data-biz-promote="${escapeHtml(name)}" title="把「${escapeHtml(name)}」设为主配置（当前首选退回候选）">${escapeHtml(name)}（${markText(name)}）</button>`
+        }).join('')}</div>`
+      : ''
     return `<section class="bizcard" data-biz="${escapeHtml(profile.id ?? String(index))}">
 <div class="bizhead">
 <span class="biztitle">${escapeHtml(profile.label ?? businessLabelOf(kinds, profile.business))}</span>
@@ -1974,7 +2045,9 @@ ${paramKeys.map(([key, label]) => `<label class="f narrow"><span>${label}</span>
 <span class="bizparamtools"><button type="button" class="mini" data-params-load title="按所选工作流读取它实际有的参数（换工作流后参数区会跟着变）">⟳ 读取该工作流参数</button><span class="muted" data-params-note></span></span>
 <label class="f"><span>备注</span><input type="text" data-field="notes" value="${escapeHtml(profile.notes ?? '')}" placeholder="例如：出图走 turbo，8 步"></label>
 </div>
-<div class="bizfoot"><span>用过 ${Number(profile.uses) || 0} 次</span><span class="grow"></span>
+${presetsRow}
+${candidatesRow}
+<div class="bizfoot"><span>用过 ${Number(profile.uses) || 0} 次</span><span>主配置 ${escapeHtml(primaryStat)}</span><span class="grow"></span>
 <span>${profile.lastUsedAt ? `最近 ${escapeHtml(String(profile.lastUsedAt).slice(0, 19).replace('T', ' '))}` : '还没用过'}</span></div>
 </section>`
   }
@@ -2000,9 +2073,13 @@ ${kindChips}
 <div id="biz-list">${cards || '<div class="card muted">还没有业务配置。跑一次工作流就会自动登记，也可以点「＋ 新增业务配置」手动指定。</div>'}</div>
 <div class="bizhelp muted">每条配置＝一个业务类（默认给文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频，可自行添加）。
 模型在开工前会先用 <code>comfymcp_business</code> 按你说的话匹配：命中就直接用这张配置里的工作流与参数，
-不再去模板库里大海捞针；没命中才走完整探索流程，并把跑通的结果自动登记回来。</div>
+并且表单标题会带上业务类（如「文生图 · …」）；没命中才走完整探索流程，并把跑通的结果自动登记回来。
+候选条按运行战绩（成功✓/失败✗）列出同类跑过的其它工作流，点一下即可「设为主配置」；
+自动登记的配置在候选明显更好时也会自动换主（手动配置不会被自动改动）。
+「参数预设」一键把成套参数（如高清 1024·25 步）填进卡片，模型侧命中时也会带出同名预设。</div>
 <script>
 var TOKEN = ${JSON.stringify(token)};
+var BIZ_PRESETS = ${JSON.stringify(Object.fromEntries(profiles.map((profile) => [String(profile.id ?? ''), Array.isArray(profile.presets) ? profile.presets : []])))};
 function api(url, payload) {
   return fetch(url, { method: 'POST', headers: Object.assign({'x-dsh-comfymcp':'1','content-type':'application/json'}, TOKEN ? {'x-dsh-comfymcp-token': TOKEN} : {}), body: JSON.stringify(payload || {}) }).then(function (r) { return r.json(); });
 }
@@ -2110,6 +2187,25 @@ function bizAddKind() {
     location.reload();
   }).catch(function (error) { bizNote('添加失败：' + error.message, true); });
 }
+/** 参数预设：把预设 params 填进本卡参数区（键对不上的忽略——参数区按工作流动态渲染）。 */
+function bizApplyPreset(card, preset) {
+  if (card === null || preset === null || preset === undefined) return;
+  var applied = 0;
+  var params = preset.params || {};
+  Object.keys(params).forEach(function (key) {
+    var input = card.querySelector('[data-param="' + key + '"]');
+    if (input === null) return;
+    input.value = String(params[key]);
+    applied += 1;
+  });
+  var note = card.querySelector('[data-params-note]');
+  if (note !== null) note.textContent = '已套用预设「' + (preset.name || '') + '」（' + applied + ' 项），记得点上方「保存配置」';
+}
+function bizPresetsOf(card) {
+  var key = card === null ? '' : String(card.getAttribute('data-biz') || '');
+  var list = BIZ_PRESETS[key];
+  return Array.isArray(list) ? list : [];
+}
 document.addEventListener('click', function (event) {
   var el = event.target;
   if (el.id === 'biz-save') { bizSave(); return; }
@@ -2118,6 +2214,54 @@ document.addEventListener('click', function (event) {
   if (el.getAttribute && el.getAttribute('data-params-load') !== null) {
     var host = el.closest ? el.closest('.bizcard') : null;
     if (host !== null) bizLoadParams(host);
+    return;
+  }
+  var applyId = el.getAttribute && el.getAttribute('data-biz-preset-apply');
+  if (applyId) {
+    var card1 = el.closest ? el.closest('.bizcard') : null;
+    var found = null;
+    bizPresetsOf(card1).forEach(function (entry) { if (String(entry.id) === String(applyId)) found = entry; });
+    bizApplyPreset(card1, found);
+    return;
+  }
+  var removePresetId = el.getAttribute && el.getAttribute('data-biz-preset-remove');
+  if (removePresetId) {
+    var card2 = el.closest ? el.closest('.bizcard') : null;
+    var ownerId = card2 === null ? '' : String(card2.getAttribute('data-biz') || '');
+    if (ownerId.length === 0) { bizNote('新卡片还没保存，先点「保存配置」', true); return; }
+    if (!confirm('删除这条参数预设？')) return;
+    api('/api/business/preset/remove', { id: ownerId, presetId: removePresetId }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '删除失败');
+      location.reload();
+    }).catch(function (error) { bizNote('删除失败：' + error.message, true); });
+    return;
+  }
+  if (el.getAttribute && el.getAttribute('data-biz-preset-add') !== null) {
+    var card3 = el.closest ? el.closest('.bizcard') : null;
+    var ownerId3 = card3 === null ? '' : String(card3.getAttribute('data-biz') || '');
+    if (ownerId3.length === 0) { bizNote('新卡片还没保存，先点「保存配置」再存预设', true); return; }
+    var name = prompt('预设名称（如：高清 / 草稿）');
+    if (name === null) return;
+    name = String(name).trim();
+    if (name.length === 0) { bizNote('预设名称不能为空', true); return; }
+    var values = bizValues(card3);
+    if (Object.keys(values.params).length === 0) { bizNote('参数区是空的：先读参数/填值，再存预设', true); return; }
+    api('/api/business/preset/save', { id: ownerId3, preset: { name: name, params: values.params } }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '保存失败');
+      location.reload();
+    }).catch(function (error) { bizNote('保存预设失败：' + error.message, true); });
+    return;
+  }
+  var promoteWf = el.getAttribute && el.getAttribute('data-biz-promote');
+  if (promoteWf) {
+    var card4 = el.closest ? el.closest('.bizcard') : null;
+    var ownerId4 = card4 === null ? '' : String(card4.getAttribute('data-biz') || '');
+    if (ownerId4.length === 0) { bizNote('新卡片还没保存，无法切换主配置', true); return; }
+    if (!confirm('把「' + promoteWf + '」设为主配置？（当前首选退回候选）')) return;
+    api('/api/business/promote', { id: ownerId4, workflow: promoteWf }).then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.error && data.error.message) || '切换失败');
+      location.reload();
+    }).catch(function (error) { bizNote('切换失败：' + error.message, true); });
     return;
   }
   var kindId = el.getAttribute && el.getAttribute('data-kind-remove');

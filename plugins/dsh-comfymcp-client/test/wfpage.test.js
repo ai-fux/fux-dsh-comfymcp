@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageDescriptor, renderArtifactsHtml, renderCommandsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
+import { buildPageDescriptor, renderArtifactsHtml, renderBusinessHtml, renderCommandsHtml, renderIndexHtml, renderLibraryHtml, renderPageHtml } from '../lib/wfpage.js'
 
 const NODE_INFOS = {
   KSampler: {
@@ -91,7 +91,11 @@ describe('renderPageHtml', () => {
 
 describe('page scripts stay parseable', () => {
   const pages = () => ({
-    workflow: renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' }),
+    workflow: renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), {
+      token: 'tk',
+      businessLabel: '文生图',
+      presets: [{ id: 'p1', name: '高清', params: { steps: 30 } }],
+    }),
     artifacts: renderArtifactsHtml({
       runs: [{ id: 'r1', name: 'demo', state: 'completed', prompts: { positive: '正', negative: '负' }, localFiles: [{ path: 'C:\\a\\x.png', filename: 'x.png', kind: 'image', bytes: 3 }] }],
       tags: {},
@@ -532,5 +536,74 @@ describe('指令页（卡片式结构化编辑）', () => {
     expect(html).toContain('还没有指令')
     expect(html).toContain('还没有可复用的运行')
     expect(html).toContain('生成数缺省 1')
+  })
+})
+
+describe('业务配置页：候选战绩与参数预设（0.4.0）', () => {
+  const profiles = [
+    {
+      id: 'text2img',
+      business: 'text2img',
+      label: '文生图',
+      workflow: 'z-image-turbo',
+      keywords: ['画'],
+      params: { steps: 8 },
+      uses: 2,
+      presets: [{ id: 'preset-1', name: '高清', params: { steps: 30, width: 1024 } }],
+      candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 3 }],
+    },
+  ]
+  const runStats = {
+    'z-image-turbo': { runs: 2, ok: 2, failed: 0, lastOkAt: null },
+    'flux-schnell': { runs: 3, ok: 3, failed: 1, lastOkAt: null },
+  }
+
+  it('候选 chip 带运行战绩，点击设为主配置；预设 chip 一键套用；数据随页下发', () => {
+    const html = renderBusinessHtml({ profiles, kinds: [], workflows: ['z-image-turbo', 'flux-schnell'], runStats, token: 'tk' })
+    // 候选：名字 + ✓/✗ 战绩 + 提示
+    expect(html).toContain('data-biz-promote="flux-schnell"')
+    expect(html).toMatch(/flux-schnell（3✓ 1✗）/)
+    expect(html).toContain('候选（点击设为主配置）')
+    // 主配置战绩也在卡片上
+    expect(html).toContain('主配置 2✓')
+    // 预设：套用按钮 + 删除按钮 + 空参数悬浮提示
+    expect(html).toContain('data-biz-preset-apply="preset-1"')
+    expect(html).toContain('data-biz-preset-remove=')
+    expect(html).toContain('＋ 存当前参数为预设')
+    expect(html).toMatch(/title="steps，width：把参数填进本卡参数区"/)
+    // 预设数据以 JSON 随页下发（apply 处理器按 id 查）
+    expect(html).toContain('var BIZ_PRESETS = {"text2img":')
+    expect(html).toContain('"name":"高清"')
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    expect(code).toContain('function bizApplyPreset(card, preset)')
+    expect(code).toContain("api('/api/business/preset/save'")
+    expect(code).toContain("api('/api/business/preset/remove'")
+    expect(code).toContain("api('/api/business/promote'")
+  })
+
+  it('无候选/无预设时不渲染对应区块（边界）', () => {
+    const html = renderBusinessHtml({ profiles: [{ id: 'a', business: 'text2img', workflow: 'w', presets: [], candidates: [] }], kinds: [], workflows: ['w'], runStats: {}, token: '' })
+    expect(html).not.toContain('data-biz-promote=')
+    expect(html).not.toContain('data-biz-preset-apply=')
+    expect(html).not.toContain('候选（点击设为主配置）')
+    expect(html).toContain('主配置 无运行')
+  })
+
+  it('工作流页业务预设条：按字段名一键填表（有预设才渲染）', () => {
+    const descriptor = buildPageDescriptor({ name: 'beach', title: '海滩出图', graph: GRAPH, nodeInfos: NODE_INFOS })
+    const plain = renderPageHtml(descriptor, { token: 'tk' })
+    expect(plain).not.toContain('业务预设')
+    expect(plain).not.toContain('data-biz-preset=')
+    const html = renderPageHtml(descriptor, { token: 'tk', businessLabel: '文生图', presets: [{ id: 'p1', name: '高清', params: { steps: 30 } }] })
+    expect(html).toContain('业务预设（文生图）')
+    expect(html).toContain('data-biz-preset="p1"')
+    expect(html).toMatch(/title="steps=30"/)
+    const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n')
+    // 套用逻辑：按复合键最后一段字段名匹配（nodeId:field），checkbox 特判
+    expect(code).toContain("var BIZ_PRESETS = [{\"id\":\"p1\"")
+    expect(code).toContain("getAttribute('data-biz-preset')")
+    expect(code).toContain("dataKey.lastIndexOf(':')")
+    expect(code).toContain('node.type === ')
+    expect(code).toContain("hint.textContent = '已应用业务预设「'")
   })
 })

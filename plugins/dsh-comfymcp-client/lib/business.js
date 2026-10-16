@@ -8,11 +8,15 @@
  *   { version: 1,
  *     kinds:    [{ id, label, keywords[] }],       ← 业务类本身也落盘，可动态增删（不写死）
  *     profiles: [{ id, business, label, workflow, source, params, keywords, notes,
- *                  auto, uses, lastUsedAt, updatedAt, candidates[] }] }
+ *                  auto, uses, lastUsedAt, updatedAt, presets[], candidates[] }] }
  * 约定：
  *   - 一个业务类只保留一条**主配置**（profile.workflow 即首选工作流）；
  *     同一个业务类跑过的其它工作流进 candidates，供工作台一键切换。
  *   - auto=true 表示由运行/加载自动登记（用户可在工作台改成手动或删除）。
+ *   - auto=true 的主配置支持**自动换主**：候选工作流的运行战绩（成功次数/得分）明显超过
+ *     主配置时自动提升（手动配置 auto=false 永不自动换，只能在工作台手动「设为主配置」）。
+ *   - presets 是业务级的**参数预设集**（如「高清 1024·25 步」「草稿 512·8 步」），
+ *     工作台与模型侧（comfymcp_business match）都会带出，一键套用。
  *   - kinds 首次读取用内置预置类播种，之后以文件为准（可加「换脸」「商品图」「3D」等自定义类）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -270,6 +274,73 @@ export function matchBusiness(text, profiles = [], kinds = DEFAULT_BUSINESS_KIND
   return best
 }
 
+/**
+ * 运行记录 → 每个工作流的成败统计：{ [name]: { runs, ok, failed, lastOkAt } }。
+ * 只认 completed / failed 两种结论态；running / aborted 不计入（还没定论）。
+ */
+export function workflowOutcomeStats(runs = []) {
+  const stats = new Map()
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const name = String(run?.name ?? '').trim()
+    if (name.length === 0) continue
+    if (run?.state !== 'completed' && run?.state !== 'failed') continue // running/aborted 还没定论，不计入
+    const entry = stats.get(name) ?? { runs: 0, ok: 0, failed: 0, lastOkAt: null }
+    entry.runs += 1
+    if (run.state === 'completed') {
+      entry.ok += 1
+      const at = String(run.finishedAt ?? run.startedAt ?? '')
+      if (at.length > 0 && (entry.lastOkAt === null || at > entry.lastOkAt)) entry.lastOkAt = at
+    } else {
+      entry.failed += 1
+    }
+    stats.set(name, entry)
+  }
+  return stats
+}
+
+/**
+ * 业务配置的候选排序（按成功率/最近使用给分）：
+ *   得分 = 成功×3 + 使用次数 − 失败 +（成功过再 +1）
+ * 主配置与候选同场计分，返回 { primary, candidates[] }（candidates 按得分降序）。
+ * 成功率高、最近用得多的候选排前面，供「自动换主」与工作台「设为主配置」参考。
+ */
+export function businessRanking(profile, runs = []) {
+  const stats = workflowOutcomeStats(runs)
+  // 快捷指令的连跑会把运行名记成「名字-序号」，聚合时按同前缀并入（与 lastValuesFor 的口径一致）
+  const aggregate = (name) => {
+    const out = { runs: 0, ok: 0, failed: 0, lastOkAt: null }
+    const stem = String(name ?? '').trim()
+    if (stem.length === 0) return out
+    for (const [key, value] of stats) {
+      if (key !== stem && !key.startsWith(`${stem}-`)) continue
+      out.runs += value.runs
+      out.ok += value.ok
+      out.failed += value.failed
+      if (value.lastOkAt !== null && (out.lastOkAt === null || value.lastOkAt > out.lastOkAt)) out.lastOkAt = value.lastOkAt
+    }
+    return out
+  }
+  const scoreOf = (entry, uses) => entry.ok * 3 + (Number(uses) || 0) - entry.failed + (entry.lastOkAt !== null ? 1 : 0)
+  const primaryName = String(profile?.workflow ?? '')
+  const primaryEntry = aggregate(primaryName)
+  const primary = { workflow: primaryName, ...primaryEntry, score: scoreOf(primaryEntry, profile?.uses) }
+  const candidates = (Array.isArray(profile?.candidates) ? profile.candidates : [])
+    .map((candidate) => {
+      const name = String(candidate?.workflow ?? '')
+      const entry = aggregate(name)
+      return {
+        workflow: name,
+        source: candidate?.source ?? null,
+        uses: Number(candidate?.uses) || 0,
+        ...entry,
+        score: scoreOf(entry, candidate?.uses),
+      }
+    })
+    .filter((candidate) => candidate.workflow.length > 0)
+    .sort((a, b) => (b.score - a.score) || (b.ok - a.ok) || a.workflow.localeCompare(b.workflow))
+  return { primary, candidates }
+}
+
 /** 业务配置存储（结构化数据 <dataDir>/business.json：kinds 可动态增删 + profiles）。 */
 export function createBusinessStore({ dataDir, now = () => new Date().toISOString() }) {
   const file = join(dataDir ?? '', 'business.json')
@@ -323,6 +394,30 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
     return []
   }
 
+  /** 参数预设集规整：名称非空、params 是非空对象才保留；按名称去重，最多留 12 个。 */
+  function normalizePresets(input, previous = []) {
+    const source = Array.isArray(input) ? input : (Array.isArray(previous) ? previous : [])
+    const seen = new Set()
+    const out = []
+    for (const raw of source) {
+      if (raw === null || typeof raw !== 'object') continue
+      const name = String(raw.name ?? '').trim()
+      if (name.length === 0) continue
+      const params = raw.params !== null && typeof raw.params === 'object' && !Array.isArray(raw.params) ? { ...raw.params } : {}
+      if (Object.keys(params).length === 0) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({
+        id: String(raw.id ?? '').trim() || `preset-${out.length + 1}`,
+        name,
+        params,
+        createdAt: String(raw.createdAt ?? now()),
+      })
+    }
+    return out.slice(-12)
+  }
+
   function normalizeProfile(input, previous = null) {
     const business = String(input.business ?? previous?.business ?? 'other').trim() || 'other'
     const workflow = String(input.workflow ?? previous?.workflow ?? '').trim()
@@ -342,6 +437,7 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
       uses: Number(input.uses ?? previous?.uses ?? 0) || 0,
       lastUsedAt: input.lastUsedAt ?? previous?.lastUsedAt ?? null,
       updatedAt: input.updatedAt ?? now(),
+      presets: normalizePresets(input.presets, previous?.presets ?? []),
       candidates: Array.isArray(input.candidates) ? input.candidates : (previous?.candidates ?? []),
     }
   }
@@ -419,8 +515,11 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
     /**
      * 自动登记：工作流跑过 / 被加载过就按推断出的业务类落一条配置；
      * 同业务类已有主配置时不抢占，只把这次的工作流记进 candidates。
+     * runs（可选，bridge.listRuns 的近期运行记录）开启**自动换主**：
+     * 仅 auto=true 的配置参与——候选至少成功 2 次、且得分超过主配置 3 分以上才自动提升
+     * （手动配置 auto=false 永不自动换，只能在工作台手动 promote）。
      */
-    autoRegister({ workflow, graph, source = 'saved' } = {}) {
+    autoRegister({ workflow, graph, source = 'saved', runs = null } = {}) {
       const name = String(workflow ?? '').trim()
       if (name.length === 0) return null
       const business = inferBusiness(graph)
@@ -444,16 +543,84 @@ export function createBusinessStore({ dataDir, now = () => new Date().toISOStrin
         return created
       }
       const current = profiles[index]
-      const candidates = upsertCandidate(current, name, source)
-      profiles[index] = {
+      let candidates = upsertCandidate(current, name, source)
+      let next = {
         ...current,
         candidates,
         uses: name === current.workflow ? (Number(current.uses) || 0) + 1 : current.uses,
         lastUsedAt: name === current.workflow ? now() : current.lastUsedAt,
         updatedAt: now(),
       }
+      // 自动换主：候选战绩（成功率/得分）明显更好时提升为首选工作流（仅自动登记的配置）
+      if (current.auto !== false && Array.isArray(runs) && runs.length > 0) {
+        const ranking = businessRanking(next, runs)
+        const best = ranking.candidates[0]
+        const clearlyBetter = best !== undefined && best.ok >= 2 && best.score >= ranking.primary.score + 3
+        if (clearlyBetter && best.workflow !== next.workflow) {
+          const previous = next.workflow
+          candidates = upsertCandidate({ ...next, workflow: best.workflow }, previous, 'demoted')
+            .filter((candidate) => candidate.workflow !== best.workflow)
+          next = { ...next, workflow: best.workflow, candidates, lastPromotedAt: now(), updatedAt: now() }
+        }
+      }
+      profiles[index] = next
       saveAll({ profiles })
-      return profiles[index]
+      return next
+    },
+    /**
+     * 手动换主（工作台「设为主配置」）：把候选（或任意可解析工作流）设为首选工作流，
+     * 原主配置退回 candidates（source=demoted）。手动/自动配置都可用。
+     */
+    promote(id, workflow) {
+      const profiles = load()
+      const index = profiles.findIndex((profile) => profile.id === String(id ?? ''))
+      if (index < 0) return { ok: false, reason: `业务配置 ${String(id ?? '')} 不存在` }
+      const profile = profiles[index]
+      const target = String(workflow ?? '').trim()
+      if (target.length === 0) return { ok: false, reason: '缺少要设为主配置的工作流' }
+      if (target === profile.workflow) return { ok: true, profile, swapped: false }
+      const candidates = upsertCandidate({ ...profile, workflow: target }, profile.workflow, 'demoted')
+        .filter((candidate) => candidate.workflow !== target)
+      profiles[index] = { ...profile, workflow: target, candidates, lastPromotedAt: now(), updatedAt: now() }
+      saveAll({ profiles })
+      return { ok: true, profile: profiles[index], swapped: true, from: profile.workflow }
+    },
+    /** 保存一条参数预设（同名/同 id 覆盖；params 为空拒绝）。 */
+    savePreset({ id, preset } = {}) {
+      const profiles = load()
+      const index = profiles.findIndex((profile) => profile.id === String(id ?? ''))
+      if (index < 0) return { ok: false, reason: `业务配置 ${String(id ?? '')} 不存在` }
+      const profile = profiles[index]
+      const name = String(preset?.name ?? '').trim()
+      if (name.length === 0) return { ok: false, reason: '预设需要名称' }
+      const params = preset?.params !== null && typeof preset?.params === 'object' && !Array.isArray(preset?.params)
+        ? Object.fromEntries(Object.entries(preset.params).filter(([, value]) => value !== undefined && value !== null && String(value).length > 0))
+        : {}
+      if (Object.keys(params).length === 0) return { ok: false, reason: '预设参数为空（至少填一项，如 steps/width）' }
+      const presets = Array.isArray(profile.presets) ? [...profile.presets] : []
+      const found = presets.find((entry) => entry.id === String(preset?.id ?? '') || entry.name.toLowerCase() === name.toLowerCase())
+      const entry = { id: found?.id ?? `preset-${Date.now().toString(36)}`, name, params, createdAt: found?.createdAt ?? now() }
+      if (found === undefined) presets.push(entry)
+      else presets.splice(presets.indexOf(found), 1, entry)
+      profiles[index] = { ...profile, presets: presets.slice(-12), updatedAt: now() }
+      saveAll({ profiles })
+      return { ok: true, preset: entry, profile: profiles[index] }
+    },
+    /** 删除一条参数预设（presetId 可以是预设 id 或名称）。 */
+    removePreset({ id, presetId } = {}) {
+      const profiles = load()
+      const index = profiles.findIndex((profile) => profile.id === String(id ?? ''))
+      if (index < 0) return { ok: false, reason: `业务配置 ${String(id ?? '')} 不存在` }
+      const profile = profiles[index]
+      const key = String(presetId ?? '').trim().toLowerCase()
+      const presets = (Array.isArray(profile.presets) ? profile.presets : [])
+        .filter((entry) => entry.id.toLowerCase() !== key && entry.name.toLowerCase() !== key)
+      if (presets.length === (Array.isArray(profile.presets) ? profile.presets.length : 0)) {
+        return { ok: false, reason: `预设「${String(presetId ?? '')}」不存在` }
+      }
+      profiles[index] = { ...profile, presets, updatedAt: now() }
+      saveAll({ profiles })
+      return { ok: true, profile: profiles[index] }
     },
     /** 命中后记一次使用（供工作台展示「最近使用」）。 */
     touch(id) {
