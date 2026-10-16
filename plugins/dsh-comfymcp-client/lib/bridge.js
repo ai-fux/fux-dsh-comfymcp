@@ -44,16 +44,29 @@ export class ComfymcpBridge {
       ((cfg) => {
         // 远程模式：直连 comfy-mcp 的 Streamable HTTP 端点（不 spawn 本地 stdio 宿主）
         if (cfg.embeddedServer !== true) return createHostFacade(this.newHttpClient(cfg), { log: (line) => this.log(line) })
-        return new McpStdioClient({
-          command: cfg.hostCommand,
-          args: this.hostArgs(cfg),
-          requestTimeoutMs: cfg.requestTimeoutMs,
-          callTimeoutMs: cfg.callTimeoutMs,
-          env: { ...process.env, COMFY_MCP_ENDPOINT: cfg.endpoint },
-          log: (line) => this.log(line),
-        })
+        // 内置模式：优先 stdio 宿主子进程。宿主入口解析不到（npm 全新安装形态不含
+        // TS 宿主工程，FIX202610170239）→ 回退直连内嵌 comfy-mcp 的 HTTP 端点，
+        // 绝不 spawn 占位入口（node DSH_COMFYMCP_HOST_ENTRY_NOT_CONFIGURED 必败重试）。
+        const host = this.resolveHostEntry(process.env)
+        if (host.entry !== '') {
+          return new McpStdioClient({
+            command: cfg.hostCommand,
+            args: [host.entry],
+            requestTimeoutMs: cfg.requestTimeoutMs,
+            callTimeoutMs: cfg.callTimeoutMs,
+            env: { ...process.env, COMFY_MCP_ENDPOINT: cfg.endpoint },
+            log: (line) => this.log(line),
+          })
+        }
+        this.hostFallback = { reason: 'host-entry-unresolved', candidates: host.candidates ?? [] }
+        this.log(`宿主入口未解析（npm 安装形态不含 TS 宿主工程）→ 回退 HTTP 直连 ${cfg.endpoint}；需要 stdio 宿主时配置 hostEntry 或放置 ${host.candidates?.[0] ?? ''}`)
+        return createHostFacade(this.newHttpClient(cfg), { log: (line) => this.log(line) })
       })
     this.client = null
+    this.hostFallback = null
+    // 开发日志（可选注入）：运行失败/中止无条件落 dev-log.jsonl——非开发模式也要固定留档，
+    // 供事后 comfymcp_dev(action=report) 读报告反馈问题（记录不受 devMode 门控）。
+    this.devLog = options.devLog ?? null
     this.embedded = null
     this.pluginDir = typeof options.pluginDir === 'string' ? options.pluginDir : ''
     this.runs = new Map()
@@ -82,9 +95,10 @@ export class ComfymcpBridge {
     })
   }
 
-  /** 当前传输方式：远程＝streamable-http，内置＝stdio 宿主。 */
+  /** 当前传输方式：远程＝streamable-http；内置＝stdio 宿主，宿主缺失回退 HTTP 时为 streamable-http-fallback。 */
   transport() {
-    return this.config.embeddedServer === true ? 'stdio' : 'streamable-http'
+    if (this.config.embeddedServer !== true) return 'streamable-http'
+    return this.hostFallback ? 'streamable-http-fallback' : 'stdio'
   }
 
   /**
@@ -140,7 +154,7 @@ export class ComfymcpBridge {
     return { ...this.config }
   }
 
-  /** Resolve a usable host entry: explicit config, env, then conventional workspace paths. */
+  /** Resolve a usable host entry: explicit config, env, then existence-checked conventional paths. */
   resolveHostEntry(env = {}) {
     if (typeof this.config.hostEntry === 'string' && this.config.hostEntry.trim().length > 0) {
       return { entry: this.config.hostEntry.trim(), source: 'config' }
@@ -149,11 +163,21 @@ export class ComfymcpBridge {
     if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
       return { entry: fromEnv.trim(), source: 'env' }
     }
-    return { entry: '', source: 'unset', candidates: candidateHostEntries('') }
+    // 约定候选路径：存在性探测（只认绝对路径，相对路径依赖 cwd 不可靠），命中即用
+    for (const candidate of candidateHostEntries(this.pluginDir)) {
+      if (!isAbsolute(candidate)) continue
+      try {
+        if (existsSync(candidate)) return { entry: candidate, source: 'candidate' }
+      } catch {
+        /* ignore */
+      }
+    }
+    return { entry: '', source: 'unset', candidates: candidateHostEntries(this.pluginDir) }
   }
 
   clientOrNull() {
     if (this.client === null) {
+      this.hostFallback = null
       this.client = this.clientFactory(this.config)
     }
     return this.client
@@ -266,10 +290,10 @@ export class ComfymcpBridge {
       error: '',
     }
     try {
-      const transport = this.transport()
       const client = await this.ensureReady()
+      const transport = this.transport()
       if (transport === 'stdio') {
-        const entry = this.resolveHostEntry()
+        const entry = this.resolveHostEntry(process.env)
         if (entry.entry === '') {
           result.error =
             'MCP 宿主入口未配置：设置 hostEntry 指向 projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs（或环境变量 DSH_COMFYMCP_HOST_ENTRY）'
@@ -278,6 +302,7 @@ export class ComfymcpBridge {
         result.host = { ...client.status(), transport, entry: entry.entry, entrySource: entry.source }
       } else {
         result.host = { ...client.status(), transport, entry: this.config.endpoint, entrySource: 'endpoint' }
+        if (this.hostFallback) result.host.fallback = { ...this.hostFallback }
       }
       const status = await client.callTool('connection_status', {}, 20000)
       result.remote = status?.structuredContent ?? null
@@ -384,7 +409,26 @@ export class ComfymcpBridge {
       if (drop !== undefined) this.runs.delete(drop)
     }
     this.persistRuns()
+    this.logRunOutcome(record, null)
     return record
+  }
+
+  /** 运行结论留档：failed/aborted 无条件进开发日志（非开发模式也记录，source=run）。 */
+  logRunOutcome(record, previousState) {
+    const state = record?.state
+    if (state !== 'failed' && state !== 'aborted') return
+    if (previousState === 'failed' || previousState === 'aborted') return
+    try {
+      this.devLog?.add({
+        level: 'error',
+        source: 'run',
+        tool: 'comfymcp_run_workflow',
+        message: `运行「${record?.name ?? record?.id ?? '?'}」${state === 'failed' ? '失败' : '中止'}${record?.error ? '：' + record.error : ''}`,
+        ...(record?.id === undefined ? {} : { where: record.id }),
+      })
+    } catch {
+      /* 日志失败不影响主流程 */
+    }
   }
 
   /** 更新一条运行记录（运行中 → 完成/失败），保持顺序并落盘。 */
@@ -394,6 +438,7 @@ export class ComfymcpBridge {
     const next = { ...current, ...patch, id }
     this.runs.set(id, next)
     this.persistRuns()
+    this.logRunOutcome(next, current.state)
     return next
   }
 

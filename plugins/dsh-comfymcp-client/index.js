@@ -24,8 +24,8 @@ import { createControlServer } from './lib/control-server.js'
 import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
-export const name = 'dsh-comfymcp-client'
-export const version = '0.4.0'
+export const name = '@ai-fux/fux-dsh-comfymcp'
+export const version = '0.5.2'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 
@@ -41,10 +41,17 @@ export function apply(ctx, config) {
   console.log(
     `[dsh-comfymcp-client] 主目录 ${effective.homeDir}（workflows=${effective.workflowDirs[0]} | artifacts=${effective.artifactsDir} | data=${effective.dataDir}）`,
   )
+  // 开发模式活值：applyOverlay 保存 devMode 后 bridge.config 原地更新，
+  // devLog/comfymcp_dev 按调用时取值即时生效（无需重启 DSH）；覆盖层保证重启后仍开启。
+  const isDevMode = () => bridge.config.devMode === true
+  // 开发日志先于桥接创建：运行失败/探测失败无条件落 dev-log.jsonl（非开发模式也固定留档），
+  // 供 comfymcp_dev(action=report) 事后读取反馈；devMode 只影响报告指引，不门控记录。
+  const devLog = createDevLog({ dataDir: effective.dataDir, devMode: isDevMode })
   const bridge = new ComfymcpBridge(effective, {
     // 插件自身目录：内置 comfy-mcp-server（vendor/）的定位基准
     pluginDir: dirname(fileURLToPath(import.meta.url)),
     log: (line) => console.log(`[dsh-comfymcp-client] ${line}`),
+    devLog,
   })
 
   ctx.effect(() => {
@@ -75,11 +82,6 @@ export function apply(ctx, config) {
     }
     // 业务配置（首次生成的工作流选择优化）：工具层与工作台共用同一个存储实例
     const business = createBusinessStore({ dataDir: effective.dataDir })
-    // 开发模式活值：applyOverlay 保存 devMode 后 bridge.config 原地更新，
-    // devLog/comfymcp_dev 按调用时取值即时生效（无需重启 DSH）；覆盖层保证重启后仍开启。
-    const isDevMode = () => bridge.config.devMode === true
-    // 开发日志：异常/告警进环形缓冲 + dev-log.jsonl，供 comfymcp_dev 出报告（开发模式专用）
-    const devLog = createDevLog({ dataDir: effective.dataDir, devMode: isDevMode })
     const tools = createTools({ define: defineTool, bridge, askUser, business, devLog, devMode: isDevMode })
     for (const tool of tools) {
       disposers.push(ctx.tools.register(tool))

@@ -134,6 +134,8 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
   // 最近一次业务配置命中（comfymcp_business match）：push_form 的标题自动以业务类显示名开头，
   // 用户在表单上直接看到「这次按哪个业务类跑」，不用读工具输出才知道。
   let lastBusinessMatch = null
+  // 最近一次 status 探测失败文本（去重：同一错误只记一条，恢复记一条 info）
+  let lastProbeError = ''
 
   tools.push(
     defineTool({
@@ -148,6 +150,15 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
       },
       async execute() {
         const probe = await bridge.probe()
+        // 探测失败无条件留档（非开发模式也记录）：同一错误只记一次，恢复时记一条 info。
+        const message = probe.ok === true ? '' : (typeof probe.error === 'string' && probe.error.length > 0 ? probe.error : 'comfy-mcp 探测失败')
+        if (message !== '' && message !== lastProbeError) {
+          lastProbeError = message
+          log.add({ level: 'error', source: 'probe', tool: 'comfymcp_status', message })
+        } else if (message === '' && lastProbeError !== '') {
+          lastProbeError = ''
+          log.add({ level: 'info', source: 'probe', tool: 'comfymcp_status', message: 'comfy-mcp 连接恢复' })
+        }
         return probe
       },
     }),

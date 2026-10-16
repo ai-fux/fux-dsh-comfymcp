@@ -1,15 +1,26 @@
+# fux-dsh-comfymcp bundle patch：两段操作。
+# ① 插件自身行：全部路径类配置不落机器绝对路径（Linux/新机零手工修正）——
+#    内嵌模式服务端走插件包内 vendor/，主目录/工作流/产物缺省派生自 DSH 内置数据目录；
+#    真实 ComfyUI 后端等高级入口经设置页按机器填写（优先级：env > 覆盖层 > 行配置 > 默认）。
+# ② 覆盖 shipped preset-standard：ask_user_question 切计时模式（吸收原 @local/dsh-preset-timed-ask
+#    预设包，该包退役）。mode 由本插件覆盖层 timedAsk 开关驱动（设置页「ask_user 倒计时卡片」，
+#    写 $DSH_HOME/comfymcp/config-overlay.json，重启 DSH 生效；缺省/读不到 → timed）。
+#    来源：dsh-web-app/presets/standard.patch.yml（仅 tool-ask-user 条目不同）。
+#    注意：DSH 升级若 preset-standard 有变更，需同步本段（官方 README 同样要求手工维护该覆盖）。
 - insert:
-    - id: dsh-comfymcp-client
+    - id: fux-dsh-comfymcp
+      # 行 name = 包名（运行时按包名对行）；id 用去 scope 短 id（模板规约）。
       # 裸包名按 Node 解析链从 dsh 安装可见（包已 link 进部署 node_modules）。
       # 长驻进程内模块记录/生成快照按进程冻结，改动后需重启 DSH 才重载。
-      name: dsh-comfymcp-client
+      name: "@ai-fux/fux-dsh-comfymcp"
       config:
         endpoint: http://127.0.0.1:18800/mcp
         hostCommand: node
-        hostEntry: F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp\mcp\bin\fux-comfymcp-host.mjs
+        # hostEntry 缺省为空：内嵌模式走插件包内 vendor/comfy-mcp-server.mjs；
+        # 仅远程 spawn 模式才需要在设置页显式填宿主入口。
         # 工作流/产物/结构化数据统一收敛在插件主目录下（缺省 DSH 内置数据目录
-        # $DSH_HOME/comfymcp/，子目录 workflows|artifacts|data）；需要检索 ComfyUI
-        # 自带模板库时在设置页追加该目录即可。
+        # $DSH_HOME/comfymcp/，子目录 workflows|artifacts|data，node:path 派生跨平台）；
+        # 需要检索 ComfyUI 自带模板库时在设置页追加该目录即可。
         # workflowDirs: []
         saveSubdir: dsh-generated
         artifactsDir: ''
@@ -24,6 +35,149 @@
         embeddedServer: true
         # ComfyUI 服务地址：官方默认端口 8188；ComfyUI 在别的机器时改成 http://<IP>:8188（设置页可改，保存热重启内置服务）
         comfyuiUrl: http://127.0.0.1:8188
-        embeddedBackend: stdio
-        embeddedBackendCommand: node
-        embeddedBackendArgs: F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs
+        # 内嵌后端缺省 mock（零依赖开箱跑通全链路）。接真实 ComfyUI：设置页「后端入口」
+        # 指向 ComfyUI 的 MCP 桥接程序（如 fux-comfyui-mcp.mjs），后端类型随入口自动切 stdio。
+        # embeddedBackend: mock
+        # embeddedBackendCommand: node
+        # embeddedBackendArgs: ''
+- id: preset-standard
+  name: '@deepseek-ai/dsh-agent-preset'
+  config:
+    id: standard
+    order: 1
+    plugins:
+      - id: persona
+        name: '@deepseek-ai/dsh-persona'
+        config:
+          suffix: Your working directory is {{cwd}}.
+          prefix: You are a coding agent powered by the {{model}} model.
+      - id: agent-instructions
+        name: '@deepseek-ai/dsh-agent-instructions'
+        config:
+          maxBytes: 65536
+      - id: tool-bash
+        name: '@deepseek-ai/dsh-tool-bash'
+        disabled: !!js process.platform === 'win32'
+      - id: tool-pwsh
+        name: '@deepseek-ai/dsh-tool-pwsh'
+        disabled: !!js process.platform !== 'win32'
+      - id: tool-fs
+        name: '@deepseek-ai/dsh-tool-fs'
+      - id: tool-fs-search
+        name: '@deepseek-ai/dsh-tool-fs-search'
+        config:
+          sampleOverCapGlobResults: false
+      - id: tool-jobs
+        name: '@deepseek-ai/dsh-tool-jobs'
+      - id: skill-filesystem
+        name: '@deepseek-ai/dsh-skill-filesystem'
+      - id: tool-skill
+        name: '@deepseek-ai/dsh-tool-skill'
+      - id: command-goal
+        name: '@deepseek-ai/dsh-command-goal'
+      - id: tool-goal
+        name: '@deepseek-ai/dsh-tool-goal'
+      - id: planning
+        name: cordis:group
+        group: true
+        isolate:
+          planMode: true
+        config:
+          - id: plan-mode
+            name: '@deepseek-ai/dsh-plan-mode'
+            config:
+              section: |
+                You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find it.
+      - id: compaction
+        name: cordis:group
+        group: true
+        isolate:
+          compaction: true
+          toolResultPruner: true
+        config:
+          - id: compaction-basic
+            name: '@deepseek-ai/dsh-compaction-basic'
+          - id: command-compact
+            name: '@deepseek-ai/dsh-command-compact'
+          - id: tool-result-pruner
+            name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+            config:
+              thresholdChars: 8192
+              headChars: 4096
+              tailChars: 1024
+      - id: delegation
+        name: cordis:group
+        group: true
+        isolate:
+          workflowEngine: true
+        config:
+          - id: tool-subagent-control
+            name: '@deepseek-ai/dsh-tool-subagent-control'
+          - id: tool-subagent-list-agents
+            name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+          - id: tool-subagent
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: spawn
+              toolName: subagent
+              modelSelectionSettings: true
+              backgroundMode: continuable
+          - id: tool-subagent-fork
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: fork
+              toolName: subagent_fork
+              backgroundMode: continuable
+          - id: tool-subagent-codex
+            name: '@deepseek-ai/dsh-tool-subagent'
+            disabled: true
+            config:
+              provider: codex
+              toolName: subagent_codex
+              backgroundMode: one-shot
+              maxDepth: provider-managed
+          - id: tool-subagent-claude-code
+            name: '@deepseek-ai/dsh-tool-subagent'
+            disabled: true
+            config:
+              provider: claude-code
+              toolName: subagent_claude_code
+              backgroundMode: one-shot
+              maxDepth: provider-managed
+          - id: workflow-ptc
+            name: '@deepseek-ai/dsh-workflow-ptc'
+            config:
+              provider: spawn
+          - id: tool-workflow
+            name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-ralph
+            name: '@deepseek-ai/dsh-tool-ralph'
+            disabled: true
+            config:
+              subagentProvider: spawn
+              maxRounds: 64
+      - id: tool-ask-user
+        name: '@deepseek-ai/dsh-tool-ask-user'
+        config:
+          mode: !!js (function(){try{var o=JSON.parse(require('fs').readFileSync(require('path').join(process.env.DSH_HOME||require('path').join(process.cwd(),'data','.dsh'),'comfymcp','config-overlay.json'),'utf8'));return o.timedAsk===false?'legacy':'timed'}catch(e){return 'timed'}})()
+          timeout: 30
+      - id: tool-todo
+        name: '@deepseek-ai/dsh-tool-todo'
+        config:
+          allowParallelInProgress: true
+      - id: tool-web
+        name: '@deepseek-ai/dsh-tool-web'
+        config:
+          fetch: true
+          searchTimeoutMs: 60000
+      - id: present
+        name: '@deepseek-ai/dsh-tool-present'
+      - id: tool-plugin-manager
+        name: '@deepseek-ai/dsh-plugin-manager/tools'
+        disabled: true

@@ -10,7 +10,7 @@
  */
 if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
   window.__ModuleLoader__.load({
-    id: 'dsh-comfymcp-client',
+    id: '@ai-fux/fux-dsh-comfymcp',
     factory(require) {
       var react = require('react')
       var h = react.createElement
@@ -332,7 +332,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         run: function (d) { return (d.autoUnloadModel === true ? '跑完卸载模型' : '不卸载（热加载）') + ' · ' + (text(d.runTimeoutMin).length > 0 ? d.runTimeoutMin + ' 分钟上限' : '不限时长') },
         quick: function (d) { return text(d.quickCommands).length > 0 ? '已自定义' : '内置「抽卡」' },
         storage: function (d) { var kind = text(d.storage).toLowerCase(); return kind === 'minio' ? 'MinIO（S3）' : kind === 'oss' ? '阿里云 OSS' : '本地目录' },
-        form: function (d) { return d.autoAcceptForm === true ? '倒计时 ' + (text(d.autoAcceptFormSec).length > 0 ? d.autoAcceptFormSec : '30') + ' 秒自动采用推荐值' : '一直等待作答' },
+        form: function (d) { return (d.autoAcceptForm === true ? '倒计时 ' + (text(d.autoAcceptFormSec).length > 0 ? d.autoAcceptFormSec : '30') + ' 秒自动采用推荐值' : '一直等待作答') + ' · ask_user ' + (d.timedAsk !== false ? '倒计时 30 秒' : '阻塞等待') },
         dev: function (d) { return d.devMode === true ? '已开启（允许改插件源码）' : '关闭（严禁改插件源码）' },
       }
 
@@ -378,7 +378,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         var initial = react.useState({
           endpoint: '', authToken: '', workflowDirs: '', saveSubdir: '', artifactsDir: '', hostEntry: '', autoUnloadModel: true, embeddedServer: false, comfyuiUrl: '', backendEntry: '',
           storage: 'local', storageEndpoint: '', storageBucket: '', storageRegion: '', storageAccessKey: '', storageSecret: '', storagePrefix: '',
-          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '', autoAcceptForm: false, autoAcceptFormSec: '30', devMode: false,
+          homeDir: '', dataDir: '', quickCommands: '', downloadDir: '', autoAcceptForm: false, autoAcceptFormSec: '30', timedAsk: true, devMode: false,
         })
         var draft = initial[0]
         var setDraft = initial[1]
@@ -440,6 +440,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
                 quickCommands: text(config.quickCommands),
                 autoAcceptForm: config.autoAcceptForm === true,
               devMode: config.devMode === true,
+                timedAsk: config.timedAsk !== false,
                 autoAcceptFormSec: text(config.autoAcceptFormSec),
                 downloadDir: text(config.downloadDir),
                 runTimeoutMin: text(config.runTimeoutMin),
@@ -463,7 +464,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
         function isDirty() {
           return ['endpoint', 'authToken', 'workflowDirs', 'saveSubdir', 'artifactsDir', 'hostEntry', 'autoUnloadModel', 'embeddedServer', 'comfyuiUrl', 'backendEntry',
             'storage', 'storageEndpoint', 'storageBucket', 'storageRegion', 'storageAccessKey', 'storageSecret', 'storagePrefix',
-            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin', 'autoAcceptForm', 'autoAcceptFormSec', 'devMode'].some(function (key) {
+            'homeDir', 'dataDir', 'quickCommands', 'downloadDir', 'runTimeoutMin', 'autoAcceptForm', 'autoAcceptFormSec', 'timedAsk', 'devMode'].some(function (key) {
             return text(draft[key]) !== text(savedConfig[key])
           })
         }
@@ -515,6 +516,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             quickCommands: draft.quickCommands,
             autoAcceptForm: draft.autoAcceptForm === true,
             devMode: draft.devMode === true,
+            timedAsk: draft.timedAsk !== false,
             autoAcceptFormSec: draft.autoAcceptFormSec,
             downloadDir: draft.downloadDir,
             runTimeoutMin: draft.runTimeoutMin,
@@ -545,6 +547,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
               autoAcceptForm: applied.autoAcceptForm === true,
               autoAcceptFormSec: text(applied.autoAcceptFormSec),
               devMode: applied.devMode === true,
+              timedAsk: applied.timedAsk !== false,
                 downloadDir: text(applied.downloadDir),
                 runTimeoutMin: text(applied.runTimeoutMin),
               }
@@ -641,7 +644,7 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             description: '模型检索模板与「必须先保存再运行」的落点；多个目录用分号分隔。保存子目录保证每次运行可回溯。',
           },
             h(Field, { label: '工作流目录（分号分隔）' },
-              h(TextInput, { value: draft.workflowDirs, mono: true, placeholder: 'F:\\Comfy\\ComfyUI\\user\\default\\workflows', onChange: function (value) { edit('workflowDirs', value) } })),
+              h(TextInput, { value: draft.workflowDirs, mono: true, placeholder: '/path/to/ComfyUI/user/default/workflows', onChange: function (value) { edit('workflowDirs', value) } })),
             h(Field, { label: '保存子目录', hint: '每次运行先保存到该子目录，保证可回溯' },
               h(TextInput, { value: draft.saveSubdir, placeholder: 'dsh-generated', onChange: function (value) { edit('saveSubdir', value) } })),
             h(Field, { label: '产物下载目录', hint: '留空使用 DSH 数据目录' },
@@ -755,6 +758,12 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
             }),
             h(Field, { label: '倒计时秒数', hint: '自动确认前的等待时间；缺省 30 秒（最少 1 秒，非法值按 30 秒处理），仅开关开启时生效' },
               h(TextInput, { value: draft.autoAcceptFormSec, mono: true, placeholder: '30', onChange: function (value) { edit('autoAcceptFormSec', value) } })),
+            h(SwitchRow, {
+              label: 'ask_user 倒计时卡片（30 秒到期不阻塞）',
+              checked: draft.timedAsk !== false,
+              onChange: function (value) { edit('timedAsk', value) },
+            }),
+            h(Hint, { hint: '作用于全局 ask_user_question 提问（经 preset-standard 覆盖生效）：开启后提问卡片自带 30 秒可见倒计时，到期模型按推荐值继续、问题仍可后答；关闭则阻塞等待作答。保存后需重启 DSH 生效。', always: true }),
           ),
 
           h(Section, {

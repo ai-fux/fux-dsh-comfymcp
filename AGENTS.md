@@ -17,7 +17,7 @@
 
 ## 分支与版本
 
-- 当前版本：**0.4.0**（封板于 2026-10-16，已合并回 `dev` 并打 tag `v0.4.0`；同日经用户授权推 GitHub：master 快照合并 + tag，见「发布与离线安装包」）；上一稳定版 0.3.1（tag `v0.3.1`）、0.3.0（tag `v0.3.0`）。
+- 当前版本：**0.5.2**（①**非开发模式固定留档**：运行 failed/aborted、status 探测失败无条件进 `dev-log.jsonl`（source=run/probe，去重：同一错误只记一条、恢复记 info），devLog 装配到 bridge/control-server/catalog 三处，记录不受 devMode 门控；②仓库迁移 **ai-fux/fux-dsh-comfymcp**（与 npm 包同名，等待用户网页完成 Transfer+改名，旧地址自动重定向）；0.5.1 修复 npm 全新安装内嵌模式全灭（宿主缺失回退 HTTP 直连 + vendor 宿主候选约定）；0.5.0 行配置去机器绝对路径 + 吸收 timed-ask 预设（`timedAsk` 开关）；0.4.1 客户端注册 id 修复；0.4.0 功能封板，tag `v0.4.0`）；上一稳定版 0.3.1（tag `v0.3.1`）、0.3.0（tag `v0.3.0`）。
 - 稳定分支：`dev`（本次汇聚点，用户指定）；历史稳定分支 `snapshot-0.2.1`、`snapshot-0.2.0`、`snapshot-0.1.0`。
 - 开发分支：`dev-snapshot-20261016-0.4.0`（已合并）；上一轮 `dev-snapshot-20261016-0.3.1`（已合并）。
 - 版本：三段 `X.Y.Z`（平台 SEMVER 限制），四段仅用于分支/`.workplace` 目录名。
@@ -66,10 +66,18 @@ node mcp/bin/fux-comfymcp-host.mjs --selftest
 
 ## 发布与离线安装包（GitHub 快照）
 
-- **快照发布**：稳定版本推 GitHub 仓库（`github` remote）并合并至 `master`，同时打 `vX.Y.Z` tag；`main`/`master` 推送仍需用户明确授权。GitHub `master` 与本地 dev 是两条历史线（0.1.0 公开快照起点），合并用 plumbing 合并提交（master 树 = 发布版树，双父保留两条历史）。
+- **快照发布（强制顺序，每次稳定版四步走）**：远程公开库 = **https://github.com/ai-fux/fux-dsh-comfymcp**（2026-10-17 由 `easymor2024-ychen/dsh-comfy-mcp` 迁移至 `ai-fux` 组织并与 npm 包同名；旧地址 GitHub 自动重定向）。顺序：**① 推远程公开库**（dev → `master` plumbing 合并 + 打 `vX.Y.Z` tag 并推送）→ **② 打包上架稳定快照版**（`node scripts/package-release.mjs` 出离线 zip + checksums，创建/更新 GitHub Release 并上传资产）→ **③ 上传 npm**（`npm publish --access public`）→ **④ 同步国内**（npmmirror 自动/手动 sync + 双源 view 验证）。`main`/`master` 推送仍需用户明确授权。GitHub `master` 与本地 dev 是两条历史线（0.1.0 公开快照起点），合并用 plumbing 合并提交（master 树 = 发布版树，双父保留两条历史）。
 - **离线安装包（强制约定）**：每次成果推送完 GitHub 快照稳定版本，必须基于该版本运行 `node scripts/package-release.mjs` 打离线安装压缩包，产物落 `dist/`（已 gitignore，不入 git；可手动附到 GitHub Release）：
   - `dsh-comfymcp-client-v<ver>-source.zip`：**纯插件零依赖包**（运行文件 + vendor 内置 comfy-mcp-server + INSTALL.md；推荐用于「发给 DSH 对话框由大模型自动安装」）；
   - `dsh-comfymcp-v<ver>-full.zip`：**全工程源码包**（文档/脚本/参考服务端/预置包齐带；内嵌运行同样零依赖，仅开发测试需恢复 pnpm 依赖）；
   - 附 `checksums-v<ver>.txt`（SHA256）。
 - **包内 INSTALL.md** 面向 DSH 会话大模型：落盘解压 → `plugin_manager install_bundle` 或 profile `link:` 挂载 → 重启 DSH → `comfymcp_status` 验证 →（ComfyUI 在别的机器）设置页改 `comfyuiUrl`。用户把 zip 发进 DSH 对话框，大模型照做即可完成安装。
 - 打包脚本零依赖（Node 内置 + 系统 Compress-Archive）；插件本体运行零 npm 依赖是「source 包离线可装」的前提，改动插件依赖时必须同步评估打包清单。
+
+## npm 双源发布（国际 + 国内）
+
+- **国际源（registry.npmjs.org，唯一可发布源）**：稳定版随 GitHub Release 同步发 npm，包名 **`@ai-fux/fux-dsh-comfymcp`**（scoped，npm 组织与 GitHub 组织同名同仓 `ai-fux/fux-dsh-comfymcp`；前身 unscoped `dsh-comfymcp-client@0.4.0` 已废弃待网页删除）。发布前必做：`npm pack --dry-run` 核对清单（`vendor/**` 内嵌服务端必须在包内，test/scripts/node_modules 必须排除）；`files` 白名单与 `publishConfig`（access public）已在插件 `package.json` 维护。发布：`npm login`（或 user 级 `.npmrc` authToken，不入库）→ `npm publish --access public`（scoped 包必须带 access public）。每次发布必须递增版本号。注意：npm 对新账号/新包有 staging 审核（可能先落 `0.0.0-stage` 自动转正）；granular 令牌要选「Read and write (publish and stage)」+ Bypass 2FA。
+- **国内源（npmmirror 淘宝镜像，registry.npmmirror.com）是只读镜像，不能直接 publish**：发 npmjs 后自动同步（通常分钟级~10 分钟）；可手动触发同步（scoped 名需 URL 编码）`curl -X PUT "https://registry-direct.npmmirror.com/@ai-fux%2Ffux-dsh-comfymcp/syncs"`，验证 `npm view @ai-fux/fux-dsh-comfymcp versions --registry=https://registry.npmmirror.com`。
+- **内网私有 npm 源**（真正可内网直发的场景）：① GitLab Package Registry（本项目已有 GitLab）——**要求 scoped 包名**（如 `@easymor/dsh-comfymcp-client`），需项目访问令牌（write_registry）+ 项目级 `.npmrc`；② Verdaccio 自建（docker 一行起）——支持 unscoped 名字、可代理缓存上游。注意 scoped 化会影响 DSH profile 的依赖名，需同步改挂载配置。
+- **发布前待决（第 1 条已于 0.5.0 销账）**：~~patch 含开发机绝对路径~~ → 0.5.0 起 patch 零绝对路径（hostEntry/embeddedBackendArgs 缺省空、embeddedBackend 缺省 mock，均设置页按机器填；本机真实模式由覆盖层 pin）。仍待决：真实 ComfyUI 模式依赖兄弟项目 `dsh-comfyui` 的 MCP 后端（`fux-comfyui-mcp.mjs`），需确认其公开获取途径（否则公网用户只能跑 mock 链路）。
+- **改名纪律（0.4.1 教训）**：包名即 bundle id，改名必须同步四处——`client.js` 的 `__ModuleLoader__.load({ id })`、`index.js` 的 `name` 导出、`cordis.patch.yml` 行 `name`（= 包名，`id` 用去 scope 短 id）、DSH profile 依赖键 + bundles 项；漏一处即 web boot 全挂。

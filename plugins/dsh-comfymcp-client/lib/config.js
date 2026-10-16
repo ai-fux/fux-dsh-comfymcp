@@ -38,13 +38,16 @@ export const DEFAULTS = Object.freeze({
   runTimeoutMin: 30,
   autoAcceptForm: false,
   autoAcceptFormSec: 30,
+  // ask_user 倒计时卡片开关（本插件 patch 覆盖 preset-standard 时经 !!js 读取覆盖层本键，
+  // true→mode:timed（30 秒可见倒计时，到期 pending 不阻塞）；false→legacy 阻塞等待。重启 DSH 生效。
+  timedAsk: true,
   // 开发模式（默认关）：开启才允许大模型在交互中定位并修复插件源码、用 comfymcp_dev 出报告；
   // 关闭时严禁修改任何插件源码，必须遵循插件规则执行。
   devMode: false,
 })
 
 const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin', 'autoAcceptFormSec'])
-const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer', 'autoAcceptForm', 'devMode'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer', 'autoAcceptForm', 'timedAsk', 'devMode'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
 /**
@@ -189,6 +192,9 @@ export function candidateHostEntries(pluginDir) {
   const entries = []
   if (pluginDir) {
     const normalized = pluginDir.replaceAll('\\', '/')
+    // 插件包内约定：vendor/fux-comfymcp-host.mjs（与 vendor/comfy-mcp-server.mjs 同层）。
+    // 当前 npm 包不含 TS 宿主工程；留此约定供手工放置或未来打包自包含宿主。
+    entries.push(`${normalized}/vendor/fux-comfymcp-host.mjs`)
     const marker = '/node_modules/'
     const cut = normalized.lastIndexOf(marker)
     if (cut > 0) {

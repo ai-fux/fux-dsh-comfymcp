@@ -23,8 +23,16 @@ describe('resolveConfig', () => {
     const config = resolveConfig({}, {})
     expect(config.endpoint).toBe(DEFAULTS.endpoint)
     expect(config.autoUnloadModel).toBe(true)
+    expect(config.timedAsk).toBe(true)
     expect(config.workflowDirs).toEqual([])
     expect(config.callTimeoutMs).toBe(300000)
+  })
+
+  it('coerces timedAsk from row and env (boolean key, false disables timed ask_user)', () => {
+    expect(resolveConfig({ timedAsk: false }, {}).timedAsk).toBe(false)
+    expect(resolveConfig({ timedAsk: 'false' }, {}).timedAsk).toBe(false)
+    expect(resolveConfig({}, { DSH_COMFYMCP_TIMED_ASK: 'false' }).timedAsk).toBe(false)
+    expect(resolveConfig({ timedAsk: true }, {}).timedAsk).toBe(true)
   })
 
   it('layering: env beats row, row beats defaults', () => {
@@ -67,7 +75,9 @@ describe('splitPathList', () => {
 describe('candidateHostEntries', () => {
   it('derives the workspace path from a profile-installed plugin dir', () => {
     const entries = candidateHostEntries('C:\\profile\\node_modules\\dsh-comfymcp-client')
-    expect(entries[0]).toBe('C:/profile/projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
+    expect(entries[0]).toBe('C:/profile/node_modules/dsh-comfymcp-client/vendor/fux-comfymcp-host.mjs')
+    expect(entries[1]).toBe('C:/profile/projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
+    expect(entries.at(-1)).toBe('projects/dsh-comfymcp/mcp/bin/fux-comfymcp-host.mjs')
   })
 })
 

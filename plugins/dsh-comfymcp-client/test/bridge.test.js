@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ComfymcpBridge } from '../lib/bridge.js'
+import { createDevLog } from '../lib/devlog.js'
 
 let workdir
 
@@ -63,6 +64,66 @@ describe('ComfymcpBridge.runs', () => {
     const second = makeBridge({ dataDir })
     expect(second.getRun('run-1')?.name).toBe('demo')
     expect(second.listRuns(5).map((run) => run.id)).toEqual(['run-1'])
+  })
+})
+
+describe('ComfymcpBridge.host fallback (FIX202610170239)', () => {
+  it('embedded mode falls back to HTTP when no host entry resolves and never spawns a placeholder', () => {
+    const spawnCalls = []
+    const bridge = makeBridge({ embeddedServer: true, hostEntry: '' }, {
+      pluginDir: join(workdir, 'no-such-plugin-dir'),
+      embeddedSpawner: async () => ({ url: 'http://127.0.0.1:45999/mcp', kill: () => {} }),
+      spawn: (...args) => {
+        spawnCalls.push(args)
+        throw new Error('must not spawn a stdio host')
+      },
+    })
+    expect(bridge.clientOrNull()).not.toBeNull()
+    expect(bridge.transport()).toBe('streamable-http-fallback')
+    expect(bridge.hostFallback).toMatchObject({ reason: 'host-entry-unresolved' })
+    expect(bridge.hostFallback.candidates.length).toBeGreaterThan(0)
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  it('explicit hostEntry keeps the stdio transport without fallback', () => {
+    const bridge = makeBridge({ embeddedServer: true, hostEntry: join(workdir, 'fake-host.mjs') })
+    expect(bridge.clientOrNull()).not.toBeNull()
+    expect(bridge.transport()).toBe('stdio')
+    expect(bridge.hostFallback).toBeNull()
+  })
+
+  it('resolves an existing plugin-vendor host candidate (vendor/fux-comfymcp-host.mjs)', async () => {
+    const pluginDir = join(workdir, 'plugins', 'dsh-comfymcp-client')
+    await mkdir(join(pluginDir, 'vendor'), { recursive: true })
+    const hostFile = join(pluginDir, 'vendor', 'fux-comfymcp-host.mjs')
+    await writeFile(hostFile, 'export {}')
+    const bridge = makeBridge({ embeddedServer: true, hostEntry: '' }, { pluginDir })
+    const resolved = bridge.resolveHostEntry({})
+    expect(resolved.source).toBe('candidate')
+    expect(resolved.entry.replaceAll('\\', '/')).toBe(hostFile.replaceAll('\\', '/'))
+  })
+})
+
+describe('ComfymcpBridge.run outcome logging (非开发模式固定留档)', () => {
+  it('logs failed/aborted runs to the injected dev log and skips successes', async () => {
+    const { readFileSync } = await import('node:fs')
+    const dlogDir = join(workdir, 'dlog')
+    const devLog = createDevLog({ dataDir: dlogDir, devMode: false })
+    const bridge = makeBridge({}, { devLog })
+    bridge.recordRun({ id: 'r1', name: 'demo', state: 'failed', error: 'boom' })
+    bridge.recordRun({ id: 'r2', name: 'fine', state: 'completed' })
+    bridge.recordRun({ id: 'r3', name: 'later', state: 'running' })
+    bridge.updateRun('r3', { state: 'aborted', error: '用户中止' })
+    const raw = readFileSync(join(dlogDir, 'dev-log.jsonl'), 'utf8')
+    expect(raw).toContain('"source":"run"')
+    expect(raw).toContain('boom')
+    expect(raw).toContain('中止')
+    expect(raw).not.toContain('"id":"r2"')
+    // 同一条不因重复 updateRun 重复记（failed → failed 不再记）
+    const before = raw.split('\n').filter((line) => line.length > 0).length
+    bridge.updateRun('r1', { state: 'failed' })
+    const after = readFileSync(join(dlogDir, 'dev-log.jsonl'), 'utf8').split('\n').filter((line) => line.length > 0).length
+    expect(after).toBe(before)
   })
 })
 

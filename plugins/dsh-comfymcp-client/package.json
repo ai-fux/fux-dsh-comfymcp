@@ -1,10 +1,27 @@
 {
-  "name": "dsh-comfymcp-client",
-  "version": "0.4.0",
-  "private": true,
+  "name": "@ai-fux/fux-dsh-comfymcp",
+  "version": "0.5.2",
   "type": "module",
   "description": "DSH 插件：对接 comfy-mcp 服务（自然语言设计可运行工作流、定制表单、运行与成果物回显）。",
   "license": "MIT",
+  "author": "easymor2024-ychen",
+  "homepage": "https://github.com/ai-fux/fux-dsh-comfymcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ai-fux/fux-dsh-comfymcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ai-fux/fux-dsh-comfymcp/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "comfyui",
+    "comfy-mcp",
+    "mcp",
+    "workflow",
+    "agent"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,14 +33,20 @@
     "client.js",
     "lib/**/*.js",
     "locale/*.json",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "vendor/**",
+    "INSTALL.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "vitest": "catalog:"
+    "vitest": "^3.2.7"
   },
   "dsh": {
     "bundle": {

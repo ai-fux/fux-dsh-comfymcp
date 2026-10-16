@@ -79,7 +79,7 @@ install_bundle`）、重启提醒与 `comfymcp_status` 验证；目标机只需 
 **B. 从源码**：
 
 ```powershell
-git clone https://github.com/easymor2024-ychen/dsh-comfy-mcp.git
+git clone https://github.com/ai-fux/fux-dsh-comfymcp.git
 # DSH 会话内执行：
 plugin_manager install_bundle <仓库路径>\plugins\dsh-comfymcp-client
 # 重启 DSH 生效（模块快照按进程冻结）

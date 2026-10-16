@@ -73,6 +73,7 @@ export const OVERLAY_KEYS = [
   'runTimeoutMin',
   'autoAcceptForm',
   'autoAcceptFormSec',
+  'timedAsk',
   'devMode',
 ]
 

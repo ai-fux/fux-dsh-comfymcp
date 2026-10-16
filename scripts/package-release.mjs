@@ -41,8 +41,8 @@ const installMd = (pkgName) => `# INSTALL —— 交给 DSH 大模型自动执�
 ## 2. 挂载（二选一）
 - **会话命令**（推荐）：\`plugin_manager install_bundle <PKG_DIR>\`（source 包的 <PKG_DIR> 就是解压根，内含 index.js/package.json）。
 - **手改 profile**：编辑 DSH 数据目录下 \`profiles/web/package.json\`：
-  - \`dependencies\` 加 \`"dsh-comfymcp-client": "link:<PKG_DIR>"\`；
-  - \`dsh.profile.bundles\` 数组加 \`"dsh-comfymcp-client"\`。
+  - \`dependencies\` 加 \`"@ai-fux/fux-dsh-comfymcp": "link:<PKG_DIR>"\`；
+  - \`dsh.profile.bundles\` 数组加 \`"@ai-fux/fux-dsh-comfymcp"\`。
 
 ## 3. 重启 DSH（必须）
 宿主进程按 URL 冻结模块生成，不重启不生效。
@@ -58,7 +58,7 @@ ComfyUI 原版服务即可，无需装任何 MCP 组件（可选 custom_nodes/co
 
 ## 6. 备注
 - \`cordis.patch.yml\` 里的 hostEntry 是开发机绝对路径：内嵌模式用不到，可忽略；仅切「远程模式」时在设置页改指真实宿主入口。
-- 升级：用新版本包重做第 1–3 步。卸载：\`plugin_manager remove_bundle dsh-comfymcp-client\` 后重启；彻底清理删 DSH 数据目录下 \`comfymcp/\`（配置覆盖层与产物）。
+- 升级：用新版本包重做第 1–3 步。卸载：\`plugin_manager remove_bundle @ai-fux/fux-dsh-comfymcp\` 后重启；彻底清理删 DSH 数据目录下 \`comfymcp/\`（配置覆盖层与产物）。
 - 版本：${version}（${new Date().toISOString().slice(0, 10)} 打包）
 `
 
@@ -94,13 +94,15 @@ mkdirSync(outDir, { recursive: true })
 // ---- 包 1：source（纯插件，零依赖）----
 const sourceStage = join(outDir, '_stage-source')
 mkdirSync(sourceStage, { recursive: true })
-for (const name of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json', 'README.md', 'lib', 'locale', 'vendor']) {
+for (const name of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json', 'lib', 'locale', 'vendor']) {
   const src = join(root, 'plugins/dsh-comfymcp-client', name)
   if (!existsSync(src)) throw new Error(`source 包缺少必需项：${name}`)
   if (statSync(src).isDirectory()) stageCopy(src, join(sourceStage, name))
   else cpSync(src, join(sourceStage, name))
 }
 cpSync(join(root, 'LICENSE'), join(sourceStage, 'LICENSE'))
+// 功能说明随包分发（公开发布要求：首次发布包功能描述尽量全面）
+cpSync(join(root, 'README.md'), join(sourceStage, 'README.md'))
 writeFileSync(join(sourceStage, 'INSTALL.md'), installMd('dsh-comfymcp-client source 包'))
 const sourceZip = join(outDir, `dsh-comfymcp-client-v${version}-source.zip`)
 zipStage(sourceStage, sourceZip)
