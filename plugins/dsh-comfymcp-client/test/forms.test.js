@@ -3,10 +3,13 @@ import {
   applyAnswers,
   buildQuestions,
   deriveFields,
+  extractPrompts,
   firstPromptText,
   firstSeed,
   FormError,
   integrateUnloadNode,
+  stripUnloadNodes,
+  unloadNodeIds,
   normalizeNodeInfos,
   randomizeSeeds,
   resolveAnswer,
@@ -146,6 +149,34 @@ describe('seed policy', () => {
     expect(resolveAnswer(field, { id: 'x', selected: ['使用当前值 20'] })).toBeUndefined()
     expect(() => resolveAnswer(field, { id: 'x', selected: [], custom: '999' })).toThrow(/最大/)
   })
+
+  it('题面说人话：header 带用途与序号、推荐值置顶标【推荐】', () => {
+    const fields = deriveFields(SAMPLE_GRAPH, NODE_INFOS, [])
+    const { questions } = buildQuestions(fields, () => 0.25, { title: '白色机甲 · 生成参数' })
+    const total = questions.length
+    // 用途 + 序号（对话框只渲染 header/question/options，这两处必须自带说明）
+    expect(questions[0].header).toBe(`白色机甲 · 生成参数 · 1/${total}`)
+    expect(questions.every((entry) => entry.header.startsWith('白色机甲 · 生成参数 · '))).toBe(true)
+    // 中文名，技术类名退到括号
+    const text = questions.find((entry) => entry.id === 'field:6.text')
+    expect(text.question).toContain('提示词')
+    expect(text.question).toMatch(/推荐（预设）：a girl in the rain/)
+    const seed = questions.find((entry) => entry.id === 'field:3.seed')
+    expect(seed.options[0].label).toMatch(/^使用随机种子 \d+（推荐）$/)
+    const steps = questions.find((entry) => entry.id === 'field:3.steps')
+    expect(steps.question).toMatch(/不答将采用推荐值 20/)
+    expect(steps.options[0].label).toBe('使用当前值 20（推荐）')
+    // 默认 title
+    expect(buildQuestions(fields, () => 0.25).questions[0].header).toMatch(/^生成参数确认 · 1\//)
+  })
+
+  it('推荐后缀只是给人看的：不会写进图里（enum/boolean 边界）', () => {
+    expect(resolveAnswer({ kind: 'enum', value: 'euler', label: '采样器' }, { selected: ['euler（推荐）'] })).toBe('euler')
+    expect(resolveAnswer({ kind: 'boolean', value: true, label: '开关' }, { selected: ['true（推荐）'] })).toBe(true)
+    expect(resolveAnswer({ kind: 'boolean', value: false, label: '开关' }, { selected: ['false（推荐）'] })).toBe(false)
+    const booleanQuestion = buildQuestions([{ id: 'f.flag', nodeId: 'f', field: 'flag', kind: 'boolean', value: true, label: '开关' }]).questions[0]
+    expect(booleanQuestion.options[0].label).toBe('true（推荐）')
+  })
 })
 
 describe('applyAnswers', () => {
@@ -192,6 +223,36 @@ describe('integrateUnloadNode', () => {
     expect(result.inserted).toBe(false)
     expect(result.reason).toBe('no upstream link found')
   })
+
+  it('reuses an unload node the workflow already carries (no duplicate)', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    graph['94'] = { class_type: 'UnloadAllModels', inputs: { value: ['8', 0] } }
+    const result = integrateUnloadNode(graph, { enabled: true })
+    expect(result.inserted).toBe(false)
+    expect(result.reason).toBe('already present')
+    expect(result.nodeId).toBe('94')
+    expect(unloadNodeIds(graph).length).toBe(1)
+  })
+})
+
+describe('stripUnloadNodes（开关关闭时必须真的不卸载）', () => {
+  it('removes workflow-provided unload nodes and their references', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    graph['94'] = { class_type: 'UnloadAllModels', inputs: { value: ['8', 0] } }
+    graph['9'].inputs.images = ['94', 0] // 极端情况：输出被接到卸载节点
+    const result = stripUnloadNodes(graph)
+    expect(result.removed).toEqual(['94'])
+    expect(graph['94']).toBeUndefined()
+    expect(graph['9'].inputs.images).toBeUndefined()
+    expect(unloadNodeIds(graph)).toEqual([])
+  })
+
+  it('is a no-op when the workflow has no unload node (boundary)', () => {
+    const graph = JSON.parse(JSON.stringify(SAMPLE_GRAPH))
+    const result = stripUnloadNodes(graph)
+    expect(result.removed).toEqual([])
+    expect(Object.keys(graph).length).toBe(Object.keys(SAMPLE_GRAPH).length)
+  })
 })
 
 describe('graph helpers', () => {
@@ -199,5 +260,27 @@ describe('graph helpers', () => {
     expect(firstPromptText(SAMPLE_GRAPH)).toBe('a girl in the rain')
     expect(firstSeed(SAMPLE_GRAPH)).toBe(42)
     expect(firstSeed({ '1': { class_type: 'A', inputs: {} } })).toBeNull()
+  })
+
+  it('splits positive/negative prompts with assignable field keys', () => {
+    const prompts = extractPrompts(SAMPLE_GRAPH)
+    expect(prompts.positive).toBe('a girl in the rain')
+    expect(prompts.negative).toBe('blurry')
+    expect(prompts.positiveField).toBe('6:text')
+    expect(prompts.negativeField).toBe('7:text')
+    expect(prompts.others).toEqual([])
+  })
+
+  it('falls back to text order when sampler links are absent (boundary)', () => {
+    const graph = {
+      '1': { class_type: 'CLIPTextEncode', inputs: { text: 'first' } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: 'second' } },
+      '3': { class_type: 'CLIPTextEncode', inputs: { text: 'third' } },
+    }
+    const prompts = extractPrompts(graph)
+    expect(prompts.positive).toBe('first')
+    expect(prompts.negative).toBe('second')
+    expect(prompts.others.map((entry) => entry.text)).toEqual(['third'])
+    expect(extractPrompts({ '1': { class_type: 'KSampler', inputs: { seed: 1 } } })).toMatchObject({ positive: '', negative: '' })
   })
 })

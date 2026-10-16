@@ -6,9 +6,7 @@
       config:
         endpoint: http://127.0.0.1:18800/mcp
         hostCommand: node
-        # MCP 宿主入口：填写本仓 mcp/bin/fux-comfymcp-host.mjs 的绝对路径，
-        # 例如 <本仓克隆路径>/mcp/bin/fux-comfymcp-host.mjs。
-        hostEntry: ''
+        hostEntry: F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp\mcp\bin\fux-comfymcp-host.mjs
         # 工作流/产物/结构化数据统一收敛在插件主目录下（缺省 DSH 内置数据目录
         # $DSH_HOME/comfymcp/，子目录 workflows|artifacts|data）；需要检索 ComfyUI
         # 自带模板库时在设置页追加该目录即可。
@@ -25,11 +23,6 @@
         # 关闭（设置页「远程地址」模式）则连接上方 endpoint 指向的外置服务。
         embeddedServer: true
         comfyuiUrl: http://127.0.0.1:8000
-        # 开箱即用为 mock 后端（离线出 PNG）。真实模式改用 stdio 并把
-        # embeddedBackendArgs 指向 ComfyUI 侧 MCP 后端入口：
-        #   <ComfyUI 侧 MCP 项目>/mcp/bin/fux-comfyui-mcp.mjs
-        embeddedBackend: mock
+        embeddedBackend: stdio
         embeddedBackendCommand: node
-        embeddedBackendArgs: ''
-        # embeddedBackend: stdio
-        # embeddedBackendArgs: <ComfyUI 侧 MCP 项目>\mcp\bin\fux-comfyui-mcp.mjs
+        embeddedBackendArgs: F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs

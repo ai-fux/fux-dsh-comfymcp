@@ -6,6 +6,7 @@ import { join } from 'node:path'
 /** Local defaults mirroring the bundle patch row. */
 export const DEFAULTS = Object.freeze({
   endpoint: 'http://127.0.0.1:18800/mcp',
+  authToken: '',
   hostCommand: 'node',
   hostEntry: '',
   workflowDirs: [],
@@ -32,10 +33,18 @@ export const DEFAULTS = Object.freeze({
   storagePrefix: '',
   homeDir: '',
   dataDir: '',
+  quickCommands: '',
+  downloadDir: '',
+  runTimeoutMin: 30,
+  autoAcceptForm: false,
+  autoAcceptFormSec: 30,
+  // 开发模式（默认关）：开启才允许大模型在交互中定位并修复插件源码、用 comfymcp_dev 出报告；
+  // 关闭时严禁修改任何插件源码，必须遵循插件规则执行。
+  devMode: false,
 })
 
-const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort'])
-const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer'])
+const NUMBER_KEYS = new Set(['requestTimeoutMs', 'callTimeoutMs', 'controlPort', 'runTimeoutMin', 'autoAcceptFormSec'])
+const BOOLEAN_KEYS = new Set(['autoUnloadModel', 'autoConnect', 'embeddedServer', 'autoAcceptForm', 'devMode'])
 const LIST_KEYS = new Set(['workflowDirs'])
 
 /**

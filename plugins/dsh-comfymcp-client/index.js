@@ -16,13 +16,16 @@ import { defineTool } from './lib/define.js'
 import { ComfymcpBridge } from './lib/bridge.js'
 import { applyHomeDefaults, resolveConfig } from './lib/config.js'
 import { createTools } from './lib/catalog.js'
+import { createBusinessStore } from './lib/business.js'
+import { createDevLog } from './lib/devlog.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
 import { createControlServer } from './lib/control-server.js'
+import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = 'dsh-comfymcp-client'
-export const version = '0.1.0'
+export const version = '0.4.0'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
 
@@ -48,18 +51,36 @@ export function apply(ctx, config) {
     const disposers = []
 
     // 1. 模型工具
-    const askUser = async (request, exec) => {
+    const askUser = async (request, exec, timedSeconds = 0) => {
       const userQuestions = ctx.get('userQuestions')
       if (userQuestions === undefined || typeof userQuestions.ask !== 'function') {
         throw new Error('userQuestions 服务不可用：无法推送表单（检查 dsh-user-questions 是否启用）')
       }
-      return userQuestions.ask({
+      const payload = {
         questions: request.questions,
         ...(exec?.agent !== undefined ? { agent: exec.agent } : {}),
         ...(exec?.signal !== undefined ? { signal: exec.signal } : {}),
-      })
+      }
+      // 计时提问：卡片自带可见倒计时；到期由 seam 返回 { pending: true }（问题仍可后答）。
+      // 需要活跃根代理 + 本次工具调用 id（卡片按 callId 配对）；不满足则回落阻塞式 ask。
+      if (
+        timedSeconds > 0 &&
+        exec?.agent !== undefined &&
+        typeof exec?.callId === 'string' && exec.callId.length > 0 &&
+        typeof userQuestions.askTimed === 'function'
+      ) {
+        return userQuestions.askTimed({ ...payload, agent: exec.agent }, exec.callId, Math.round(timedSeconds * 1000))
+      }
+      return userQuestions.ask(payload)
     }
-    const tools = createTools({ define: defineTool, bridge, askUser })
+    // 业务配置（首次生成的工作流选择优化）：工具层与工作台共用同一个存储实例
+    const business = createBusinessStore({ dataDir: effective.dataDir })
+    // 开发模式活值：applyOverlay 保存 devMode 后 bridge.config 原地更新，
+    // devLog/comfymcp_dev 按调用时取值即时生效（无需重启 DSH）；覆盖层保证重启后仍开启。
+    const isDevMode = () => bridge.config.devMode === true
+    // 开发日志：异常/告警进环形缓冲 + dev-log.jsonl，供 comfymcp_dev 出报告（开发模式专用）
+    const devLog = createDevLog({ dataDir: effective.dataDir, devMode: isDevMode })
+    const tools = createTools({ define: defineTool, bridge, askUser, business, devLog, devMode: isDevMode })
     for (const tool of tools) {
       disposers.push(ctx.tools.register(tool))
     }
@@ -83,12 +104,21 @@ export function apply(ctx, config) {
         writeOverlay: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
       },
     })
+    // 工作台（/ui 静态页 + /api 页面 API）：工作流编排静态页、手动执行、成果物标签、快捷指令
+    const workbench = createWorkbenchMethods({
+      bridge,
+      config: effective,
+      business,
+      persistWrite: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
+    })
+    Object.assign(methods, workbench)
     const control = createControlServer({
       methods,
       port: effective.controlPort,
       token: effective.controlToken,
       version,
       log,
+      devLog,
     })
     control
       .start()

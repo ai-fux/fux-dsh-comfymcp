@@ -1,0 +1,331 @@
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  BUSINESS_KINDS,
+  businessKind,
+  businessLabel,
+  businessRanking,
+  createBusinessStore,
+  extractBusinessParams,
+  inferBusiness,
+  matchBusiness,
+  workflowOutcomeStats,
+} from '../lib/business.js'
+
+const graphs = {
+  text2img: {
+    '1': { class_type: 'CLIPTextEncode', inputs: { text: 'a cat' } },
+    '2': { class_type: 'KSampler', inputs: { seed: 1, steps: 8, width: 1024, height: 1024, cfg: 4, sampler_name: 'euler' } },
+    '3': { class_type: 'SaveImage', inputs: { filename_prefix: 'cat' } },
+  },
+  image2img: {
+    '1': { class_type: 'LoadImage', inputs: { image: 'in.png' } },
+    '2': { class_type: 'KSampler', inputs: {} },
+    '3': { class_type: 'SaveImage', inputs: {} },
+  },
+  text2video: {
+    '1': { class_type: 'CLIPTextEncode', inputs: {} },
+    '2': { class_type: 'WanVideoSampler', inputs: {} },
+    '3': { class_type: 'SaveVideo', inputs: {} },
+  },
+  image2video: {
+    '1': { class_type: 'LoadImage', inputs: {} },
+    '2': { class_type: 'SVD_img2vid_Conditioning', inputs: {} },
+    '3': { class_type: 'VHS_VideoCombine', inputs: {} },
+  },
+  upscale: {
+    '1': { class_type: 'LoadImage', inputs: {} },
+    '2': { class_type: 'UpscaleModelLoader', inputs: {} },
+    '3': { class_type: 'ImageUpscaleWithModel', inputs: {} },
+    '4': { class_type: 'SaveImage', inputs: {} },
+  },
+  edit: {
+    '1': { class_type: 'LoadImage', inputs: {} },
+    '2': { class_type: 'VAEEncodeForInpaint', inputs: {} },
+    '3': { class_type: 'SaveImage', inputs: {} },
+  },
+  audio: {
+    '1': { class_type: 'AceStepSampler', inputs: {} },
+    '2': { class_type: 'SaveAudio', inputs: {} },
+  },
+}
+
+const temps = []
+function tempStore() {
+  const dir = mkdtempSync(join(tmpdir(), 'comfymcp-biz-'))
+  temps.push(dir)
+  return { dir, store: createBusinessStore({ dataDir: dir }) }
+}
+afterEach(() => {
+  while (temps.length > 0) {
+    const dir = temps.pop()
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // 清理失败不影响断言
+    }
+  }
+})
+
+describe('inferBusiness', () => {
+  it('按输出/输入模态判定业务类（含边界：非图节点与空图）', () => {
+    expect(inferBusiness(graphs.text2img)).toBe('text2img')
+    expect(inferBusiness(graphs.image2img)).toBe('image2img')
+    expect(inferBusiness(graphs.text2video)).toBe('text2video')
+    expect(inferBusiness(graphs.image2video)).toBe('image2video')
+    expect(inferBusiness(graphs.upscale)).toBe('upscale')
+    expect(inferBusiness(graphs.edit)).toBe('edit')
+    expect(inferBusiness(graphs.audio)).toBe('audio')
+    expect(inferBusiness({})).toBe('other')
+    expect(inferBusiness(null)).toBe('other')
+    // UI 格式 nodes 数组同样能判
+    expect(inferBusiness({ nodes: [{ type: 'LoadImage' }, { type: 'KSampler' }, { type: 'SaveImage' }] })).toBe('image2img')
+  })
+
+  it('摘取默认参数：只拿找到的标量，不猜（模型字段映射到 model）', () => {
+    const params = extractBusinessParams(graphs.text2img)
+    expect(params).toMatchObject({ steps: 8, width: 1024, height: 1024, cfg: 4, sampler_name: 'euler' })
+    expect(extractBusinessParams({})).toEqual({})
+    const withModel = { '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'z-image-turbo.safetensors' } } }
+    expect(extractBusinessParams(withModel).model).toBe('z-image-turbo.safetensors')
+  })
+})
+
+describe('matchBusiness', () => {
+  const profiles = BUSINESS_KINDS.filter((kind) => kind.id !== 'other').map((kind) => ({
+    id: kind.id,
+    business: kind.id,
+    label: kind.label,
+    keywords: kind.keywords.slice(0, 4),
+    workflow: `wf-${kind.id}`,
+  }))
+
+  it('自然语言命中对应业务类（含中文插入字与模态提示）', () => {
+    expect(matchBusiness('帮我画一只猫', profiles)?.profile.business).toBe('text2img')
+    expect(matchBusiness('做个视频', profiles)?.profile.business).toBe('text2video')
+    expect(matchBusiness('让这张图动起来', profiles)?.profile.business).toBe('image2video')
+    expect(matchBusiness('把这张照片放大成高清', profiles)?.profile.business).toBe('upscale')
+    expect(matchBusiness('抹掉照片里的路人', profiles)?.profile.business).toBe('edit')
+    expect(matchBusiness('生成一段背景音乐', profiles)?.profile.business).toBe('audio')
+    expect(matchBusiness('把这张图换个风格', profiles)?.profile.business).toBe('image2img')
+  })
+
+  it('无关句子不硬匹配；自定义触发词优先于预置词', () => {
+    expect(matchBusiness('今天天气不错', profiles)).toBeNull()
+    expect(matchBusiness('', profiles)).toBeNull()
+    const custom = [
+      { id: 'text2img', business: 'text2img', label: '文生图', keywords: ['出图'], workflow: 'a' },
+      { id: 'image2img', business: 'image2img', label: '图生图', keywords: ['机甲海报'], workflow: 'b' },
+    ]
+    const hit = matchBusiness('来一张机甲海报', custom)
+    expect(hit?.profile.id).toBe('image2img')
+    expect(hit?.hits).toContain('机甲海报')
+  })
+})
+
+describe('createBusinessStore', () => {
+  it('保存 / 匹配 / 记使用 / 删除，并落盘 business.json', () => {
+    const { dir, store } = tempStore()
+    expect(store.all()).toEqual([])
+    const saved = store.save({ id: 'text2img', business: 'text2img', workflow: 'z-image-turbo', params: { steps: 8 } })
+    expect(saved.label).toBe('文生图') // 缺省名取业务类名
+    expect(saved.keywords.length).toBeGreaterThan(0) // 缺省触发词取预置词
+    expect(existsSync(join(dir, 'business.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'business.json'), 'utf8')).version).toBe(1)
+
+    const hit = store.match('帮我画一张图')
+    expect(hit?.profile.workflow).toBe('z-image-turbo')
+    const touched = store.touch('text2img')
+    expect(touched.uses).toBe(1)
+    expect(touched.lastUsedAt).not.toBeNull()
+
+    expect(store.save({ id: 'text2img', workflow: 'z-image-turbo-2' }).workflow).toBe('z-image-turbo-2')
+    expect(store.all().length).toBe(1) // 同 id 合并
+    expect(store.remove('text2img')).toBe(true)
+    expect(store.all()).toEqual([])
+    expect(store.remove('nope')).toBe(false)
+  })
+
+  it('自动登记：首个跑过的按业务类建档，之后同业务类只记候选不抢占', () => {
+    const { store } = tempStore()
+    const first = store.autoRegister({ workflow: 'z-image-turbo', graph: graphs.text2img, source: 'library' })
+    expect(first).toMatchObject({ business: 'text2img', workflow: 'z-image-turbo', auto: true, uses: 1 })
+    expect(first.params.steps).toBe(8)
+
+    const second = store.autoRegister({ workflow: 'flux-schnell', graph: graphs.text2img })
+    expect(second.workflow).toBe('z-image-turbo') // 主配置不被抢
+    expect(second.candidates.map((entry) => entry.workflow)).toContain('flux-schnell')
+    expect(store.all().length).toBe(1)
+
+    // 另一个业务类各建各的
+    store.autoRegister({ workflow: 'svd', graph: graphs.image2video })
+    expect(store.all().map((profile) => profile.id).sort()).toEqual(['image2video', 'text2img'])
+    // 同一个工作流再跑一次 → 记使用次数
+    expect(store.autoRegister({ workflow: 'z-image-turbo', graph: graphs.text2img }).uses).toBe(2)
+    // 没工作流名不建档
+    expect(store.autoRegister({ workflow: '' })).toBeNull()
+  })
+
+  it('辅助函数：业务类名与 id 映射（未知 id 原样返回）', () => {
+    expect(businessKind('text2img')?.label).toBe('文生图')
+    expect(businessKind('nope')).toBeNull()
+    expect(businessLabel('image2video')).toBe('图生视频')
+    expect(businessLabel('custom-x')).toBe('custom-x')
+  })
+
+  it('业务类可动态增删：新增即参与匹配，被引用时拒绝删除', () => {
+    const { dir, store } = tempStore()
+    // 首次读取用内置预置类播种
+    expect(store.kinds().map((kind) => kind.id)).toContain('text2img')
+    // 新增自定义业务类（触发词立刻参与匹配）
+    const added = store.saveKind({ label: '换脸', keywords: '换脸，faceswap' })
+    expect(added.ok).toBe(true)
+    expect(added.kind.id).toBe('换脸')
+    expect(store.kinds().some((kind) => kind.id === '换脸')).toBe(true)
+    store.save({ id: '换脸', business: '换脸', workflow: 'faceswap-wf' })
+    expect(store.match('帮我把这张照片换脸')?.profile.workflow).toBe('faceswap-wf')
+    // 被配置引用 → 拒绝删除（避免孤儿配置）
+    const refused = store.removeKind('换脸')
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toMatch(/在用/)
+    // 删掉配置后即可删除业务类；内置类同样能删（清单完全数据驱动）
+    store.remove('换脸')
+    expect(store.removeKind('换脸').ok).toBe(true)
+    expect(store.removeKind('audio').ok).toBe(true)
+    expect(store.kinds().some((kind) => kind.id === 'audio')).toBe(false)
+    // 落盘：kinds 与 profiles 一起持久化
+    const raw = JSON.parse(readFileSync(join(dir, 'business.json'), 'utf8'))
+    expect(Array.isArray(raw.kinds)).toBe(true)
+    expect(raw.kinds.some((kind) => kind.id === '换脸')).toBe(false)
+    // 名称规整：中文/空格/标点折成 id；空名称拒绝
+    expect(store.saveKind({ label: '商品图 白底' }).kind.id).toBe('商品图-白底')
+    expect(store.saveKind({}).ok).toBe(false)
+  })
+
+  it('自定义业务类不写死：删掉内置类后匹配只认存储里的清单', () => {
+    const { store } = tempStore()
+    store.removeKind('text2img')
+    store.removeKind('audio')
+    store.saveKind({ id: 'custom', label: '我的流程', keywords: ['跑我的流程'] })
+    store.save({ id: 'custom', business: 'custom', workflow: 'my-wf' })
+    expect(store.match('帮我画一只猫')).toBeNull()
+    expect(store.match('跑我的流程')?.profile.workflow).toBe('my-wf')
+  })
+
+  it('参数预设集：保存/同名覆盖/删除（按 id 与名称都行），save 合并时保留', () => {
+    const { store } = tempStore()
+    store.save({ id: 'text2img', business: 'text2img', workflow: 'z-image-turbo', params: { steps: 8 } })
+    // 名称/参数校验：空名、空参数都拒绝
+    expect(store.savePreset({ id: 'text2img', preset: { name: '', params: { steps: 1 } } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'text2img', preset: { name: '高清', params: {} } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'text2img', preset: { name: '高清', params: null } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'nope', preset: { name: '高清', params: { steps: 1 } } }).ok).toBe(false)
+    // 正常保存
+    const saved = store.savePreset({ id: 'text2img', preset: { name: '高清', params: { steps: 30, width: 1024 } } })
+    expect(saved.ok).toBe(true)
+    expect(saved.preset).toMatchObject({ name: '高清', params: { steps: 30, width: 1024 } })
+    // 空值参数被过滤
+    const withBlank = store.savePreset({ id: 'text2img', preset: { name: '草稿', params: { steps: 8, width: '' } } })
+    expect(withBlank.preset.params).toEqual({ steps: 8 })
+    // 同名覆盖（不新增一条），createdAt 保留
+    const first = store.get('text2img').presets.find((entry) => entry.name === '高清')
+    const overwritten = store.savePreset({ id: 'text2img', preset: { name: '高清', params: { steps: 32 } } })
+    expect(overwritten.preset.id).toBe(first.id)
+    expect(overwritten.preset.createdAt).toBe(first.createdAt)
+    expect(store.get('text2img').presets.length).toBe(2)
+    // save 合并（UI 保存不带 presets 字段）不丢预设
+    store.save({ id: 'text2img', workflow: 'z-image-turbo-2' })
+    expect(store.get('text2img').presets.map((entry) => entry.name)).toEqual(['高清', '草稿'])
+    // 删除：按名称 / 按 id；不存在报原因
+    expect(store.removePreset({ id: 'text2img', presetId: '草稿' }).ok).toBe(true)
+    expect(store.removePreset({ id: 'text2img', presetId: first.id }).ok).toBe(true)
+    expect(store.get('text2img').presets).toEqual([])
+    expect(store.removePreset({ id: 'text2img', presetId: '高清' }).ok).toBe(false)
+  })
+
+  it('运行战绩统计：只认 completed/failed，running 与 aborted 不计；后缀名并入同前缀', () => {
+    const stats = workflowOutcomeStats([
+      { name: 'beach', state: 'completed', finishedAt: '2026-10-16T01:00:00Z' },
+      { name: 'beach', state: 'failed' },
+      { name: 'beach', state: 'running' },
+      { name: 'beach-2', state: 'completed', finishedAt: '2026-10-16T02:00:00Z' },
+      { name: 'beach-2', state: 'aborted' },
+      { name: '', state: 'completed' },
+    ])
+    expect(stats.get('beach')).toMatchObject({ runs: 2, ok: 1, failed: 1 })
+    expect(stats.get('beach-2')).toMatchObject({ runs: 1, ok: 1, failed: 0, lastOkAt: '2026-10-16T02:00:00Z' })
+    expect(workflowOutcomeStats([]).size).toBe(0)
+  })
+
+  it('候选排序：得分=成功×3+使用−失败，成功过的排前；主配置同场计分', () => {
+    const runs = [
+      { name: 'a', state: 'failed' },
+      { name: 'b', state: 'completed' },
+      { name: 'b', state: 'completed' },
+      { name: 'c', state: 'completed' },
+      { name: 'c', state: 'failed' },
+    ]
+    const ranking = businessRanking(
+      { workflow: 'a', uses: 4, candidates: [{ workflow: 'b', uses: 1 }, { workflow: 'c', uses: 5 }] },
+      runs,
+    )
+    // a: -1+4=-? ok0*3+uses4-failed1+0=3；b: 6+1-0+1=8；c: 3+5-1+1=8（同分比成功数，b 2>1 → b 先）
+    expect(ranking.primary).toMatchObject({ workflow: 'a', ok: 0, failed: 1, score: 3 })
+    expect(ranking.candidates.map((entry) => entry.workflow)).toEqual(['b', 'c'])
+    expect(ranking.candidates[0]).toMatchObject({ ok: 2, failed: 0 })
+    // 快捷指令连跑的「名字-2」后缀并入统计
+    const withChain = businessRanking({ workflow: 'a', uses: 0, candidates: [] }, [{ name: 'a-2', state: 'completed' }])
+    expect(withChain.primary.ok).toBe(1)
+  })
+
+  it('自动换主：候选明显更好（≥2 成功且得分超 3 分）才提升，手动配置永不自动换', () => {
+    const { store } = tempStore()
+    // 自动登记主配置 beach；候选 flux-schnell（跑过即记）
+    store.autoRegister({ workflow: 'beach', graph: graphs.text2img })
+    store.autoRegister({ workflow: 'flux-schnell', graph: graphs.text2img })
+    const runs = [
+      { name: 'beach', state: 'failed' },
+      { name: 'beach', state: 'failed' },
+      { name: 'flux-schnell', state: 'completed' },
+      { name: 'flux-schnell', state: 'completed' },
+      { name: 'flux-schnell', state: 'completed' },
+    ]
+    const promoted = store.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs })
+    expect(promoted.workflow).toBe('flux-schnell') // 3 成功 vs 主配置 0 成功 → 换主
+    expect(promoted.candidates.map((entry) => entry.workflow)).toContain('beach')
+    expect(promoted.lastPromotedAt).not.toBeNull()
+    // 候选优势不足（仅 1 次成功）不换
+    const { store: store2 } = tempStore()
+    store2.autoRegister({ workflow: 'beach', graph: graphs.text2img })
+    store2.autoRegister({ workflow: 'flux-schnell', graph: graphs.text2img })
+    const kept = store2.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs: [{ name: 'flux-schnell', state: 'completed' }] })
+    expect(kept.workflow).toBe('beach')
+    // 手动配置（auto=false）永不自动换
+    const { store: store3 } = tempStore()
+    store3.save({ id: 'text2img', business: 'text2img', workflow: 'beach', auto: false, candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 1 }] })
+    const manual = store3.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs })
+    expect(manual.workflow).toBe('beach')
+    expect(manual.auto).toBe(false)
+  })
+
+  it('手动设为主配置：候选升主、原主退候选；手动/任意工作流都可；未知 id 报原因', () => {
+    const { store } = tempStore()
+    store.save({ id: 'text2img', business: 'text2img', workflow: 'beach', candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 2 }] })
+    const swapped = store.promote('text2img', 'flux-schnell')
+    expect(swapped.ok).toBe(true)
+    expect(swapped.swapped).toBe(true)
+    expect(swapped.from).toBe('beach')
+    expect(store.get('text2img').workflow).toBe('flux-schnell')
+    expect(store.get('text2img').candidates.map((entry) => entry.workflow)).toContain('beach')
+    // 目标就是主配置 → no-op
+    expect(store.promote('text2img', 'flux-schnell').swapped).toBe(false)
+    // 不在候选里的工作流也能直接设为主配置
+    expect(store.promote('text2img', 'other-wf').ok).toBe(true)
+    expect(store.get('text2img').workflow).toBe('other-wf')
+    // 边界：未知 id / 缺工作流名
+    expect(store.promote('nope', 'x').ok).toBe(false)
+    expect(store.promote('text2img', '').ok).toBe(false)
+  })
+})

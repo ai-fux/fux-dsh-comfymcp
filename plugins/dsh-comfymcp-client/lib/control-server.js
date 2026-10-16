@@ -67,6 +67,47 @@ function sendBytes(response, status, bytes, contentType, token) {
 }
 
 /**
+ * 媒体字节流：支持 Range 请求（206），否则视频/音频无法拖动播放。
+ * range 形如 `bytes=start-end`；非法/越界时回落到整文件 200。
+ */
+function sendMedia(response, bytes, contentType, rangeHeader) {
+  const total = bytes.byteLength
+  const base = {
+    'content-type': contentType,
+    'cache-control': 'no-store',
+    'accept-ranges': 'bytes',
+  }
+  const match = typeof rangeHeader === 'string' ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null
+  if (match === null) {
+    response.writeHead(200, { ...base, 'content-length': String(total) })
+    response.end(bytes)
+    return
+  }
+  const hasStart = match[1].length > 0
+  const hasEnd = match[2].length > 0
+  let start = hasStart ? Number(match[1]) : 0
+  let end = hasEnd ? Number(match[2]) : total - 1
+  if (!hasStart && hasEnd) {
+    // 后缀区间 bytes=-N：最后 N 字节
+    start = Math.max(0, total - end)
+    end = total - 1
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+    response.writeHead(416, { ...base, 'content-range': `bytes */${total}` })
+    response.end()
+    return
+  }
+  end = Math.min(end, total - 1)
+  const chunk = bytes.subarray(start, end + 1)
+  response.writeHead(206, {
+    ...base,
+    'content-length': String(chunk.byteLength),
+    'content-range': `bytes ${start}-${end}/${total}`,
+  })
+  response.end(chunk)
+}
+
+/**
  * @param options { methods, port, portWindow, token, host, version, log }
  *   methods: { status(): Promise, configRead(): Promise, configWrite(patch): Promise,
  *              artifact(searchParams): { bytes, contentType } | { error } }
@@ -75,12 +116,15 @@ function sendBytes(response, status, bytes, contentType, token) {
 export function createControlServer(options = {}) {
   const methods = options.methods
   const logger = options.logger ?? console
+  const devLog = options.devLog ?? null
   const host = options.host ?? DEFAULT_CONTROL_HOST
   const requestedPort = options.port ?? DEFAULT_CONTROL_PORT
   const portWindow = options.portWindow ?? CONTROL_PORT_WINDOW
   const token = options.token ?? ''
   const version = options.version ?? '0.0.0'
   const log = options.log ?? (() => {})
+  // 控制端点异常统一经 logger.devLog 进开发日志（未接开发日志时静默）
+  const loggerWithDevLog = devLog === null ? logger : { ...logger, devLog: (entry) => devLog.add(entry) }
 
   let server = null
   let actualPort = 0
@@ -97,7 +141,10 @@ export function createControlServer(options = {}) {
       const attempt = await new Promise((resolve) => {
         const candidate = createServer((request, response) => {
           handle(request, response).catch((error) => {
-            logger.error?.(`[dsh-comfymcp] control endpoint error: ${error instanceof Error ? error.message : String(error)}`)
+            const message = error instanceof Error ? error.message : String(error)
+            loggerWithDevLog.error?.(`[dsh-comfymcp] control endpoint error: ${message}`)
+            // 控制端点异常也进开发日志（开发模式下模型据此定位页面/接口问题）
+            loggerWithDevLog.devLog?.({ level: 'error', source: 'control', where: `${request.method} ${request.url}`, message, detail: error instanceof Error ? (error.stack ?? '') : '' })
             if (!response.headersSent) sendJson(response, 500, { ok: false, error: { code: 'internal', message: 'internal error' } }, undefined)
             else response.destroy()
           })
@@ -202,7 +249,67 @@ export function createControlServer(options = {}) {
         sendJson(response, 404, { ok: false, error: { code: 'not_found', message: outcome.error } }, undefined)
         return
       }
-      sendBytes(response, 200, outcome.bytes, outcome.contentType)
+      sendMedia(response, outcome.bytes, outcome.contentType, request.headers.range)
+      return
+    }
+
+    // 工作台静态页面（/ui）：导航请求带不了自定义头，走查询令牌或放宽跨站。
+    // 有令牌配置时令牌必须正确；未配置令牌时只放行非跨站导航（直开/同站），防任意网站嵌入探测。
+    // 成果物导出：导航式下载（同 /artifact，用查询令牌）
+    if (pathname === '/export' && request.method === 'GET') {
+      if (token.length > 0 && url.searchParams.get('token') !== token) {
+        sendJson(response, 403, { ok: false, error: { code: 'token_invalid', message: 'export token is missing or wrong' } }, undefined)
+        return
+      }
+      const exported = await methods.exportArtifacts({ ids: url.searchParams.get('runs') ?? '', limit: 200 })
+      const payload = Buffer.from(exported.json, 'utf8')
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': String(payload.byteLength),
+        'content-disposition': `attachment; filename="${exported.filename}"`,
+        'cache-control': 'no-store',
+      })
+      response.end(payload)
+      return
+    }
+
+    if ((pathname === '/ui' || pathname.startsWith('/ui/')) && request.method === 'GET') {
+      const origin = request.headers.origin
+      const allowedOrigin = isLoopbackOrigin(origin) ? origin : undefined
+      if (origin !== undefined && allowedOrigin === undefined) {
+        sendJson(response, 403, { ok: false, error: { code: 'origin_forbidden', message: `origin "${origin}" is not allowed` } }, undefined)
+        return
+      }
+      const queryToken = url.searchParams.get('token') ?? ''
+      const fetchSite = String(request.headers['sec-fetch-site'] ?? 'none')
+      if (token.length > 0 && queryToken !== token) {
+        sendJson(response, 403, { ok: false, error: { code: 'token_invalid', message: 'page token is missing or wrong' } }, allowedOrigin)
+        return
+      }
+      if (token.length === 0 && fetchSite === 'cross-site') {
+        sendJson(response, 403, { ok: false, error: { code: 'cross_site_forbidden', message: 'cross-site page embeds require the control token' } }, allowedOrigin)
+        return
+      }
+      let outcome
+      if (pathname === '/ui/artifacts') {
+        outcome = methods.pageArtifacts !== undefined ? await methods.pageArtifacts({ token: queryToken }) : { error: 'artifacts page unavailable' }
+      } else if (pathname === '/ui/library') {
+        outcome = methods.pageLibrary !== undefined ? await methods.pageLibrary({ token: queryToken }) : { error: 'library page unavailable' }
+      } else if (pathname === '/ui/commands') {
+        outcome = methods.pageCommands !== undefined ? await methods.pageCommands({ token: queryToken }) : { error: 'commands page unavailable' }
+      } else if (pathname === '/ui/business') {
+        outcome = methods.pageBusiness !== undefined ? await methods.pageBusiness({ token: queryToken }) : { error: 'business page unavailable' }
+      } else if (pathname.startsWith('/ui/wf/')) {
+        const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
+        outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
+      } else {
+        outcome = methods.pageIndex !== undefined ? await methods.pageIndex({ token: queryToken }) : { error: 'index page unavailable' }
+      }
+      if (outcome === null || outcome === undefined || outcome.error !== undefined) {
+        sendJson(response, 404, { ok: false, error: { code: 'not_found', message: outcome?.error ?? 'page unavailable' } }, allowedOrigin)
+        return
+      }
+      sendBytes(response, 200, Buffer.from(outcome.html, 'utf8'), 'text/html; charset=utf-8')
       return
     }
 
@@ -236,6 +343,285 @@ export function createControlServer(options = {}) {
         return
       }
       sendJson(response, 200, { ok: true, value: await methods.configWrite(payload) }, allowedOrigin)
+      return
+    }
+
+    // 工作台页面 API（页面同源调用，走标准 guard：marker + 可选令牌头）
+    const jsonBody = async () => {
+      const contentType = String(request.headers['content-type'] ?? '')
+      if (!contentType.includes('application/json')) return { error: 'POST bodies must be application/json' }
+      try {
+        return { payload: JSON.parse((await readBody(request)) || '{}') }
+      } catch {
+        return { error: 'request body is not valid JSON' }
+      }
+    }
+    if (pathname === '/api/workflows' && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, value: await methods.listWorkflows() }, allowedOrigin)
+      return
+    }
+    if (pathname.startsWith('/api/wf/') && request.method === 'GET') {
+      const workflow = decodeURIComponent(pathname.slice('/api/wf/'.length))
+      const descriptor = await methods.getPage(workflow)
+      if (descriptor === null || descriptor === undefined) {
+        sendJson(response, 404, { ok: false, error: { code: 'not_found', message: `工作流 ${workflow} 没有页面描述符` } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: descriptor }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const started = await methods.runPage(body.payload ?? {})
+      if (started?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'run_rejected', message: started?.reason ?? started?.error ?? '无法启动执行' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: started }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run/status' && request.method === 'GET') {
+      const workflow = String(url.searchParams.get('workflow') ?? '')
+      const status = await methods.runStatus({ workflow })
+      sendJson(response, 200, { ok: true, value: status?.value ?? null }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run/cancel' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const cancelled = await methods.cancelRun(body.payload ?? {})
+      if (cancelled?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'cancel_rejected', message: cancelled?.reason ?? '无法中断' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: cancelled }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/run/history' && request.method === 'GET') {
+      const workflow = String(url.searchParams.get('workflow') ?? '')
+      const limit = Number(url.searchParams.get('limit') ?? '') || undefined
+      const history = await methods.runHistory({ workflow, limit })
+      sendJson(response, 200, { ok: true, value: history?.value ?? [] }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/artifacts/query' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: await methods.queryArtifacts(body.payload ?? {}) }, allowedOrigin)
+      return
+    }
+    // 业务配置（第 5 个 Tab）：列表 / 保存 / 删除 / 登记候选
+    if (pathname.startsWith('/api/business/') && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const payload = body.payload ?? {}
+      if (pathname === '/api/business/save') {
+        sendJson(response, 200, { ok: true, value: await methods.saveBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/remove') {
+        sendJson(response, 200, { ok: true, value: await methods.removeBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/register') {
+        sendJson(response, 200, { ok: true, value: await methods.registerBusiness(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/kind/save') {
+        sendJson(response, 200, { ok: true, value: await methods.saveBusinessKind(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/kind/remove') {
+        sendJson(response, 200, { ok: true, value: await methods.removeBusinessKind(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/schema') {
+        sendJson(response, 200, { ok: true, value: await methods.businessSchema(payload) }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/promote') {
+        const outcome = await methods.promoteBusiness(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'promote_rejected', message: outcome?.reason ?? '设为主配置失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/preset/save') {
+        const outcome = await methods.saveBusinessPreset(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'preset_rejected', message: outcome?.reason ?? '保存预设失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/preset/remove') {
+        const outcome = await methods.removeBusinessPreset(payload)
+        if (outcome?.ok !== true) {
+          sendJson(response, 400, { ok: false, error: { code: 'preset_rejected', message: outcome?.reason ?? '删除预设失败' } }, allowedOrigin)
+          return
+        }
+        sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+        return
+      }
+      if (pathname === '/api/business/list') {
+        sendJson(response, 200, { ok: true, value: await methods.listBusiness(payload) }, allowedOrigin)
+        return
+      }
+    }
+    if (pathname === '/api/artifacts/remove-batch' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const removed = await methods.removeArtifactsBatch(body.payload ?? {})
+      if (removed?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'remove_rejected', message: removed?.reason ?? '批量删除失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: removed }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/artifacts/remove' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const removed = await methods.removeArtifact(body.payload ?? {})
+      if (removed?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'remove_rejected', message: removed?.reason ?? '删除失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: removed }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/prompt/assign' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const assigned = await methods.assignPrompt(body.payload ?? {})
+      if (assigned?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'assign_rejected', message: assigned?.reason ?? '赋值失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: assigned }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/prompt/take' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const taken = await methods.takePrompt(body.payload ?? {})
+      sendJson(response, 200, { ok: true, value: taken?.value ?? null }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/runs/clear' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const cleared = await methods.clearRuns(body.payload ?? {})
+      if (cleared?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'clear_rejected', message: cleared?.reason ?? '清空失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: cleared }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/quick' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const started = await methods.quickRun(body.payload ?? {})
+      if (started?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'quick_rejected', message: started?.reason ?? '快捷指令无法启动' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: started }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/quick/save' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const saved = methods.saveQuickCommands !== undefined ? await methods.saveQuickCommands(body.payload ?? {}) : { ok: false, reason: 'save unavailable' }
+      if (saved?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'save_rejected', message: saved?.reason ?? '指令保存失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: saved }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/workflows/pull' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const pulled = await methods.pullWorkflow(body.payload ?? {})
+      if (pulled?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'pull_rejected', message: pulled?.reason ?? '拉取失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: pulled }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/refresh' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const refreshed = await methods.refreshWorkflow(body.payload ?? {})
+      if (refreshed?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'refresh_rejected', message: refreshed?.reason ?? '重新解析失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: refreshed }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/artifacts' && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, value: await methods.listArtifacts() }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/tags' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      try {
+        const record = await methods.updateTags(body.payload ?? {})
+        sendJson(response, 200, { ok: true, value: record }, allowedOrigin)
+      } catch (error) {
+        sendJson(response, 400, { ok: false, error: { code: 'tag_rejected', message: error instanceof Error ? error.message : String(error) } }, allowedOrigin)
+      }
       return
     }
     sendJson(response, 404, { ok: false, error: { code: 'no_route', message: `no route for ${request.method} ${pathname}` } }, allowedOrigin)

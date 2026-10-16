@@ -3,17 +3,17 @@ import { DEFAULTS, resolveConfig, splitPathList, candidateHostEntries, resolveSe
 
 describe('home dir defaults', () => {
   it('derives workflows/artifacts/data under the home dir and respects explicit paths', () => {
-    const env = { DSH_HOME: 'C:\\dsh-data\\.dsh' }
-    expect(defaultHomeDir(env).replaceAll('\\', '/')).toBe('C:/dsh-data/.dsh/comfymcp')
+    const env = { DSH_HOME: 'F:\\dsh-data\\.dsh' }
+    expect(defaultHomeDir(env).replaceAll('\\', '/')).toBe('F:/dsh-data/.dsh/comfymcp')
     const derived = applyHomeDefaults({ homeDir: '', workflowDirs: [], artifactsDir: '', dataDir: '' }, env, (p) => p)
-    expect(derived.workflowDirs[0].replaceAll('\\', '/')).toBe('C:/dsh-data/.dsh/comfymcp/workflows')
-    expect(derived.artifactsDir.replaceAll('\\', '/')).toBe('C:/dsh-data/.dsh/comfymcp/artifacts')
-    expect(derived.dataDir.replaceAll('\\', '/')).toBe('C:/dsh-data/.dsh/comfymcp/data')
-    const explicit = applyHomeDefaults({ homeDir: 'C:\\mine', workflowDirs: ['C:\\keep'], artifactsDir: 'C:\\art', dataDir: '' }, env, (p) => p)
-    expect(explicit.homeDir.replaceAll('\\', '/')).toBe('C:/mine')
+    expect(derived.workflowDirs[0].replaceAll('\\', '/')).toBe('F:/dsh-data/.dsh/comfymcp/workflows')
+    expect(derived.artifactsDir.replaceAll('\\', '/')).toBe('F:/dsh-data/.dsh/comfymcp/artifacts')
+    expect(derived.dataDir.replaceAll('\\', '/')).toBe('F:/dsh-data/.dsh/comfymcp/data')
+    const explicit = applyHomeDefaults({ homeDir: 'F:\\mine', workflowDirs: ['C:\\keep'], artifactsDir: 'C:\\art', dataDir: '' }, env, (p) => p)
+    expect(explicit.homeDir.replaceAll('\\', '/')).toBe('F:/mine')
     expect(explicit.workflowDirs).toEqual(['C:\\keep'])
     expect(explicit.artifactsDir).toBe('C:\\art')
-    expect(explicit.dataDir.replaceAll('\\', '/')).toBe('C:/mine/data')
+    expect(explicit.dataDir.replaceAll('\\', '/')).toBe('F:/mine/data')
   })
 })
 

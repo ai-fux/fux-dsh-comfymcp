@@ -1,7 +1,21 @@
 # dsh-comfymcp 部署文档
 
-> 版本 0.1.0（`master`，tag `v0.1.0`）
-> 配套文档：[操作手册](operations.md) · [协议说明](protocol.md) · [总览 README](../README.md)
+> 版本 0.2.1（迭代分支 `dev-snapshot-20261013-0.2.1`；上一稳定分支 `snapshot-0.2.0`）· 更新日期 2026-10-13
+> 配套文档：[操作手册](operations.md) · [协议说明](protocol.md) · [迭代记录](roadmap.md) · [总览 README](../README.md)
+
+## 0. 传输方式（v0.2.1）
+
+| 模式 | 传输 | 说明 |
+| --- | --- | --- |
+| 内置服务（`embeddedServer=true`） | stdio | 插件自带 comfy-mcp-server（随机端口）+ 本地 stdio 宿主；单机推荐，无需配置端点 |
+| 远程（`embeddedServer=false`） | **Streamable HTTP** | 直接 POST JSON-RPC 到「服务端点」（单端点，兼容 `application/json` 与 `text/event-stream` 响应），沿用 `Mcp-Session-Id` 会话；可选「访问令牌」作为 `Authorization: Bearer` |
+
+要点：
+
+- **远程模式不再 spawn 本地 stdio 宿主**，也不再要求 `hostEntry`（此前远程也因宿主入口缺失而报错）。
+- 工具名兼容：插件内部仍用宿主工具名（`connection_status` / `list_remote_tools` / `call_remote_tool` / `fetch_artifacts`），远程模式下由门面翻译成原生工具（`server_info` / `tools/list` / `tools/call` / `fetch_outputs`），上层与运行链路无感。
+- 切换模式，或修改端点/访问令牌后，连接立即按新配置重建（无需重启 DSH）。
+- 快速自检：`node scripts/verify-remote-http.mjs`（起真实服务端 → 远程直连 → 探测 / 工具目录 / 远程调用）。
 
 ## 1. 架构总览
 
@@ -10,10 +24,8 @@
    │  comfymcp_* 工具调用 / 结构化表单（ask-user-question）
    ▼
 dsh-comfymcp-client（DSH 插件，纯 JS 无构建）
-   │  spawn stdio
-   ▼
-MCP 宿主 fux-comfymcp-host.mjs（FUX runtime + @fux-mcp/comfy-client 通用插件）
-   │  MCP Streamable HTTP :18800
+   │  【远程模式】MCP Streamable HTTP（单端点 POST JSON-RPC，兼容 SSE）
+   │  【内置模式】spawn stdio → MCP 宿主 fux-comfymcp-host.mjs（FUX runtime + @fux-mcp/comfy-client）
    ▼
 comfy-mcp-server 参考服务端（Node，可配 mock / stdio 两种后端）
    │  mock：内置 13 工具离线联调，出 PNG
@@ -33,18 +45,18 @@ ComfyUI（:8000，用户自备，.venv Python 3.12）
 
 ## 2. 前置条件
 
-| 项 | 要求 |
-| --- | --- |
-| Node.js | >= 20 |
-| pnpm | >= 10 |
-| DSH | Web profile 正常启动 |
-| ComfyUI | 真实模式才需要，:8000（用户自备） |
-| Python | 仅 ComfyUI 自身 `.venv` 需要（3.12）；链路本身零 Python 依赖 |
-| 卸载节点 | `custom_nodes/comfyui-unload-model`（可选，缺失仅影响自动卸载） |
+| 项 | 要求 | 本机实测 |
+| --- | --- | --- |
+| Node.js | >= 20 | v22.21.0 |
+| pnpm | >= 10 | 11.13.0 |
+| DSH | Web profile 正常启动 | GUI :13188 |
+| ComfyUI | 真实模式才需要，:8000 | v0.39.2 运行中 |
+| Python | 仅 ComfyUI 自身 `.venv` 需要（3.12） | 链路本身零 Python 依赖 |
+| 卸载节点 | `custom_nodes/comfyui-unload-model`（可选，缺失仅影响自动卸载） | 已装并已加载 |
 
 ## 3. 安装步骤
 
-以下命令均在本仓克隆根目录执行。
+以下命令均在项目根 `F:\AgentWorkplace\dsh\dsh-13188-comfymcp\projects\dsh-comfymcp` 执行。
 
 ### 3.0 两种部署形态（先选一个）
 
@@ -53,8 +65,8 @@ ComfyUI（:8000，用户自备，.venv Python 3.12）
 | **内嵌（默认，推荐单机）** | comfy-mcp 服务端由 DSH 插件**自动拉起**：随机空闲端口、随 DSH 启停、无需任何手动操作；ComfyUI 可在本机或局域网任意主机（后端仅走 HTTP） | 本机开发/单人使用 |
 | **外置** | comfy-mcp 服务端按 3.2 单独启动；设置页/行配置关闭内嵌开关，endpoint 指向该服务 | 多消费者共享、独立生命周期、部署在服务器主机 |
 
-内嵌模式的默认配置已写入行配置（`embeddedServer: true` + 默认 mock 后端，开箱即用；
-真实模式改 `stdio` 并配置 ComfyUI 侧 MCP 后端入口）；**comfy-mcp-server 程序已内置在插件包内**
+内嵌模式的默认配置已写入行配置（`embeddedServer: true` + stdio 后端指向
+兄弟项目 `fux-comfyui-mcp.mjs`）；**comfy-mcp-server 程序已内置在插件包内**
 （`vendor/comfy-mcp-server.mjs`，esbuild 单文件零依赖打包），部署时无需关心其路径，
 env `DSH_COMFYMCP_SERVER_ENTRY` 或覆盖层 `serverEntry` 可显式覆盖。
 ComfyUI 服务地址可在设置页（内置模式）直接配置（`comfyuiUrl`，默认
@@ -85,7 +97,7 @@ node comfy-mcp-server/bin/comfy-mcp-server.mjs
 $env:COMFY_MCP_BACKEND='stdio'
 $env:COMFY_MCP_SERVER_PORT='18800'
 $env:COMFY_MCP_BACKEND_CMD='node'
-$env:COMFY_MCP_BACKEND_ARGS='<ComfyUI 侧 MCP 项目>\mcp\bin\fux-comfyui-mcp.mjs'
+$env:COMFY_MCP_BACKEND_ARGS='F:\AgentWorkplace\dsh\dsh-1-comfy-p\projects\dsh-comfyui\mcp\bin\fux-comfyui-mcp.mjs'
 node comfy-mcp-server/bin/comfy-mcp-server.mjs
 ```
 
@@ -93,11 +105,11 @@ node comfy-mcp-server/bin/comfy-mcp-server.mjs
 
 ### 3.3 挂载 DSH 插件
 
-在 DSH 会话内执行：
+在 DSH 会话内执行（本环境由 Agent 代操作）：
 
 ```
 plugin_manager remove_bundle dsh-comfymcp-client        # 若已挂载
-plugin_manager install_bundle <本仓克隆路径>\plugins\dsh-comfymcp-client
+plugin_manager install_bundle <项目>\plugins\dsh-comfymcp-client
 ```
 
 ### 3.4 重启 DSH（必须）
@@ -140,7 +152,7 @@ plugin_manager install_bundle <本仓克隆路径>\plugins\dsh-comfymcp-client
 | 设置页可改 | endpoint / workflowDirs / saveSubdir / artifactsDir / hostEntry / autoUnloadModel / embeddedServer | 保存进覆盖文件，即时生效 |
 | `embeddedServer` / `comfyuiUrl` / `embeddedBackend` / `embeddedBackendCommand` / `embeddedBackendArgs` / `serverEntry` | 行配置见 bundle patch | 内嵌服务端：开关 / ComfyUI 服务地址（设置页可配，保存即热重启内置服务）/ `mock`\|`stdio` / 后端命令 / 后端参数 / 服务入口（默认用插件内置 vendor 包）；env 别名 `DSH_COMFYMCP_SERVER_ENTRY` |
 
-完整示例见 [`config/comfymcp.env.example`](../config/comfymcp.env.example)。
+完整示例见 [`config/comfymcp.env`](../config/comfymcp.env)。
 
 ## 5. 真实模式切换与 Python 侧要求
 

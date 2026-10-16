@@ -1,21 +1,15 @@
-# 运行时数据与依赖不入库
+﻿# 运行时数据与依赖不入库
 node_modules/
 *.log
 data/
 .workplace/
 dist/
 
-# 工作区级公共插件仓不在本项目仓内（已 vendor 至 fux/packages/comfy-client），如被复制进来则忽略
+# 工作区级公共插件仓不在本项目仓内（位于工作区根 plugins/），如被复制进来则忽略
 /plugins/fux-plugin-mcp-comfy-client/
-
-# 本地凭据与本地环境配置不入库
-.secrets/
-config/*.env
-
-# 公开主干不收录本地研发文件（仅存在于私有/快照分支）
-AGENTS.md
-PLUGIN_PLAN.md
 
 # 本地覆盖层与临时
 *.local.json
 __check.mjs
+
+tmp/

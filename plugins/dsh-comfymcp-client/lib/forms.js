@@ -157,7 +157,32 @@ function enumOptions(field, value, decl, modelChoices) {
   return choices.slice(0, 12)
 }
 
+/** 常见输入的面向用户中文名（让表单题面直接说人话，技术类名退到括号里）。 */
+const FIELD_LABELS = {
+  text: '提示词',
+  seed: '随机种子',
+  steps: '采样步数',
+  cfg: '提示词强度 CFG',
+  width: '宽度',
+  height: '高度',
+  batch_size: '生成张数',
+  sampler_name: '采样器',
+  scheduler: '调度器',
+  denoise: '重绘幅度',
+  filename_prefix: '文件名前缀',
+  ckpt_name: '主模型',
+  unet_name: '主模型',
+  model: '模型',
+  vae_name: 'VAE',
+  clip_name: '文本编码器',
+  weight_dtype: '权重精度',
+  device: '运行设备',
+  shift: 'Shift',
+}
+
 function fieldLabel(classType, field) {
+  const known = FIELD_LABELS[field]
+  if (known !== undefined) return `${known}（${classType}）`
   const readable = field
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
@@ -177,53 +202,82 @@ export function randomSeed(random = Math.random) {
 
 /**
  * 把字段批次转成 ask_user_question 的问题数组。
- * 每个字段一个问题：
- * - text   → 自由文本（custom），无固定选项
- * - number → [保留当前值] + 自定义输入
- * - seed   → [使用随机值 X] [重新随机] + 自定义固定值
- * - enum   → 候选值选项 + 自定义
- * - boolean→ [是] [否]
- * - image  → [保持当前值] + 自定义路径
+ * 每个字段一个问题，题面自带三件事：这是什么（header 带标题与序号）、推荐值是什么（选项首位标【推荐】）、
+ * 不答会怎样（由 push_form 追加倒计时说明）。
+ * - text   → 自由文本（custom），题面写明推荐预设值
+ * - number → [使用当前值 X【推荐】] + 自定义输入
+ * - seed   → [使用随机值 X【推荐】] [重新随机] + 自定义固定值
+ * - enum   → 当前值置顶标【推荐】+ 其余候选 + 自定义
+ * - boolean→ 当前值【推荐】+ 另一值
+ * - image  → [保持当前值 X【推荐】] + 自定义路径
  */
-export function buildQuestions(fields, random = Math.random) {
+export function buildQuestions(fields, random = Math.random, context = {}) {
   const prepared = randomizeSeeds(fields, random)
-  const questions = prepared.map((field) => {
+  const total = prepared.length
+  const title = typeof context.title === 'string' && context.title.trim().length > 0 ? context.title.trim() : '生成参数确认'
+  const questions = prepared.map((field, index) => {
+    const position = total > 1 ? `${index + 1}/${total}` : '1/1'
+    // detail 不渲染；用途与序号必须写进 header/question 才可见
     const base = {
       id: `field:${field.id}`,
       question: field.label,
-      header: fieldHeader(field.kind),
+      header: `${title} · ${position}`,
       detail: `节点 ${field.nodeId} · 输入 ${field.field}`,
     }
     switch (field.kind) {
       case 'text':
-        return { ...base, question: `${field.label}（预设值：${previewOf(field.value)}）` }
+        return {
+          ...base,
+          question: `${field.label}｜推荐（预设）：${previewOf(field.value)}｜可直接编辑，留空即用推荐值`,
+        }
       case 'number': {
         const range = field.min !== undefined || field.max !== undefined ? `（范围 ${field.min ?? '-∞'} ~ ${field.max ?? '∞'}）` : ''
         return {
           ...base,
-          question: `${field.label}${range}`,
-          options: [{ label: `使用当前值 ${field.value}`, description: '保持推导出的缺省参数' }],
+          question: `${field.label}${range}｜不答将采用推荐值 ${field.value}`,
+          options: [{ label: `使用当前值 ${field.value}（推荐）`, description: '保持推导出的缺省参数；也可在输入框填其它数值' }],
         }
       }
       case 'seed':
         return {
           ...base,
-          question: `${field.label}（本次已随机：${field.value}）`,
+          question: `${field.label}｜本次已随机：${field.value}（推荐）`,
           options: [
-            { label: `使用随机种子 ${field.value}`, description: '推送时已随机一次' },
+            { label: `使用随机种子 ${field.value}（推荐）`, description: '推送时已随机一次，不答就用它；也可在输入框填固定种子' },
             { label: '重新随机', description: '再随机一次新种子' },
           ],
         }
-      case 'boolean':
-        return { ...base, options: [{ label: 'true' }, { label: 'false' }] }
-      case 'image':
-        return { ...base, options: [{ label: `保持当前值 ${previewOf(field.value)}` }] }
-      case 'enum':
-      default:
+      case 'boolean': {
+        const current = field.value === true || String(field.value).toLowerCase() === 'true'
+        const other = !current
         return {
           ...base,
-          options: (field.options ?? [String(field.value)]).map((entry) => ({ label: String(entry) })),
+          question: `${field.label}｜不答将采用推荐值 ${current}`,
+          options: [
+            { label: `${String(current)}（推荐）`, description: '当前图中的取值' },
+            { label: `${String(other)}` },
+          ],
         }
+      }
+      case 'image':
+        return {
+          ...base,
+          question: `${field.label}｜不答将保持推荐值 ${previewOf(field.value)}`,
+          options: [{ label: `保持当前值 ${previewOf(field.value)}（推荐）`, description: '沿用图中的输入' }],
+        }
+      case 'enum':
+      default: {
+        const current = String(field.value)
+        const rest = (field.options ?? []).map((entry) => String(entry)).filter((entry) => entry !== current)
+        return {
+          ...base,
+          question: `${field.label}｜推荐：${current}`,
+          options: [
+            { label: `${current}（推荐）`, description: '图中当前取值' },
+            ...rest.map((entry) => ({ label: entry })),
+          ],
+        }
+      }
     }
   })
   return { questions, prepared }
@@ -255,12 +309,14 @@ function previewOf(value) {
 export function resolveAnswer(field, answer, random = Math.random) {
   const selected = Array.isArray(answer?.selected) ? answer.selected : []
   const custom = typeof answer?.custom === 'string' && answer.custom.trim().length > 0 ? answer.custom.trim() : ''
-  const keep = selected.some((entry) => String(entry).startsWith('使用当前值') || String(entry).startsWith('保持当前值'))
+  const raw = selected.length > 0 ? String(selected[0]) : ''
+  // 选项文案里的「（推荐）」只是给人看的标记，不能写进图里
+  const label = raw.replace(/[（(](推荐|Recommended)[）)]\s*$/i, '').trim()
+  const keep = label.startsWith('使用当前值') || label.startsWith('保持当前值')
   if (custom.length > 0) return coerceValue(field, custom)
   if (selected.length === 0) {
     return field.kind === 'seed' ? field.value : undefined
   }
-  const label = String(selected[0])
   if (field.kind === 'seed') {
     if (label === '重新随机') return randomSeed(random)
     if (label.startsWith('使用随机种子')) return field.value
@@ -327,15 +383,51 @@ export function applyAnswers(graph, fields, answers, random = Math.random) {
   return { graph: safeGraph, applied, kept }
 }
 
+/** 卸载类节点判定（工作流文件里常自带，例如 image_z_image 的 UnloadAllModels）。 */
+const UNLOAD_CLASS = /^unload/i
+
+/** 图里已有的卸载节点 id。 */
+export function unloadNodeIds(graph) {
+  const safeGraph = graph !== null && typeof graph === 'object' && !Array.isArray(graph) ? graph : {}
+  return Object.entries(safeGraph)
+    .filter(([, node]) => UNLOAD_CLASS.test(String(node?.class_type ?? '')))
+    .map(([id]) => id)
+}
+
+/**
+ * 按配置移除图内自带的卸载节点（开关关闭时的正确语义：配置说了不卸载就不卸载）。
+ * 卸载节点是终端节点（无输出），移除后把指向它的链接一并丢弃即可。
+ */
+export function stripUnloadNodes(graph) {
+  const safeGraph = asGraph(graph)
+  const ids = unloadNodeIds(safeGraph)
+  if (ids.length === 0) return { graph: safeGraph, removed: [] }
+  for (const id of ids) delete safeGraph[id]
+  const removedRefs = []
+  for (const [nodeId, node] of Object.entries(safeGraph)) {
+    for (const [field, value] of Object.entries(inputsOf(node))) {
+      if (Array.isArray(value) && value.length >= 2 && ids.includes(String(value[0]))) {
+        delete node.inputs[field]
+        removedRefs.push(`${nodeId}.${field}`)
+      }
+    }
+  }
+  return { graph: safeGraph, removed: ids, removedRefs }
+}
+
 /**
  * 卸载节点整合（已验证的接入模式）：在输出链路上插入 UnloadAllModels——
  * 上游输出 → UnloadAllModels.value →（其 any 透传输出）→ 原输入。这样该节点
  * 必然随链路执行，推理完成后释放显存。插入点优先 Save/Preview 类终端节点的
  * 输入链接，其次任意终端节点，最后任意链接。
+ *
+ * 开关打开时：图里**已有**卸载节点则沿用（不重复插入）；没有才插入。
  */
 export function integrateUnloadNode(graph, options = {}) {
   const safeGraph = asGraph(graph)
   if (options.enabled !== true) return { graph: safeGraph, inserted: false, reason: 'disabled' }
+  const existing = unloadNodeIds(safeGraph)
+  if (existing.length > 0) return { graph: safeGraph, inserted: false, reason: 'already present', nodeId: existing[0] }
   const isConsumed = (id) =>
     Object.values(safeGraph).some((node) =>
       Object.values(inputsOf(node)).some((value) => Array.isArray(value) && String(value[0]) === id),
@@ -386,4 +478,65 @@ export function firstSeed(graph) {
     }
   }
   return null
+}
+
+/** 解析链接引用 [nodeId, slot] → 源节点及其文本字段键。 */
+function textSourceOf(graph, ref) {
+  if (!Array.isArray(ref) || ref.length < 2) return null
+  const node = graph[String(ref[0])]
+  if (node === null || typeof node !== 'object') return null
+  const inputs = inputsOf(node)
+  for (const key of ['text', 'prompt', 'string', 'value', 'positive', 'negative']) {
+    if (typeof inputs[key] === 'string') return { nodeId: String(ref[0]), field: key, text: inputs[key] }
+  }
+  return null
+}
+
+/**
+ * 提取正/负提示词（含可回填的字段键，供「快捷赋值」用）：
+ * 1) 优先按采样节点的 positive / negative 链接定位到文本节点（最准确）；
+ * 2) 其余文本节点按出现顺序归入 others；
+ * 3) 完全无链接信息时，第一条文本视为正向、第二条视为负向（best-effort）。
+ */
+export function extractPrompts(graph) {
+  const nodes = asGraph(graph)
+  const result = { positive: '', negative: '', positiveField: '', negativeField: '', others: [] }
+  const used = new Set()
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    const inputs = inputsOf(node)
+    for (const [slotKey, kind] of [['positive', 'positive'], ['negative', 'negative']]) {
+      const ref = inputs[slotKey]
+      if (!Array.isArray(ref)) continue
+      const source = textSourceOf(nodes, ref)
+      if (source === null || used.has(`${source.nodeId}:${source.field}`)) continue
+      used.add(`${source.nodeId}:${source.field}`)
+      if (result[kind].length === 0) {
+        result[kind] = source.text
+        result[`${kind}Field`] = `${source.nodeId}:${source.field}`
+      }
+    }
+    void nodeId
+  }
+  // 兜底/补充：尚未使用的文本节点
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    for (const [field, value] of Object.entries(inputsOf(node))) {
+      if (typeof value !== 'string' || value.trim().length === 0) continue
+      if (!/^(text|prompt)$/i.test(field)) continue
+      const key = `${nodeId}:${field}`
+      if (used.has(key)) continue
+      used.add(key)
+      result.others.push({ nodeId, field, text: value })
+    }
+  }
+  if (result.positive.length === 0 && result.others.length > 0) {
+    const first = result.others.shift()
+    result.positive = first.text
+    result.positiveField = `${first.nodeId}:${first.field}`
+  }
+  if (result.negative.length === 0 && result.others.length > 0) {
+    const second = result.others.shift()
+    result.negative = second.text
+    result.negativeField = `${second.nodeId}:${second.field}`
+  }
+  return result
 }
