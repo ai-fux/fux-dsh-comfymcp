@@ -24,6 +24,8 @@ export const GENERATION_FLOW_CONTENT = `# comfy-mcp 工作流生成流程
 ## 2. 先查业务配置（省 token 的第一步，必做）
 调用 \`comfymcp_business\`（action=match，text=用户原话）：
 - **命中**（matched 非空）→ 直接用该配置的工作流继续：结果里有 \`graph\` 就把它和需求一起喂给 \`comfymcp_analyze_workflow\`；没有 graph（远端模板）就传 \`workflowId=matched.workflow\`。**跳过** \`comfymcp_discover\` 与 \`list_models\`，不要重新检索模板库、不要枚举模型；matched.params 里的 steps/尺寸/模型等作为表单推荐值。
+- \`matched.presets\` 是该业务类的**参数预设集**（如「高清」「草稿」）：用户点名预设（「用高清出」）就把该预设的 params 当推荐值；没点名但预设与需求明显贴合（如要「高清大图」且有高清预设）也优先用预设值。
+- 命中后插件会自动把业务类显示名拼进表单标题（「文生图 · …」），你仍必须传 title 说明具体用途。
 - **未命中**（matched:null）→ 才走第 2b 步完整探索。
 
 ## 2b. 检查工作流空间 + 检索模板库
@@ -31,7 +33,7 @@ export const GENERATION_FLOW_CONTENT = `# comfy-mcp 工作流生成流程
 - 本地工作流空间有贴合模板 → 指出文件名；
 - 远程模板库有贴合模板 → 记下 workflowId；
 - 两者都无 → 走第 3 步自行设计。
-跑通之后：调用 \`comfymcp_business\`（action=register，workflow=这次用的工作流名，可选带 graph 自动判定业务类）把它登记为业务配置——下次同类需求就直接命中，不再重复探索。
+跑通之后：调用 \`comfymcp_business\`（action=register，workflow=这次用的工作流名，可选带 graph 自动判定业务类；参数值得固化就再传 presetName 给预设起名）把它登记为业务配置——下次同类需求就直接命中，不再重复探索。
 
 ## 3. 自行设计（先联网检索）
 - 先 \`web_search\` 检索相关节点/官方示例图（例如「ComfyUI SDXL workflow api format」），确认节点类名与接线。
@@ -40,7 +42,7 @@ export const GENERATION_FLOW_CONTENT = `# comfy-mcp 工作流生成流程
 
 ## 4. 表单确认（必经）
 - \`comfymcp_analyze_workflow\`：得到 fields（提示词预设、缺省参数、随机种子）。
-- \`comfymcp_push_form\`：把表单推给用户，**必须传 \`title\`** 说明用途（例如「白色机甲 · 生成参数」）——它会出现在每题的 header「title · 1/N」上。每题选项首位已标【推荐】，题面写明不答会采用哪个推荐值，倒计时规则也写在题面上（30 秒未答 → 自动用【推荐】值继续）。种子已在推送时随机一次，用户可选使用/重随/手输固定值。autoAcceptForm 开启时把第 1 步攒下的所有选择也一并做成 fields 推进同一张表单，**不要**另发追问。
+- \`comfymcp_push_form\`：把表单推给用户，**必须传 \`title\`** 说明用途（例如「白色机甲 · 生成参数」）——它会出现在每题的 header「title · 1/N」上；命中业务配置时插件会自动在前面拼上业务类显示名（如「文生图 · 白色机甲 · 生成参数」），不要自己重复拼一遍业务类。每题选项首位已标【推荐】，题面写明不答会采用哪个推荐值，倒计时规则也写在题面上（30 秒未答 → 自动用【推荐】值继续）。种子已在推送时随机一次，用户可选使用/重随/手输固定值。autoAcceptForm 开启时把第 1 步攒下的所有选择也一并做成 fields 推进同一张表单，**不要**另发追问。
 - 结果 \`auto:true\`（autoReason 含「倒计时」）＝倒计时到点未收到作答、已自动采用推荐参数：不要等待、不要重复推送表单，直接 \`comfymcp_apply_form\` 继续；用户迟到补答会以消息送达，届时按新选择调整。
 - 结果 \`cancelled:true\`＝用户主动关掉了这次确认：**不要执行**，先问用户要改什么；重新推送新表单即可（每次推送都带新的倒计时，取消过一次不影响下一次）。
 - \`comfymcp_apply_form\`：回填并校验。validation.valid=false 时修复后重新校验。

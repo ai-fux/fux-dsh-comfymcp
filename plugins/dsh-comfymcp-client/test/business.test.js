@@ -6,10 +6,12 @@ import {
   BUSINESS_KINDS,
   businessKind,
   businessLabel,
+  businessRanking,
   createBusinessStore,
   extractBusinessParams,
   inferBusiness,
   matchBusiness,
+  workflowOutcomeStats,
 } from '../lib/business.js'
 
 const graphs = {
@@ -210,5 +212,120 @@ describe('createBusinessStore', () => {
     store.save({ id: 'custom', business: 'custom', workflow: 'my-wf' })
     expect(store.match('帮我画一只猫')).toBeNull()
     expect(store.match('跑我的流程')?.profile.workflow).toBe('my-wf')
+  })
+
+  it('参数预设集：保存/同名覆盖/删除（按 id 与名称都行），save 合并时保留', () => {
+    const { store } = tempStore()
+    store.save({ id: 'text2img', business: 'text2img', workflow: 'z-image-turbo', params: { steps: 8 } })
+    // 名称/参数校验：空名、空参数都拒绝
+    expect(store.savePreset({ id: 'text2img', preset: { name: '', params: { steps: 1 } } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'text2img', preset: { name: '高清', params: {} } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'text2img', preset: { name: '高清', params: null } }).ok).toBe(false)
+    expect(store.savePreset({ id: 'nope', preset: { name: '高清', params: { steps: 1 } } }).ok).toBe(false)
+    // 正常保存
+    const saved = store.savePreset({ id: 'text2img', preset: { name: '高清', params: { steps: 30, width: 1024 } } })
+    expect(saved.ok).toBe(true)
+    expect(saved.preset).toMatchObject({ name: '高清', params: { steps: 30, width: 1024 } })
+    // 空值参数被过滤
+    const withBlank = store.savePreset({ id: 'text2img', preset: { name: '草稿', params: { steps: 8, width: '' } } })
+    expect(withBlank.preset.params).toEqual({ steps: 8 })
+    // 同名覆盖（不新增一条），createdAt 保留
+    const first = store.get('text2img').presets.find((entry) => entry.name === '高清')
+    const overwritten = store.savePreset({ id: 'text2img', preset: { name: '高清', params: { steps: 32 } } })
+    expect(overwritten.preset.id).toBe(first.id)
+    expect(overwritten.preset.createdAt).toBe(first.createdAt)
+    expect(store.get('text2img').presets.length).toBe(2)
+    // save 合并（UI 保存不带 presets 字段）不丢预设
+    store.save({ id: 'text2img', workflow: 'z-image-turbo-2' })
+    expect(store.get('text2img').presets.map((entry) => entry.name)).toEqual(['高清', '草稿'])
+    // 删除：按名称 / 按 id；不存在报原因
+    expect(store.removePreset({ id: 'text2img', presetId: '草稿' }).ok).toBe(true)
+    expect(store.removePreset({ id: 'text2img', presetId: first.id }).ok).toBe(true)
+    expect(store.get('text2img').presets).toEqual([])
+    expect(store.removePreset({ id: 'text2img', presetId: '高清' }).ok).toBe(false)
+  })
+
+  it('运行战绩统计：只认 completed/failed，running 与 aborted 不计；后缀名并入同前缀', () => {
+    const stats = workflowOutcomeStats([
+      { name: 'beach', state: 'completed', finishedAt: '2026-10-16T01:00:00Z' },
+      { name: 'beach', state: 'failed' },
+      { name: 'beach', state: 'running' },
+      { name: 'beach-2', state: 'completed', finishedAt: '2026-10-16T02:00:00Z' },
+      { name: 'beach-2', state: 'aborted' },
+      { name: '', state: 'completed' },
+    ])
+    expect(stats.get('beach')).toMatchObject({ runs: 2, ok: 1, failed: 1 })
+    expect(stats.get('beach-2')).toMatchObject({ runs: 1, ok: 1, failed: 0, lastOkAt: '2026-10-16T02:00:00Z' })
+    expect(workflowOutcomeStats([]).size).toBe(0)
+  })
+
+  it('候选排序：得分=成功×3+使用−失败，成功过的排前；主配置同场计分', () => {
+    const runs = [
+      { name: 'a', state: 'failed' },
+      { name: 'b', state: 'completed' },
+      { name: 'b', state: 'completed' },
+      { name: 'c', state: 'completed' },
+      { name: 'c', state: 'failed' },
+    ]
+    const ranking = businessRanking(
+      { workflow: 'a', uses: 4, candidates: [{ workflow: 'b', uses: 1 }, { workflow: 'c', uses: 5 }] },
+      runs,
+    )
+    // a: -1+4=-? ok0*3+uses4-failed1+0=3；b: 6+1-0+1=8；c: 3+5-1+1=8（同分比成功数，b 2>1 → b 先）
+    expect(ranking.primary).toMatchObject({ workflow: 'a', ok: 0, failed: 1, score: 3 })
+    expect(ranking.candidates.map((entry) => entry.workflow)).toEqual(['b', 'c'])
+    expect(ranking.candidates[0]).toMatchObject({ ok: 2, failed: 0 })
+    // 快捷指令连跑的「名字-2」后缀并入统计
+    const withChain = businessRanking({ workflow: 'a', uses: 0, candidates: [] }, [{ name: 'a-2', state: 'completed' }])
+    expect(withChain.primary.ok).toBe(1)
+  })
+
+  it('自动换主：候选明显更好（≥2 成功且得分超 3 分）才提升，手动配置永不自动换', () => {
+    const { store } = tempStore()
+    // 自动登记主配置 beach；候选 flux-schnell（跑过即记）
+    store.autoRegister({ workflow: 'beach', graph: graphs.text2img })
+    store.autoRegister({ workflow: 'flux-schnell', graph: graphs.text2img })
+    const runs = [
+      { name: 'beach', state: 'failed' },
+      { name: 'beach', state: 'failed' },
+      { name: 'flux-schnell', state: 'completed' },
+      { name: 'flux-schnell', state: 'completed' },
+      { name: 'flux-schnell', state: 'completed' },
+    ]
+    const promoted = store.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs })
+    expect(promoted.workflow).toBe('flux-schnell') // 3 成功 vs 主配置 0 成功 → 换主
+    expect(promoted.candidates.map((entry) => entry.workflow)).toContain('beach')
+    expect(promoted.lastPromotedAt).not.toBeNull()
+    // 候选优势不足（仅 1 次成功）不换
+    const { store: store2 } = tempStore()
+    store2.autoRegister({ workflow: 'beach', graph: graphs.text2img })
+    store2.autoRegister({ workflow: 'flux-schnell', graph: graphs.text2img })
+    const kept = store2.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs: [{ name: 'flux-schnell', state: 'completed' }] })
+    expect(kept.workflow).toBe('beach')
+    // 手动配置（auto=false）永不自动换
+    const { store: store3 } = tempStore()
+    store3.save({ id: 'text2img', business: 'text2img', workflow: 'beach', auto: false, candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 1 }] })
+    const manual = store3.autoRegister({ workflow: 'beach', graph: graphs.text2img, runs })
+    expect(manual.workflow).toBe('beach')
+    expect(manual.auto).toBe(false)
+  })
+
+  it('手动设为主配置：候选升主、原主退候选；手动/任意工作流都可；未知 id 报原因', () => {
+    const { store } = tempStore()
+    store.save({ id: 'text2img', business: 'text2img', workflow: 'beach', candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 2 }] })
+    const swapped = store.promote('text2img', 'flux-schnell')
+    expect(swapped.ok).toBe(true)
+    expect(swapped.swapped).toBe(true)
+    expect(swapped.from).toBe('beach')
+    expect(store.get('text2img').workflow).toBe('flux-schnell')
+    expect(store.get('text2img').candidates.map((entry) => entry.workflow)).toContain('beach')
+    // 目标就是主配置 → no-op
+    expect(store.promote('text2img', 'flux-schnell').swapped).toBe(false)
+    // 不在候选里的工作流也能直接设为主配置
+    expect(store.promote('text2img', 'other-wf').ok).toBe(true)
+    expect(store.get('text2img').workflow).toBe('other-wf')
+    // 边界：未知 id / 缺工作流名
+    expect(store.promote('nope', 'x').ok).toBe(false)
+    expect(store.promote('text2img', '').ok).toBe(false)
   })
 })

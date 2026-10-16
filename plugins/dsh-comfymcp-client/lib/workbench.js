@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, artifactsRunsHtml } from './wfpage.js'
 import { createTagStore } from './tags.js'
-import { createBusinessStore, BUSINESS_KINDS, businessLabel, extractBusinessParamFields, inferBusiness, matchBusiness } from './business.js'
+import { createBusinessStore, BUSINESS_KINDS, businessLabel, extractBusinessParamFields, inferBusiness, matchBusiness, businessRanking, workflowOutcomeStats } from './business.js'
 import { parseQuickCommands, buildQuickRerun, applyBatchSize } from './quick.js'
 import { createRunExecutor } from './runcore.js'
 import { createRunDaemon, summarizeRun } from './rund.js'
@@ -474,7 +474,17 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     async pageWorkflow(name, { token = '' } = {}) {
       const descriptor = await descriptorFor(name)
       if (descriptor === null) return { error: `工作流 ${name} 不存在（本地与远端模板库都没有）` }
-      return { html: renderPageHtml(descriptor, { token, quickCommands: parseQuickCommands(config.quickCommands) }) }
+      // 业务参数预设：该工作流是某条业务配置的首选（或候选）时，页面顶部给出预设一键套用条
+      const stem = safeFileStem(String(name).replace(/^(library|saved):/, '').replace(/\.json$/i, ''))
+      const profile = businessStore.all().find((entry) => entry.workflow === name || (stem.length > 0 && entry.workflow === stem)) ?? null
+      return {
+        html: renderPageHtml(descriptor, {
+          token,
+          quickCommands: parseQuickCommands(config.quickCommands),
+          businessLabel: profile === null ? '' : String(profile.label ?? profile.business ?? ''),
+          presets: profile === null ? [] : (Array.isArray(profile.presets) ? profile.presets : []),
+        }),
+      }
     },
 
     async pageArtifacts({ token = '' } = {}) {
@@ -490,6 +500,9 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
       const profiles = businessStore.all()
       const kinds = businessStore.kinds()
       const workflows = await knownWorkflows()
+      // 各工作流的运行战绩（成功/失败次数）：候选条按它展示，并支撑「设为主配置」的判断
+      const stats = {}
+      for (const [name, entry] of workflowOutcomeStats(bridge.listRuns(200))) stats[name] = entry
       return {
         html: renderBusinessHtml({
           token,
@@ -497,6 +510,7 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
           kinds,
           workflows: workflows.list,
           hiddenRuns: workflows.hiddenRuns,
+          runStats: stats,
         }),
       }
     },
@@ -551,6 +565,30 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
     async removeBusiness({ id } = {}) {
       const removed = businessStore.remove(id)
       return { ok: removed, profiles: businessStore.all() }
+    },
+
+    /** 设为主配置：把候选工作流提升为首选（原首选退回候选）；带出该配置的运行战绩排序供参考。 */
+    async promoteBusiness({ id, workflow } = {}) {
+      const outcome = businessStore.promote(id, workflow)
+      const profile = businessStore.all().find((entry) => entry.id === String(id ?? '')) ?? null
+      const ranking = profile === null ? null : businessRanking(profile, bridge.listRuns(200))
+      return {
+        ...(outcome.ok === false ? outcome : { ok: true, swapped: outcome.swapped === true, from: outcome.from ?? null }),
+        profile,
+        ranking,
+        profiles: businessStore.all(),
+      }
+    },
+
+    /** 参数预设：保存（同名覆盖）/ 删除，供业务配置页与模型侧共用。 */
+    async saveBusinessPreset({ id, preset } = {}) {
+      const outcome = businessStore.savePreset({ id, preset })
+      return { ...outcome, profiles: businessStore.all() }
+    },
+
+    async removeBusinessPreset({ id, presetId } = {}) {
+      const outcome = businessStore.removePreset({ id, presetId })
+      return { ...outcome, profiles: businessStore.all() }
     },
 
     /** 登记候选：把某个已跑过的工作流手动登记到指定业务类。 */
@@ -628,12 +666,14 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
       const runName = typeof name === 'string' && name.trim().length > 0 ? name : stem
       // 模板（远端）跑过即落库到「我的工作流」，之后从本地文件解析（已存在则沿用上次参数）
       if (resolved.origin === 'remote') persistLocalGraph(runName, resolved.graph)
-      // 业务配置自动登记：这次跑的工作流按推断出的业务类沉淀下来，后续会话自然语言即可直接命中
+      // 业务配置自动登记：这次跑的工作流按推断出的业务类沉淀下来，后续会话自然语言即可直接命中；
+      // 带上近期运行记录，auto=true 的配置按「成功率/得分」自动换主（候选明显更好才提升）
       try {
         businessStore.autoRegister({
           workflow: runName,
           graph: resolved.graph,
           source: resolved.origin === 'remote' ? 'library' : 'saved',
+          runs: bridge.listRuns(200),
         })
       } catch (error) {
         console.error(`[dsh-comfymcp-client] 业务配置自动登记失败: ${String(error)}`)

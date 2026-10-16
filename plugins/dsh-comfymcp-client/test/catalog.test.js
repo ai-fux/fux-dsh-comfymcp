@@ -110,8 +110,89 @@ describe('createTools catalog', () => {
     expect(hit.matched?.workflow).toBe('beach')
     expect(hit.matched?.params?.steps).toBe(20)
     expect(hit.nextSteps).toMatch(/跳过|不要再检索/)
+    expect(hit.nextSteps).toMatch(/文生图/) // 提示里带业务类显示名
     expect((await tool.execute({ action: 'list' })).profiles.length).toBe(1)
     expect((await tool.execute({ action: 'remove', id: 'text2img' })).profiles.length).toBe(0)
+  })
+
+  it('命中业务配置后 push_form 标题自动以业务类显示名开头（模型写了同名开头则不重复拼）', async () => {
+    const { define, definitions } = fakeDefine()
+    const captured = []
+    createTools({
+      define,
+      bridge: fakeBridge(),
+      askUser: async (request) => {
+        captured.push(request)
+        return { answers: [{ id: 'field:6.text', selected: [], custom: 'x' }] }
+      },
+      business: businessStoreForTest(),
+    })
+    const business = definitions.find((entry) => entry.name === 'comfymcp_business')
+    const pushForm = definitions.find((entry) => entry.name === 'comfymcp_push_form')
+    const fields = [{ id: '6.text', nodeId: '6', field: 'text', kind: 'text', value: 'preset', label: 'Prompt' }]
+    // 未命中业务配置 → 标题保持模型传的（缺省「生成参数确认」）
+    await pushForm.execute({ graph: GRAPH, fields, title: '白色机甲' }, { agent: 'a', signal: undefined })
+    expect(captured[0].questions[0].header).toBe('白色机甲 · 1/1')
+    // 命中后再推表单 → 标题自动加业务类前缀
+    await business.execute({ action: 'register', workflow: 'beach', graph: GRAPH })
+    await business.execute({ action: 'match', text: '画一张海边日落' })
+    await pushForm.execute({ graph: GRAPH, fields }, { agent: 'a', signal: undefined })
+    expect(captured[1].questions[0].header).toBe('文生图 · 生成参数确认 · 1/1')
+    // 模型自己也传了 title → 拼在业务类后面
+    await pushForm.execute({ graph: GRAPH, fields, title: '白色机甲' }, { agent: 'a', signal: undefined })
+    expect(captured[2].questions[0].header).toBe('文生图 · 白色机甲 · 1/1')
+    // 模型传的 title 已以业务类开头 → 不重复拼
+    await pushForm.execute({ graph: GRAPH, fields, title: '文生图（机甲）' }, { agent: 'a', signal: undefined })
+    expect(captured[3].questions[0].header).toBe('文生图（机甲） · 1/1')
+  })
+
+  it('comfymcp_business 参数预设集：preset_save/preset_remove 管理，match 命中时 presets 一并带出', async () => {
+    const { define, definitions } = fakeDefine()
+    createTools({
+      define,
+      bridge: fakeBridge(),
+      askUser: async () => ({ answers: [] }),
+      business: businessStoreForTest(),
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_business')
+    await tool.execute({ action: 'register', workflow: 'beach', graph: GRAPH })
+    // 校验：空参数拒绝且给原因
+    const bad = await tool.execute({ action: 'preset_save', id: 'text2img', name: '高清', params: {} })
+    expect(bad.ok).toBe(false)
+    expect(bad.reason).toMatch(/参数为空|至少填一项/)
+    // 正常保存
+    const saved = await tool.execute({ action: 'preset_save', id: 'text2img', name: '高清', params: { steps: 30, width: 1024 } })
+    expect(saved.ok).toBe(true)
+    expect(saved.preset).toMatchObject({ name: '高清' })
+    expect(saved.presets.length).toBe(1)
+    // match 命中 → matched.presets 带出，nextSteps 提示预设名
+    const hit = await tool.execute({ action: 'match', text: '画一张海边日落' })
+    expect(hit.matched.presets.map((entry) => entry.name)).toEqual(['高清'])
+    expect(hit.nextSteps).toMatch(/参数预设.*高清/)
+    // 同名覆盖；按名称删除
+    await tool.execute({ action: 'preset_save', id: 'text2img', name: '高清', params: { steps: 32 } })
+    const removed = await tool.execute({ action: 'preset_remove', id: 'text2img', presetId: '高清' })
+    expect(removed.ok).toBe(true)
+    expect(removed.presets).toEqual([])
+    const missing = await tool.execute({ action: 'preset_remove', id: 'text2img', presetId: '高清' })
+    expect(missing.ok).toBe(false)
+  })
+
+  it('register 带 presetName 时顺手把本次参数存成预设', async () => {
+    const { define, definitions } = fakeDefine()
+    createTools({
+      define,
+      bridge: fakeBridge(),
+      askUser: async () => ({ answers: [] }),
+      business: businessStoreForTest(),
+    })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_business')
+    const saved = await tool.execute({ action: 'register', workflow: 'beach', graph: GRAPH, presetName: '首次参数' })
+    expect(saved.ok).toBe(true)
+    expect(saved.preset).toMatchObject({ name: '首次参数' })
+    expect(saved.preset.params.steps).toBe(20)
+    expect(saved.nextSteps).toMatch(/首次参数/)
+    expect((await tool.execute({ action: 'list' })).profiles[0].presets.length).toBe(1)
   })
 
   it('comfymcp_status folds probe results', async () => {

@@ -131,6 +131,9 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
   })
   const tools = []
   const executeRun = createRunExecutor({ bridge })
+  // 最近一次业务配置命中（comfymcp_business match）：push_form 的标题自动以业务类显示名开头，
+  // 用户在表单上直接看到「这次按哪个业务类跑」，不用读工具输出才知道。
+  let lastBusinessMatch = null
 
   tools.push(
     defineTool({
@@ -207,20 +210,25 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
       description:
         '业务配置（开工第一步，省 token 的关键）：把「跑过 / 加载过」的工作流按业务类（文生图 / 图生图 / 文生视频 / 图生视频 / 局部重绘 / 放大 / 音频）沉淀成配置，后续会话用自然语言直接命中，' +
         '命中就用该配置里的工作流与默认参数继续，**不要**再去 comfymcp_discover 捞模板或 list_models 枚举模型。' +
-        '用法：action=match 传用户原话 text（默认）→ 命中返回 matched{workflow, params, keywords}，本地 API 格式工作流还会带上 graph（可直接喂给 comfymcp_analyze_workflow 的 graph，省一次取图）；未命中返回 matched:null，再走完整探索流程。' +
-        '跑通后可用 action=register 把这次的工作流登记回来（可带 graph 自动判断业务类），下次就命中。action=list 看全部配置，action=save/remove 手工增删。' +
+        '用法：action=match 传用户原话 text（默认）→ 命中返回 matched{workflow, params, presets, keywords}，本地 API 格式工作流还会带上 graph（可直接喂给 comfymcp_analyze_workflow 的 graph，省一次取图）；未命中返回 matched:null，再走完整探索流程。' +
+        'matched.presets 是该业务类的参数预设集（如「高清」「草稿」）：用户点名预设就用它的 params 当推荐值。' +
+        '跑通后可用 action=register 把这次的工作流登记回来（可带 graph 自动判断业务类，presetName 可顺手把参数存成预设），下次就命中。action=list 看全部配置，action=save/remove 手工增删，action=preset_save/preset_remove 管理参数预设。' +
+        '命中后 push_form 的表单标题会自动以业务类显示名开头（「文生图 · …」），让用户一眼看到命中了哪类。' +
         'Answers { ok, action, matched|null, profiles[], candidates[], nextSteps }.',
       parameters: {
-        action: { type: 'string', description: 'match（默认）| list | register | save | remove | kind_save | kind_remove' },
+        action: { type: 'string', description: 'match（默认）| list | register | save | remove | kind_save | kind_remove | preset_save | preset_remove' },
         text: { type: 'string', description: '用户原话（action=match 时用于自然语言匹配业务类）' },
         business: { type: 'string', description: '业务类 id（预置 text2img/image2img/text2video/image2video/edit/upscale/audio/other，也可用自定义 id）' },
         label: { type: 'string', description: 'action=kind_save 时的业务类显示名（如「换脸」）' },
         workflow: { type: 'string', description: '工作流名（本地文件词干或远端模板 id）' },
         graph: { type: 'json', description: '可选：内联图，用于 register 时自动判断业务类并摘取默认参数' },
-        params: { type: 'json', description: '可选：该业务类的默认参数覆盖（steps/width/height/batch_size/model…）' },
+        params: { type: 'json', description: '可选：该业务类的默认参数覆盖（steps/width/height/batch_size/model…）；preset_save 时即预设参数' },
         keywords: { type: 'string', description: '可选：自定义触发词（逗号分隔；kind_save 时即该业务类的触发词）' },
         notes: { type: 'string', description: '可选：备注' },
-        id: { type: 'string', description: 'action=remove/kind_remove 时的 id（业务配置 id＝业务类 id）' },
+        id: { type: 'string', description: 'action=remove/kind_remove/preset_* 时的业务配置 id（＝业务类 id）' },
+        name: { type: 'string', description: 'preset_save 时的预设名称（如「高清」）；preset_remove 时也可用名称删' },
+        presetId: { type: 'string', description: '可选：preset_remove 按预设 id 删除；preset_save 传了则覆盖该预设' },
+        presetName: { type: 'string', description: 'register/save 时可选：把这次参数存成该名称的预设' },
         includeGraph: { type: 'boolean', description: 'match 是否附带本地图（默认 true；只是想确认命中可设 false）' },
       },
       output: {
@@ -264,6 +272,26 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
           const removed = store.remove(args.id ?? args.business)
           return { ok: removed, action, matched: null, profiles: store.all(), kinds: currentKinds(), candidates: businessCandidatesOf(bridge, store.all()) }
         }
+        if (action === 'preset_save' || action === 'preset_remove') {
+          const id = args.id ?? args.business
+          const outcome = action === 'preset_save'
+            ? store.savePreset({ id, preset: { id: args.presetId, name: args.name ?? args.presetName, params: args.params } })
+            : store.removePreset({ id, presetId: args.presetId ?? args.name })
+          const profiles = store.all()
+          const saved = profiles.find((profile) => profile.id === String(id ?? '')) ?? null
+          return {
+            ok: outcome.ok !== false,
+            action,
+            matched: null,
+            preset: outcome.preset ?? null,
+            presets: Array.isArray(saved?.presets) ? saved.presets : [],
+            profiles,
+            ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+            nextSteps: outcome.ok === false
+              ? `预设${action === 'preset_save' ? '保存' : '删除'}失败：${outcome.reason ?? '未知原因'}`
+              : `已${action === 'preset_save' ? '保存' : '删除'}预设（业务配置 ${String(id ?? '')}）：match 命中时 presets 会一起带出，用户点名即可套用。`,
+          }
+        }
         if (action === 'save' || action === 'register') {
           const graph = args.graph ?? null
           const business = String(args.business ?? '').trim() || (graph === null ? 'other' : inferBusiness(graph))
@@ -279,12 +307,19 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
             notes: args.notes ?? (action === 'register' ? '由一次成功的运行登记' : ''),
             auto: false,
           })
+          // 顺手把这次的参数存成第一条预设（presetName 给名，不给就落不了预设）
+          const presetName = String(args.presetName ?? '').trim()
+          const preset = presetName.length > 0
+            ? store.savePreset({ id: business, preset: { name: presetName, params: saved.params ?? {} } })
+            : null
           return {
             ok: true,
             action,
             matched: saved,
+            ...(preset === null || preset.ok === false ? {} : { preset: preset.preset }),
+            ...(preset === null || preset.ok !== false ? {} : { reason: preset.reason }),
             profiles: store.all(),
-            nextSteps: `已登记：${business} → ${workflow}。下次同类需求会直接命中，不再检索模板库。`,
+            nextSteps: `已登记：${business} → ${workflow}。下次同类需求会直接命中，不再检索模板库。${preset !== null && preset.ok ? `参数已存为预设「${preset.preset.name}」。` : ''}`,
           }
         }
         // 默认：自然语言匹配（用当前动态业务类清单打分）
@@ -302,6 +337,11 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
         }
         const local = args.includeGraph === false ? null : readLocalGraph(bridge, hit.profile.workflow)
         store.touch(hit.profile.id)
+        lastBusinessMatch = { id: hit.profile.id, business: hit.profile.business, label: String(hit.profile.label ?? hit.profile.business ?? '') }
+        // 有参数预设时两路提示都带上：用户点名预设就用它的 params 当推荐值
+        const presetHint = Array.isArray(hit.profile.presets) && hit.profile.presets.length > 0
+          ? `该业务有参数预设（${hit.profile.presets.map((entry) => entry.name).join(' / ')}）：用户点名就用其 params 当推荐值。`
+          : ''
         return {
           ok: true,
           action: 'match',
@@ -313,14 +353,15 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
             params: hit.profile.params ?? {},
             keywords: hit.profile.keywords ?? [],
             notes: hit.profile.notes ?? '',
+            presets: Array.isArray(hit.profile.presets) ? hit.profile.presets : [],
             score: hit.score,
             hits: hit.hits,
           },
           ...(local === null ? {} : { graph: local }),
           profiles: store.all(),
           nextSteps: local === null
-            ? `命中「${hit.profile.label}」→ 直接用 comfymcp_analyze_workflow 传 workflowId="${hit.profile.workflow}"（远端模板），跳过 discover 与模型枚举。`
-            : `命中「${hit.profile.label}」→ 已附上本地图 graph，直接把它与需求一起喂给 comfymcp_analyze_workflow，不要再检索模板库。`,
+            ? `命中「${hit.profile.label}」→ 直接用 comfymcp_analyze_workflow 传 workflowId="${hit.profile.workflow}"（远端模板），跳过 discover 与模型枚举；push_form 的表单标题会自动带上「${hit.profile.label}」。${presetHint}`
+            : `命中「${hit.profile.label}」→ 已附上本地图 graph，直接把它与需求一起喂给 comfymcp_analyze_workflow，不要再检索模板库；push_form 的表单标题会自动带上「${hit.profile.label}」。${presetHint}`,
         }
       },
     }),
@@ -406,7 +447,7 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
       parameters: {
         graph: { type: 'json', required: true, description: 'The analyzed graph (unchanged).' },
         fields: { type: 'json', required: true, description: 'Fields as produced by comfymcp_analyze_workflow.' },
-        title: { type: 'string', description: '用途标题，写进每题 header（例如「白色机甲 · 生成参数」）；缺省「生成参数确认」' },
+        title: { type: 'string', description: '用途标题，写进每题 header（例如「白色机甲 · 生成参数」）；缺省「生成参数确认」。命中业务配置时标题会自动以业务类显示名开头' },
       },
       timeoutMs: 600000,
       isConcurrencySafe: () => false,
@@ -415,8 +456,14 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
         render: (_args, value) => text(oneLine(value)),
       },
       async execute(args, exec) {
-        // title 决定每题 header 的用途说明（对话框只渲染 header/question/options）
-        const { questions, prepared } = buildQuestions(args.fields, Math.random, { title: args.title })
+        // title 决定每题 header 的用途说明（对话框只渲染 header/question/options）。
+        // 命中业务配置（comfymcp_business match）后，标题自动以业务类显示名开头——
+        // 用户在表单上第一眼就能看到「这次按哪个业务类跑」；模型自己写了同名开头则不重复拼。
+        const hitLabel = lastBusinessMatch === null ? '' : lastBusinessMatch.label
+        const rawTitle = String(args.title ?? '').trim()
+        const baseTitle = rawTitle.length > 0 ? rawTitle : '生成参数确认'
+        const title = hitLabel.length > 0 && baseTitle.startsWith(hitLabel) === false ? `${hitLabel} · ${baseTitle}` : baseTitle
+        const { questions, prepared } = buildQuestions(args.fields, Math.random, { title })
         // 倒计时自动确认：开启后超时未作答 → 自动采用推荐参数（空 answers＝种子沿用随机值、其余保持推导值）
         const seconds = bridge.config?.autoAcceptForm === true
           ? Math.max(1, Number(bridge.config?.autoAcceptFormSec) > 0 ? Number(bridge.config.autoAcceptFormSec) : 30)

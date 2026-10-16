@@ -24,7 +24,11 @@ const NODE_INFOS = {
 }
 
 const pages = {
-  workflow: renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), { token: 'tk' }),
+  workflow: renderPageHtml(buildPageDescriptor({ name: 'demo', title: 'demo', graph: GRAPH, nodeInfos: NODE_INFOS }), {
+    token: 'tk',
+    businessLabel: '文生图',
+    presets: [{ id: 'preset-1', name: '高清', params: { steps: 30, width: 1024 } }],
+  }),
   artifacts: renderArtifactsHtml({
     runs: [{ id: 'r1', name: 'demo', state: 'completed', seed: 1, prompts: { positive: '正', negative: '负', positiveField: '76:67:text', negativeField: '76:71:text' }, localFiles: [{ path: 'C:\\a\\x.png', filename: 'x.png', kind: 'image', bytes: 3 }] }],
     tags: {},
@@ -37,10 +41,11 @@ const pages = {
     token: 'tk',
   }),
   business: renderBusinessHtml({
-    profiles: [{ id: 'text2img', business: 'text2img', label: '文生图', workflow: 'z-image-turbo', keywords: ['画'], params: { steps: 8 }, uses: 2 }],
+    profiles: [{ id: 'text2img', business: 'text2img', label: '文生图', workflow: 'z-image-turbo', keywords: ['画'], params: { steps: 8 }, uses: 2, presets: [{ id: 'preset-1', name: '高清', params: { steps: 30 } }], candidates: [{ workflow: 'flux-schnell', source: 'saved', uses: 3 }] }],
     kinds: BUSINESS_KINDS,
     candidates: [{ business: 'image2video', label: '图生视频', workflow: 'svd', runs: 2, current: null }],
     workflows: ['z-image-turbo', 'svd'],
+    runStats: { 'z-image-turbo': { runs: 2, ok: 2, failed: 0, lastOkAt: null }, 'flux-schnell': { runs: 3, ok: 3, failed: 0, lastOkAt: null } },
     token: 'tk',
   }),
 }
@@ -54,6 +59,8 @@ const PAGE_CHECKS = {
     '展开编辑器处理': /data-expand/,
     '页面加载恢复状态': /api\/run\/status\?workflow=/,
     '提示词赋值取回': /api\/prompt\/take/,
+    '业务预设条渲染（数据随页下发）': /var BIZ_PRESETS = \[\{/,
+    '业务预设套用监听（按字段名匹配填表单）': /getAttribute\('data-biz-preset'\)[\s\S]*lastIndexOf\(':'\)/,
   },
   artifacts: {
     '预览事件绑定': /bindPreviewEvents\('preview'\)/,
@@ -83,6 +90,12 @@ const PAGE_CHECKS = {
     '工作流变更即刷新参数': /!== 'workflow'[\s\S]*bizLoadParams\(card/,
     '卡片取值（业务类/工作流/触发词/参数）': /function bizValues\(card\)[\s\S]*data-param/,
     '新增卡片': /function bizAddCard\(/,
+    '设为主配置请求': /api\/business\/promote/,
+    '候选渲染（点击设为主）': /getAttribute\('data-biz-promote'\)/,
+    '预设保存请求': /api\/business\/preset\/save/,
+    '预设删除请求': /api\/business\/preset\/remove/,
+    '预设一键套用': /function bizApplyPreset\(card, preset\)/,
+    '预设数据随卡片下发': /var BIZ_PRESETS = \{/,
   },
   index: {
     'Tab 切换处理': /data-tab/,

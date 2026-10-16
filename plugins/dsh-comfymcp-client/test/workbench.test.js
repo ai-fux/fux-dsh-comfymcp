@@ -163,6 +163,67 @@ describe('业务配置（首次生成的工作流选择优化）', () => {
     // beach 图里是 KSampler + CLIPTextEncode → 文生图
     expect(profiles[0].business).toBe('text2img')
   })
+
+  it('运行页触发自动换主：候选战绩明显更好（≥2 成功且得分超 3 分）时提升为主配置', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    await workbench.saveBusiness({
+      profiles: [{ id: 'text2img', business: 'text2img', workflow: 'beach', auto: true, candidates: [{ workflow: 'sunset', source: 'saved', uses: 1 }] }],
+    })
+    for (let index = 0; index < 3; index += 1) bridge.recordRun({ id: `ok-${index}`, name: 'sunset', state: 'completed', finishedAt: Date.now() })
+    bridge.recordRun({ id: 'fail-1', name: 'beach', state: 'failed' })
+    bridge.recordRun({ id: 'fail-2', name: 'beach', state: 'failed' })
+    const started = await workbench.runPage({ workflow: 'beach' })
+    expect(started.ok).not.toBe(false)
+    const profile = (await workbench.listBusiness()).profiles.find((entry) => entry.id === 'text2img')
+    expect(profile.workflow).toBe('sunset') // 候选 3 成功 vs 主配置 0 成功 → 自动换主
+    expect(profile.candidates.map((entry) => entry.workflow)).toContain('beach')
+    expect(profile.lastPromotedAt).not.toBeNull()
+  })
+
+  it('设为主配置 + 业务页渲染候选战绩与参数预设', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    await workbench.saveBusiness({
+      profiles: [{ id: 'text2img', business: 'text2img', workflow: 'beach', candidates: [{ workflow: 'sunset', source: 'saved', uses: 2 }] }],
+    })
+    bridge.recordRun({ id: 'ok-1', name: 'sunset', state: 'completed' })
+    bridge.recordRun({ id: 'ok-2', name: 'sunset', state: 'completed' })
+    bridge.recordRun({ id: 'fail-1', name: 'beach', state: 'failed' })
+    const promoted = await workbench.promoteBusiness({ id: 'text2img', workflow: 'sunset' })
+    expect(promoted.ok).toBe(true)
+    expect(promoted.swapped).toBe(true)
+    expect(promoted.from).toBe('beach')
+    expect(promoted.profile.workflow).toBe('sunset')
+    expect(promoted.ranking.primary.workflow).toBe('sunset')
+    expect(await workbench.promoteBusiness({ id: 'nope', workflow: 'x' })).toMatchObject({ ok: false })
+
+    // 业务页：候选 chip（点击设为主）+ 主配置战绩 + 预设一键套用
+    await workbench.saveBusinessPreset({ id: 'text2img', preset: { name: '高清', params: { steps: 30, width: 1024 } } })
+    const page = await workbench.pageBusiness({ token: 'tk' })
+    expect(page.html).toContain('data-biz-promote=')
+    expect(page.html).toContain('设为主配置')
+    expect(page.html).toContain('参数预设')
+    expect(page.html).toContain('data-biz-preset-apply=')
+    expect(page.html).toContain('高清')
+    expect(page.html).toContain('BIZ_PRESETS')
+    // 预设删除（按名称）与业务页再渲染
+    expect((await workbench.removeBusinessPreset({ id: 'text2img', presetId: '高清' })).ok).toBe(true)
+    expect((await workbench.pageBusiness({ token: 'tk' })).html).not.toContain('data-biz-preset-apply=')
+  })
+
+  it('工作流页业务预设条：配置了预设才渲染，套用脚本随页下发', async () => {
+    const bridge = await makeBridge()
+    const workbench = makeWorkbench(bridge)
+    await workbench.saveBusiness({ profiles: [{ id: 'text2img', business: 'text2img', workflow: 'beach' }] })
+    const plain = await workbench.pageWorkflow('beach', { token: 'tk' })
+    expect(plain.html).not.toContain('业务预设')
+    await workbench.saveBusinessPreset({ id: 'text2img', preset: { name: '高清', params: { steps: 30 } } })
+    const page = await workbench.pageWorkflow('beach', { token: 'tk' })
+    expect(page.html).toContain('业务预设（文生图）')
+    expect(page.html).toContain('data-biz-preset=')
+    expect(page.html).toContain('var BIZ_PRESETS = [{')
+  })
 })
 
 describe('workbench pages', () => {
