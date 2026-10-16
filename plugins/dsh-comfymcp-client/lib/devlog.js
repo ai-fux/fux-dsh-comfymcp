@@ -15,6 +15,9 @@ const MAX_ENTRIES = 500
 export function createDevLog({ dataDir, devMode = false, max = MAX_ENTRIES, now = () => new Date().toISOString() }) {
   const file = join(dataDir ?? '', 'dev-log.jsonl')
   const buffer = []
+  // devMode 支持布尔或「活值」函数：设置页保存后 bridge.config.devMode 即时变化，
+  // 报告/指引按调用时取值，无需重启 DSH；传布尔则保持原语义（激活时定格）。
+  const isDevMode = typeof devMode === 'function' ? () => devMode() === true : () => devMode === true
 
   function load() {
     if (typeof dataDir !== 'string' || dataDir.length === 0 || !existsSync(file)) return []
@@ -98,14 +101,14 @@ export function createDevLog({ dataDir, devMode = false, max = MAX_ENTRIES, now 
       }
       const failures = entries.filter((entry) => entry.level === 'error').slice(-limit)
       return {
-        devMode: devMode === true,
+        devMode: isDevMode(),
         file: typeof dataDir === 'string' && dataDir.length > 0 ? file : null,
         total: entries.length,
         byLevel,
         bySource,
         failures,
         recent: entries.slice(-limit),
-        guidance: devMode === true
+        guidance: isDevMode()
           ? '开发模式已开启：可定位插件源码（plugins/dsh-comfymcp-client/**）并直接修复；改完提示用户重装 bundle 或重启 DSH，并把结论记回 note。'
           : '开发模式未开启：严禁修改任何插件源码；请把这份报告要点转述给用户，由用户决定是否开启开发模式。',
       }

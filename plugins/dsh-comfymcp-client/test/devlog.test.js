@@ -76,6 +76,16 @@ describe('开发日志（devlog）', () => {
     expect(log.recent(5).length).toBe(1)
     expect(log.report({}).file).toBeNull()
   })
+
+  it('devMode 支持活值函数：设置页保存后即时生效（无需重启）', () => {
+    let enabled = false
+    const log = createDevLog({ dataDir: tempDir(), devMode: () => enabled })
+    expect(log.report({}).devMode).toBe(false)
+    expect(log.report({}).guidance).toMatch(/严禁修改任何插件源码/)
+    enabled = true
+    expect(log.report({}).devMode).toBe(true)
+    expect(log.report({}).guidance).toMatch(/开发模式已开启/)
+  })
 })
 
 describe('comfymcp_dev 工具', () => {
@@ -99,6 +109,24 @@ describe('comfymcp_dev 工具', () => {
     expect(await tool.execute({ action: 'note' })).toMatchObject({ ok: false })
     expect((await tool.execute({ action: 'clear' })).ok).toBe(true)
     expect((await tool.execute({ action: 'report' })).report.total).toBe(0)
+  })
+
+  it('comfymcp_dev 读运行时 devMode（bridge.config 原地更新即时生效）', async () => {
+    const dir = tempDir()
+    const bridge = fakeBridge({ dataDir: dir })
+    const { define, definitions } = fakeDefine()
+    createTools({ define, bridge, askUser: async () => ({ answers: [] }), devLog: createDevLog({ dataDir: dir, devMode: () => bridge.config.devMode === true }) })
+    const tool = definitions.find((entry) => entry.name === 'comfymcp_dev')
+
+    const before = await tool.execute({ action: 'report' })
+    expect(before.devMode).toBe(false)
+    expect(before.report.guidance).toMatch(/严禁修改任何插件源码/)
+
+    // 模拟设置页保存路径：applyOverlay 原地改写 bridge.config.devMode
+    bridge.config.devMode = true
+    const after = await tool.execute({ action: 'report' })
+    expect(after.devMode).toBe(true)
+    expect(after.report.guidance).toMatch(/开发模式已开启/)
   })
 
   it('工具抛错自动落进开发日志（模型据此定位）', async () => {

@@ -169,5 +169,11 @@ describe('persist overlay', () => {
     const sanitized = sanitizeOverlayPatch({ endpoint: ' http://c/mcp ', autoUnloadModel: false, drop: 1, empty: '' })
     expect(sanitized).toEqual({ endpoint: 'http://c/mcp', autoUnloadModel: false })
     expect(OVERLAY_KEYS).toContain('hostEntry')
+    // 回归：开发模式开关必须能落盘（曾因白名单缺 devMode 被静默丢弃，设置页保存无效）
+    expect(sanitizeOverlayPatch({ devMode: true, junk: 'x' })).toEqual({ devMode: true })
+    expect(sanitizeOverlayPatch({ devMode: false })).toEqual({ devMode: false })
+    expect(OVERLAY_KEYS).toContain('devMode')
+    expect(writeOverlay(path, { endpoint: 'http://b/mcp', devMode: true })).toBe(true)
+    expect(readOverlay(path).devMode).toBe(true)
   })
 })

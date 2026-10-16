@@ -105,7 +105,12 @@ function readLocalGraph(bridge, workflow) {
 
 export function createTools({ define, bridge, askUser, business = null, devLog = null, devMode = false }) {
   const businessStore = business
-  const log = devLog ?? createDevLog({ dataDir: bridge?.config?.dataDir, devMode })
+  // devMode 活值化：设置页保存 devMode 后 bridge.config 即时更新（applyOverlay 原地改写），
+  // comfymcp_dev 按调用时取值即时生效，无需重启 DSH；兼容旧布尔参数（激活时定格）。
+  const isDevMode = () =>
+    bridge?.config?.devMode === true ||
+    (typeof devMode === 'function' ? devMode() === true : devMode === true)
+  const log = devLog ?? createDevLog({ dataDir: bridge?.config?.dataDir, devMode: isDevMode })
   // 每个工具的异常都进开发日志：开发模式下模型可直接读报告定位问题；非开发模式仅留档供反馈
   const defineTool = (options) => define({
     ...options,
@@ -722,16 +727,16 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
         const action = String(args.action ?? 'report').trim() || 'report'
         if (action === 'clear') {
           log.clear()
-          return { ok: true, devMode, action, guidance: '开发日志已清空。' }
+          return { ok: true, devMode: isDevMode(), action, guidance: '开发日志已清空。' }
         }
         if (action === 'note') {
           const message = String(args.message ?? '').trim()
-          if (message.length === 0) return { ok: false, devMode, action, error: 'note 需要 message' }
+          if (message.length === 0) return { ok: false, devMode: isDevMode(), action, error: 'note 需要 message' }
           const entry = log.add({ level: String(args.level ?? 'info'), source: 'model', message })
-          return { ok: true, devMode, action, entry, guidance: log.report({ limit: 1 }).guidance }
+          return { ok: true, devMode: isDevMode(), action, entry, guidance: log.report({ limit: 1 }).guidance }
         }
         const report = log.report({ limit: Number(args.limit) || 40 })
-        return { ok: true, devMode, action: 'report', report, guidance: report.guidance }
+        return { ok: true, devMode: isDevMode(), action: 'report', report, guidance: report.guidance }
       },
     }),
   )
