@@ -1,8 +1,8 @@
 {
   "name": "@ai-fux/fux-dsh-comfymcp",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "type": "module",
-  "description": "DSH 插件：对接 comfy-mcp 服务（自然语言设计可运行工作流、定制表单、运行与成果物回显）。",
+  "description": "DSH 插件：对接 comfy-mcp 服务（自然语言设计可运行工作流、定制表单、运行与成果物回显）+ 多模态创作台（直连魔搭/HuggingFace/Ollama/vLLM/A1111 文生图与图生图）。",
   "license": "MIT",
   "author": "easymor2024-ychen",
   "homepage": "https://github.com/ai-fux/fux-dsh-comfymcp#readme",
@@ -20,7 +20,11 @@
     "comfy-mcp",
     "mcp",
     "workflow",
-    "agent"
+    "agent",
+    "text-to-image",
+    "image-generation",
+    "modelscope",
+    "huggingface"
   ],
   "exports": {
     ".": "./index.js",

@@ -103,7 +103,7 @@ function readLocalGraph(bridge, workflow) {
   return null
 }
 
-export function createTools({ define, bridge, askUser, business = null, devLog = null, devMode = false }) {
+export function createTools({ define, bridge, askUser, business = null, devLog = null, devMode = false, providerStore = null, creation = null }) {
   const businessStore = business
   // devMode 活值化：设置页保存 devMode 后 bridge.config 即时更新（applyOverlay 原地改写），
   // comfymcp_dev 按调用时取值即时生效，无需重启 DSH；兼容旧布尔参数（激活时定格）。
@@ -759,6 +759,110 @@ export function createTools({ define, bridge, askUser, business = null, devLog =
           ok: data.isError !== true,
           tool: args.tool,
           data,
+        }
+      },
+    }),
+  )
+
+  tools.push(
+    defineTool({
+      name: 'comfymcp_create',
+      description:
+        '多模态创作（直连服务商，不经 ComfyUI 工作流）：文生图（t2i）/ 图生图（i2i）直接调用已配置的多模态服务商（魔搭 ModelScope、HuggingFace、Ollama、vLLM-omni、A1111、OpenAI 兼容网关）。' +
+        '适用：快速出图、封面/草图/灵感、单图编辑，或用户没有现成工作流时；复杂节点链（ControlNet/LoRA/放大/视频）请走 comfymcp_run_workflow。' +
+        'action=generate 生成（prompt 必填；providerId 缺省用默认服务商；image 为图生图参考图：本地路径/成果物文件名/http(s) URL）；action=providers 列出服务商与预设；action=history 查看最近创作。' +
+        'Answers { ok, jobId?, images:[{path, bytes, mime}], providerId?, model?, elapsedMs?, error?, hint? }。',
+      parameters: {
+        action: { type: 'string', description: 'generate（默认）| providers | history' },
+        providerId: { type: 'string', description: '服务商 id（缺省用默认；可先 action=providers 查询）' },
+        mode: { type: 'string', description: 't2i（默认）| i2i' },
+        prompt: { type: 'string', description: '提示词（action=generate 时必填）' },
+        negativePrompt: { type: 'string', description: '负向提示词（可选）' },
+        image: { type: 'string', description: '图生图参考图：本地绝对路径 / 成果物文件名 / http(s) URL / dataURL' },
+        model: { type: 'string', description: '模型 id 覆盖（缺省用服务商配置）' },
+        size: { type: 'string', description: '尺寸，如 1024x1024（缺省用服务商默认）' },
+        steps: { type: 'number', description: '步数（缺省用服务商默认）' },
+        guidance: { type: 'number', description: '引导系数（缺省用服务商默认）' },
+        seed: { type: 'number', description: '种子（-1/留空=随机）' },
+        n: { type: 'number', description: '生成数量（1~4，默认 1）' },
+        limit: { type: 'number', description: 'action=history 返回条数（默认 20）' },
+      },
+      timeoutMs: 300000,
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => text(oneLine(value)),
+        presentationMeta: (_args, value) => value,
+      },
+      async execute(args = {}) {
+        const action = String(args.action ?? 'generate')
+        if (providerStore === null || creation === null) return { ok: false, error: '创作服务未初始化（插件加载异常）' }
+        if (action === 'providers') {
+          const state = providerStore.list()
+          return {
+            ok: true,
+            defaultId: state.defaultId,
+            providers: state.providers.map((provider) => ({
+              id: provider.id,
+              label: provider.label,
+              kind: provider.kind,
+              kindLabel: provider.kindLabel,
+              model: provider.model,
+              capabilities: provider.capabilities,
+              enabled: provider.enabled !== false,
+              defaults: provider.defaults,
+            })),
+          }
+        }
+        if (action === 'history') {
+          return { ok: true, items: creation.history(Number(args.limit) || 20) }
+        }
+        // generate：启动异步任务并等待完成（服务商长任务可达数分钟；工具侧最多等 280 秒）
+        const started = creation.start({
+          providerId: args.providerId,
+          mode: args.mode === 'i2i' ? 'i2i' : 't2i',
+          prompt: args.prompt,
+          negativePrompt: args.negativePrompt,
+          image: args.image,
+          model: args.model,
+          size: args.size,
+          steps: args.steps,
+          guidance: args.guidance,
+          seed: args.seed,
+          n: args.n,
+        })
+        if (started.ok !== true) return { ok: false, error: started.reason }
+        const jobId = started.jobId
+        const deadline = Date.now() + 280000
+        let last = null
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+          last = creation.job(jobId)
+          if (last === null) return { ok: false, error: '创作任务丢失（可能已重启插件）', jobId }
+          if (last.status === 'succeeded') {
+            return {
+              ok: true,
+              jobId,
+              images: last.images,
+              providerId: last.providerId,
+              providerLabel: last.providerLabel,
+              model: last.model,
+              mode: last.mode,
+              size: last.size,
+              seed: last.seed,
+              elapsedMs: last.elapsedMs,
+              hint: '图片已落盘到成果物 created/ 目录并写入创作历史；需要继续编辑可再来一张（改 seed/prompt），或在「创作」页把该图作为图生图输入。',
+            }
+          }
+          if (last.status === 'failed') {
+            return { ok: false, jobId, providerId: last.providerId, error: last.error || '生成失败' }
+          }
+        }
+        return {
+          ok: true,
+          running: true,
+          jobId,
+          elapsedMs: last?.elapsedMs,
+          hint: '任务仍在生成中（超过 280 秒）：请稍后在工作台「创作」页查看结果，或再次查询该 jobId。',
         }
       },
     }),

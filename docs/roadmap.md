@@ -2,6 +2,30 @@
 
 > 版本规约：三段 `X.Y.Z`（平台 SEMVER 限制）；分支规约：`snapshot-<version>` 稳定主分支 / `dev-snapshot-<yyyyMMdd>-<version>` 迭代分支。
 
+## snapshot-0.6.0（功能迭代，2026-10-17）✅
+
+> 插件 `plugins/dsh-comfymcp-client` 版本 0.6.0。研发计划见 [`docs/0.6.0-plan.md`](./0.6.0-plan.md)。
+> 发布顺序按 AGENTS.md 固化：① 推远程公开库 → ② 打包上架稳定快照版 → ③ 上传 npm → ④ 同步国内。
+
+**MVP 主题：多模态创作台——工作台直连服务商出图（文生图/图生图），与 ComfyUI 工作流双引擎。**
+
+| # | 迭代内容 | 落位 | 状态 |
+| --- | --- | --- | --- |
+| 1 | **服务商框架**：六类适配器（`modelscope` 异步任务 + `huggingface`（router/legacy 二进制）+ `openai-images` + `ollama`（实验性）+ `vllm`（vLLM-omni）+ `sdwebui`（A1111 txt2img/img2img）），统一契约 `{images:[{bytes,mime}], taskId?, elapsedMs}`；错误统一 `ProviderError`（401/403/429/超时/任务失败可读中文） | `lib/providers/{errors,image,store,openai-compat,openai-images,huggingface,modelscope,ollama,vllm,sdwebui,index}.js` | ✅ |
+| 2 | **服务商存储**：`<dataDir>/providers.json`（schema 版本、结构校验、id/kind/baseUrl 校验、私网 SSRF 默认拒绝 + `allowPrivateHosts`、`env:VAR` 密钥引用、掩码回显与掩码回写保留原值） | `lib/providers/store.js` | ✅ |
+| 3 | **创作任务与历史**：异步 job（立即返回 jobId + 轮询 + AbortController 取消）、成果落盘 `<artifactsDir>/created/<日期>/<stem>.png` + 同名 `.json` 元数据、创作历史 `creations.json`（≤200，环形）、失败进 dev-log（source=create） | `lib/create.js` | ✅ |
+| 4 | **创作页**：`/ui/create`——服务商 CRUD（预设模板一键填充、连接测试、启用/默认、删除）、文生图/图生图表单（图片来源：上传/成果物/URL）、高级参数、任务进度、结果画廊（复用灯箱）、创作历史（重试/删除） | `lib/createpage.js`、`lib/pagekit.js`、`lib/workbench.js` | ✅ |
+| 5 | **控制端点 API**：`/api/providers`(GET/POST)、`/api/providers/{remove,test,default}`、`/api/create`、`/api/create/job|cancel|history|remove`；`/api/create` 体量上限放宽 24MB（图生图 base64） | `lib/control-server.js` | ✅ |
+| 6 | **模型工具 `comfymcp_create`**：action=generate/providers/history；生成等待 280s（超时返回 running+jobId）；工具输出不暴露密钥（只回显 label/kind/model/capabilities）；技能新增「创作台 vs 工作流」判定规则 | `lib/catalog.js`、`lib/skills.js` | ✅ |
+| 7 | **pagekit 抽取**：把页面外壳/Tab/灯箱/转义从 wfpage.js 抽出（147KB→105KB），创作页与五页共用；`workbenchTabs` 新增「创作」Tab；两处重复灯箱标记改 `lightboxMarkup()` | `lib/pagekit.js`、`lib/wfpage.js` | ✅ |
+| 8 | **测试**：新增 36 例（providers 27 + create 9）：适配器契约（b64/URL/异步任务/失败/401/404 容忍）、存储校验与掩码、env 引用、任务成功/失败/取消/删除、工具输出与错误路径；页面体检新增 create 页 9 项断言 | `test/providers.test.js`、`test/create.test.js`、`test/catalog.test.js`、`scripts/check-page-*.mjs` | ✅ |
+
+**校验（2026-10-17）**：语法检查全过（19 文件）· 插件 vitest **272 例全绿**（22 文件，含本次 +36）· 页面体检（模板完整性 7 页 + 脚本语法与关键监听 9 项/页）通过。
+
+**迁移提示**：宿主半区改动需**重启 DSH** 加载；`providers.json`/`creations.json` 均为新增文件，无迁移动作；ComfyUI 工作流链路完全不受影响（创作台是独立第二引擎）。
+
+**下个迭代候选（0.6.x）**：创作结果一键作为 img2img 工作流输入；业务配置绑定默认创作服务商；看图写提示词（vision → prompt）；批量创作（提示词模板 × 种子序列）；创作记录接入成果物检索与标签；设置页链路状态徽标（stdio / http-fallback）。
+
 ## snapshot-0.4.0（功能迭代，2026-10-16 封板）✅
 
 > 开发分支 `dev-snapshot-20261016-0.4.0`（自 0.3.1 分支拉取）→ 已合并回 `dev`（merge d382a5c）并打 tag `v0.4.0`；同日经用户授权推 GitHub 公开仓：master 快照合并（plumbing 双父合并）+ tag `v0.4.0`，并按发布约定产出离线安装包（source 零依赖插件包 / full 全工程源码包，见项目 AGENTS.md「发布与离线安装包」）；插件 `plugins/dsh-comfymcp-client` 版本 0.4.0。

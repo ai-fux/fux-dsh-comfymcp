@@ -1,43 +1,62 @@
-# dsh-comfymcp — DSH ⇄ ComfyUI 对接（v0.4.0）
+# dsh-comfymcp — DSH ⇄ ComfyUI 对接（v0.6.0）
 
 把 DSH（DeepSeek Harness）接入 ComfyUI 生成链路：大模型基于自然语言设计可运行工作流 →
 定制表单向用户确认 → 强制保存后运行 → 成果物回显到会话；并内置**图形工作台**
-（工作流/模板/成果物/快捷指令/业务配置五个页面）与**业务配置**记忆。
+（工作流/创作/模板/成果物/快捷指令/业务配置六个页面）、**业务配置**记忆与
+**多模态创作台**（直连魔搭/HuggingFace/Ollama/vLLM/A1111 文生图与图生图）。
 
-> **v0.4.0**（2026-10-16 封板，tag `v0.4.0`，已推 GitHub `master`）——**业务配置增强包**：
-> ① 命中业务类时表单标题直接亮出业务类；② 多工作流候选按运行战绩智能排序，支持自动/手动换主；
-> ③ 业务级参数预设集（工作台一键套用 + 模型侧存取）。
-> 上一版 v0.3.1（devMode 保存丢失修复）· v0.3.0（业务配置）· v0.2.1（页面体验）· v0.2.0（图形工作台）· v0.1.0（MVP）。
-> 完整交付清单见 [迭代记录](docs/roadmap.md)。
+> **v0.6.0**（2026-10-17，tag `v0.6.0`）——**多模态创作台**：工作台新增「创作」页，可配置
+> 六类服务商（魔搭 ModelScope / HuggingFace Inference Providers / Ollama / vLLM-omni /
+> A1111·SD WebUI / OpenAI 兼容网关）直连出图（文生图 / 图生图），成果自动落盘、进创作历史、
+> 可复用为图生图输入；新增 `comfymcp_create` 模型工具（快速出图绕过工作流）。
+> 0.5.x 线：修复 npm 全新安装内嵌模式全灭（宿主缺失回退 HTTP 直连）、非开发模式固定留档、
+> 行配置去机器绝对路径、`timedAsk` 倒计时开关。完整交付清单见 [迭代记录](docs/roadmap.md)。
 
-## 功能总览（v0.4.0）
+## 功能总览（v0.6.0）
 
-**自然语言生成链路**（8 个 `comfymcp_*` 工具 + 生成流程技能）
+**自然语言生成链路**（13 个 `comfymcp_*` 工具 + 生成流程技能）
 
 - `comfymcp_status` 探测链路 → `comfymcp_business` 自然语言命中业务配置 →
   `comfymcp_discover` / `comfymcp_analyze_workflow` 需求拆解与字段推导 →
   `comfymcp_push_form` / `comfymcp_apply_form` 定制表单确认 →
   `comfymcp_run_workflow` 强制保存并运行（自动整合模型卸载插桩）→
-  `comfymcp_fetch_artifacts` 成果回显 → `comfymcp_call_remote` 逃生舱直调任意远端工具。
+  `comfymcp_fetch_artifacts` 成果回显 → `comfymcp_create` 直连多模态服务商快速出图 →
+  `comfymcp_call_remote` 逃生舱直调任意远端工具。
 
-**业务配置（本期重点增强）**
+**多模态创作台（0.6.0 新）**
+
+- **服务商配置**：工作台「创作」页增删改服务商，预设模板一键填充（魔搭 Qwen-Image、
+  HF SDXL、Ollama Z-Image、vLLM-omni、A1111、OpenAI 兼容网关）；连接测试、启用开关、
+  默认服务商；密钥支持 `env:环境变量名` 引用与掩码回显。
+- **文生图 / 图生图**：提示词 + 负向提示词 + 尺寸/步数/引导/种子/数量；图生图支持上传图片、
+  从成果物选择、URL 或 dataURL 作为参考图（魔搭 Qwen-Image-Edit、A1111 img2img、
+  OpenAI edits 协议）。
+- **异步任务**：长任务（魔搭 FLUX 可达数分钟）不阻塞页面——提交后轮询进度，
+  服务端跑完自动落盘；支持取消。
+- **成果与历史**：图片落 `<artifactsDir>/created/<日期>/`，同名 `.json` 元数据（提示词/
+  参数/种子/耗时）；创作历史（≤200 条）可重试、删除；结果画廊复用整屏灯箱预览。
+- **模型侧**：`comfymcp_create`（action=generate / providers / history），
+  「帮我快速画一张」无需现搭工作流。
+
+**业务配置**
 
 - 把「跑过 / 加载过」的工作流按业务类沉淀（预置 文生图 / 图生图 / 文生视频 / 图生视频 /
   局部重绘 / 放大 / 音频 / 其它，业务类可自行增删），后续会话用自然语言直接命中，
   不再每次捞模板、枚举模型；跑通一次即自动登记。
-- **命中提示（0.4.0）**：命中业务类后，确认表单标题自动以业务类显示名开头
+- **命中提示**：命中业务类后，确认表单标题自动以业务类显示名开头
   （如「文生图 · 白色机甲 · 生成参数」），用户第一眼看到本次按哪类执行。
-- **候选智能排序 + 换主（0.4.0）**：同一业务类的多个工作流按运行战绩计分
+- **候选智能排序 + 换主**：同一业务类的多个工作流按运行战绩计分
   （成功×3 + 使用 − 失败），自动登记的配置在候选明显更好时**自动换主**
   （≥2 次成功且得分超主配置 3 分才提升，手动配置永不自动改）；工作台候选条带 ✓/✗
   战绩，点击「设为主配置」手动切换。
-- **参数预设集（0.4.0）**：每个业务类可存 ≤12 条参数预设（如「高清 1024·30 步」）；
+- **参数预设集**：每个业务类可存 ≤12 条参数预设（如「高清 1024·30 步」）；
   工作台业务卡一键套用/删除/存当前参数，工作流页「业务预设」条按字段名一键填表；
   模型侧 `preset_save` / `preset_remove` 存取，用户点名预设即按其参数推荐。
 
 **图形工作台**（DSH 侧栏进入，浏览器亦可直开 `http://127.0.0.1:18801/ui`）
 
 - **我的工作流**：本地工作流列表；模板执行过一次自动落库；打开即带出上次运行参数。
+- **创作**：多模态服务商管理与直连出图（文生图/图生图/历史/画廊，见上）。
 - **模板**：远端模板库；点开即渲染表单，执行一次自动保存。
 - **成果物**：卡片库（瀑布流/平铺）、复合语法检索（`tag:` `param:` `seed:` 等字段限定 +
   与或非）、标签管理、勾选批量删除、导出 JSON。
@@ -72,7 +91,7 @@
 
 ## 快速开始
 
-**A. 离线安装包（推荐）**：从 GitHub Release 下载 `dsh-comfymcp-client-v0.4.0-source.zip`，
+**A. 离线安装包（推荐）**：从 GitHub Release 下载 `dsh-comfymcp-client-v0.6.0-source.zip`，
 直接发给 DSH 对话框——包内 `INSTALL.md` 会让大模型自动完成解压、挂载（`plugin_manager
 install_bundle`）、重启提醒与 `comfymcp_status` 验证；目标机只需 Node ≥ 20。
 
@@ -99,7 +118,7 @@ plugin_manager install_bundle <仓库路径>\plugins\dsh-comfymcp-client
 
 ```powershell
 pnpm install
-pnpm test                                   # 三层 vitest（插件 231 + server 13 + mcp 5）
+pnpm test                                   # 三层 vitest（插件 272 + server 13 + mcp 5）
 pnpm typecheck
 node comfy-mcp-server/bin/comfy-mcp-server.mjs --selftest
 node mcp/bin/fux-comfymcp-host.mjs --selftest
@@ -128,6 +147,11 @@ Invoke-WebRequest http://127.0.0.1:8188/object_info/UnloadAllModels -UseBasicPar
 
 | 版本 | 日期 | 重点 |
 | --- | --- | --- |
+| **v0.6.0** | 2026-10-17 | 多模态创作台：工作台「创作」页 + 六类服务商直连（魔搭/HF/Ollama/vLLM/A1111/OpenAI 兼容）文生图与图生图、`comfymcp_create` 工具、创作历史与画廊；pagekit 页面公共件抽取 |
+| v0.5.2 | 2026-10-17 | 非开发模式固定留档：运行失败/探测失败无条件进 dev-log（source=run/probe），仓库迁移 ai-fux/fux-dsh-comfymcp |
+| v0.5.1 | 2026-10-17 | 修复 npm 全新安装内嵌模式全灭：宿主入口缺失自动回退 HTTP 直连（status=streamable-http-fallback）+ vendor 宿主候选约定 |
+| v0.5.0 | 2026-10-17 | 行配置零机器绝对路径；吸收 timed-ask 预设（`timedAsk` 开关） |
+| v0.4.1 | 2026-10-16 | 客户端注册 id 修复（包名即 bundle id） |
 | **v0.4.0** | 2026-10-16 | 业务配置增强包：命中提示（表单标题亮业务类）、候选智能排序与自动/手动换主、参数预设集（工作台 + 工作流页 + 模型侧）；ComfyUI 默认端口对齐官方 8188；离线安装包发布约定 |
 | v0.3.1 | 2026-10-16 | 修复 devMode 经设置页保存后丢失/不即时生效（活值化 + 落盘原子写） |
 | v0.3.0 | 2026-10-15 | 业务配置：业务类沉淀/自然语言命中/自动登记；工作流候选多来源合并；参数随工作流动态化；设置页 8 区手风琴；开发模式 |
@@ -143,5 +167,6 @@ Invoke-WebRequest http://127.0.0.1:8188/object_info/UnloadAllModels -UseBasicPar
 | [操作手册](docs/operations.md) | 日常生成流程、工作台操作、设置页、故障排查表、E2E 清单 |
 | [协议说明](docs/protocol.md) | MCP 协议细节、表单契约、页面协议 v1、卸载插桩设计 |
 | [迭代记录](docs/roadmap.md) | 各版本交付清单与校验、下个迭代候选 |
+| [0.6.0 研发计划](docs/0.6.0-plan.md) | 多模态创作台方案（服务商协议矩阵、适配器契约、里程碑） |
 | [配置示例](config/comfymcp.env) | 环境变量样例（含真实模式与 Python 侧要求注释） |
 | [项目规约](AGENTS.md) | 分支版本规约、发布与离线安装包约定、版本升级说明 |

@@ -52,6 +52,13 @@ export const GENERATION_FLOW_CONTENT = `# comfy-mcp 工作流生成流程
 配置开启且服务端支持时自动整合 UnloadAllModels 释放显存（开关关闭时反过来：自动移除工作流自带的卸载节点）。
 state=failed 时把 error 原文告诉用户。
 
+## 5b. 创作台直连（无工作流时的「快速出图」引擎）
+用户要「快速画一张 / 出封面 / 草图 / 单图编辑」，或没有现成工作流、也不想现搭图时：
+- 先 \`comfymcp_create\`（action=providers）看有没有已配置的多模态服务商（魔搭 / HuggingFace / Ollama / vLLM / A1111 / OpenAI 兼容网关）；没有 → 告知用户到工作台「创作」页添加服务商（这是唯一需要用户操作的一步）。
+- 有 → \`comfymcp_create\`（action=generate）直接出图：文生图传 prompt，图生图再传 image（本地路径/成果物名/URL）。
+- 结果 images[] 已落盘（成果物 created/ 目录）并进创作历史；把 path 列给用户，需要继续改就「再来一张」（换 seed/prompt）或把该图作为图生图输入。
+- 判定边界：复杂节点链（ControlNet/LoRA/放大/视频）、批量参数、需要沉淀业务配置 → 仍走 ComfyUI 工作流（第 1~5 步）；创作台只负责「快」。
+
 ## 6. 成果物回显
 - 运行结果自带 artifacts[] 与 localFiles[]（本地绝对路径）；
 - 把 localFiles 路径列给用户；图像还会以卡片形式显示在会话中；
@@ -65,6 +72,7 @@ state=failed 时把 error 原文告诉用户。
 - 问连接/插件 → comfymcp_status
 - 问已有工作流 → comfymcp_discover
 - 要生成 → **comfymcp_business(match)** → status → 分析 → 表单 → 运行 → 回显（未命中才 discover）
+- 快速出图/封面/单图编辑/无工作流 → comfymcp_create（先 providers 查服务商，再 generate）
 - 插件报错/行为异常 → 开发模式开启：comfymcp_dev(report) 定位并修复；未开启：comfymcp_dev(note) 记录 + 转述用户
 - autoAcceptForm 开启 → 一切问题并入 push_form（推荐项第一位）；pending/auto:true → 按推荐项直接继续
 - autoAcceptForm 关闭 → ask_user_question 带 \`timeout: -1\` 阻塞等待

@@ -212,13 +212,13 @@ export function createControlServer(options = {}) {
     return { handled: false, origin: allowedOrigin }
   }
 
-  function readBody(request) {
+  function readBody(request, maxBytes = 1_000_000) {
     return new Promise((resolve, reject) => {
       const chunks = []
       let size = 0
       request.on('data', (chunk) => {
         size += chunk.length
-        if (size > 1_000_000) {
+        if (size > maxBytes) {
           reject(new Error('request body too large'))
           request.destroy()
           return
@@ -299,6 +299,8 @@ export function createControlServer(options = {}) {
         outcome = methods.pageCommands !== undefined ? await methods.pageCommands({ token: queryToken }) : { error: 'commands page unavailable' }
       } else if (pathname === '/ui/business') {
         outcome = methods.pageBusiness !== undefined ? await methods.pageBusiness({ token: queryToken }) : { error: 'business page unavailable' }
+      } else if (pathname === '/ui/create') {
+        outcome = methods.pageCreate !== undefined ? await methods.pageCreate({ token: queryToken }) : { error: 'create page unavailable' }
       } else if (pathname.startsWith('/ui/wf/')) {
         const workflow = decodeURIComponent(pathname.slice('/ui/wf/'.length))
         outcome = methods.pageWorkflow !== undefined ? await methods.pageWorkflow(workflow, { token: queryToken }) : { error: 'workflow page unavailable' }
@@ -347,11 +349,11 @@ export function createControlServer(options = {}) {
     }
 
     // 工作台页面 API（页面同源调用，走标准 guard：marker + 可选令牌头）
-    const jsonBody = async () => {
+    const jsonBody = async (maxBytes) => {
       const contentType = String(request.headers['content-type'] ?? '')
       if (!contentType.includes('application/json')) return { error: 'POST bodies must be application/json' }
       try {
-        return { payload: JSON.parse((await readBody(request)) || '{}') }
+        return { payload: JSON.parse((await readBody(request, maxBytes)) || '{}') }
       } catch {
         return { error: 'request body is not valid JSON' }
       }
@@ -483,6 +485,115 @@ export function createControlServer(options = {}) {
         sendJson(response, 200, { ok: true, value: await methods.listBusiness(payload) }, allowedOrigin)
         return
       }
+    }
+    // 创作（多模态服务商）：服务商 CRUD/测试/默认 + 生成任务 + 创作历史
+    if (pathname === '/api/providers' && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, value: await methods.providersList() }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/providers' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.providersUpsert(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'provider_rejected', message: outcome?.error ?? '保存服务商失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome.value }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/providers/remove' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.providersRemove(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'provider_rejected', message: outcome?.error ?? '删除服务商失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome.value }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/providers/test' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: await methods.providersTest(body.payload ?? {}) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/providers/default' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.providersSetDefault(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'provider_rejected', message: outcome?.error ?? '设置默认服务商失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome.value }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/create' && request.method === 'POST') {
+      // 图生图允许携带 base64 参考图：放宽到 24MB（页面侧限制 12MB 原始图）
+      const body = await jsonBody(24 * 1024 * 1024)
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.createStart(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'create_rejected', message: outcome?.error ?? '无法启动创作' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/create/job' && request.method === 'GET') {
+      const id = String(url.searchParams.get('id') ?? '')
+      sendJson(response, 200, { ok: true, value: await methods.createJob({ id }) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/create/cancel' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.createCancel(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 409, { ok: false, error: { code: 'cancel_rejected', message: outcome?.reason ?? '取消失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/create/history' && request.method === 'GET') {
+      const limit = Number(url.searchParams.get('limit') ?? '') || undefined
+      sendJson(response, 200, { ok: true, value: await methods.createHistory({ limit }) }, allowedOrigin)
+      return
+    }
+    if (pathname === '/api/create/remove' && request.method === 'POST') {
+      const body = await jsonBody()
+      if (body.error !== undefined) {
+        sendJson(response, 400, { ok: false, error: { code: 'invalid_request', message: body.error } }, allowedOrigin)
+        return
+      }
+      const outcome = await methods.createRemove(body.payload ?? {})
+      if (outcome?.ok !== true) {
+        sendJson(response, 400, { ok: false, error: { code: 'remove_rejected', message: outcome?.reason ?? '删除失败' } }, allowedOrigin)
+        return
+      }
+      sendJson(response, 200, { ok: true, value: outcome }, allowedOrigin)
+      return
     }
     if (pathname === '/api/artifacts/remove-batch' && request.method === 'POST') {
       const body = await jsonBody()

@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildPageDescriptor, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, renderIndexHtml } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { renderCreateHtml } from '../plugins/dsh-comfymcp-client/lib/createpage.js'
 import { BUSINESS_KINDS } from '../plugins/dsh-comfymcp-client/lib/business.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -46,6 +47,12 @@ const pages = {
     candidates: [{ business: 'image2video', label: '图生视频', workflow: 'svd', runs: 2, current: null }],
     workflows: ['z-image-turbo', 'svd'],
     runStats: { 'z-image-turbo': { runs: 2, ok: 2, failed: 0, lastOkAt: null }, 'flux-schnell': { runs: 3, ok: 3, failed: 0, lastOkAt: null } },
+    token: 'tk',
+  }),
+  create: renderCreateHtml({
+    providers: [{ id: 'ms-qwen-image', label: '魔搭 · Qwen-Image', kind: 'modelscope', kindLabel: '魔搭 ModelScope（异步任务）', baseUrl: 'https://api-inference.modelscope.cn', model: 'Qwen/Qwen-Image', apiKey: 'sk-****abcd', apiKeyIsEnv: false, enabled: true, capabilities: ['t2i', 'i2i'], defaults: { size: '1024x1024' } }],
+    creations: [{ id: 'c1', status: 'succeeded', providerId: 'ms-qwen-image', providerLabel: '魔搭 · Qwen-Image', model: 'Qwen/Qwen-Image', mode: 't2i', prompt: '电影感海报', images: [{ path: 'C:\\a\\x.png', mime: 'image/png', bytes: 3 }], elapsedMs: 12000, createdAt: '2026-10-17T00:00:00.000Z' }],
+    defaultId: 'ms-qwen-image',
     token: 'tk',
   }),
 }
@@ -100,6 +107,17 @@ const PAGE_CHECKS = {
   index: {
     'Tab 切换处理': /data-tab/,
     '拉取模板请求': /api\/workflows\/pull/,
+  },
+  create: {
+    '服务商保存请求': /api\/providers'/,
+    '服务商测试请求': /api\/providers\/test/,
+    '生成任务请求': /api\/create'/,
+    '任务轮询': /api\/create\/job\?id=/,
+    '创作历史刷新': /function loadHistory\(\)[\s\S]*api\/create\/history/,
+    '模式切换显隐': /function syncModeUi\(/,
+    '图生图参考图（上传与成果物）': /FileReader[\s\S]*gen-artifact/,
+    '灯箱事件绑定': /bindPreviewEvents\('preview'\)/,
+    '结果画廊渲染': /function renderResults\(images\)/,
   },
 }
 

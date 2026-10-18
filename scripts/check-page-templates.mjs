@@ -3,6 +3,7 @@
  * （典型来源：在 HTML 里写 markdown 反引号），并顺带核对关键元素是否存在。
  */
 import { renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, buildPageDescriptor } from '../plugins/dsh-comfymcp-client/lib/wfpage.js'
+import { renderCreateHtml } from '../plugins/dsh-comfymcp-client/lib/createpage.js'
 import { BUSINESS_KINDS } from '../plugins/dsh-comfymcp-client/lib/business.js'
 
 const GRAPH = { '3': { class_type: 'KSampler', inputs: { seed: 1 } } }
@@ -25,6 +26,12 @@ const cases = {
     kinds: BUSINESS_KINDS,
     candidates: [{ business: 'image2img', label: '图生图', workflow: 'wf2', runs: 1, current: null }],
     workflows: ['wf', 'wf2'],
+    token: 'tk',
+  }),
+  create: renderCreateHtml({
+    providers: [{ id: 'ms-qwen-image', label: '魔搭 · Qwen-Image', kind: 'modelscope', baseUrl: 'https://api-inference.modelscope.cn', model: 'Qwen/Qwen-Image', apiKey: 'sk-****abcd', enabled: true, capabilities: ['t2i', 'i2i'] }],
+    creations: [{ id: 'c1', status: 'succeeded', providerId: 'ms-qwen-image', providerLabel: '魔搭', model: 'Qwen/Qwen-Image', prompt: '测试', images: [{ path: 'C:/a.png' }], elapsedMs: 1000 }],
+    defaultId: 'ms-qwen-image',
     token: 'tk',
   }),
 }

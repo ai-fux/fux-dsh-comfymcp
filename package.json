@@ -1,9 +1,9 @@
 {
   "name": "dsh-comfymcp",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "comfy-mcp 对接组合工程：通用客户端插件的 MCP 宿主、comfy-mcp 参考服务端（Streamable HTTP）与 dsh-comfymcp-client DSH 插件。",
+  "description": "comfy-mcp 对接组合工程：通用客户端插件的 MCP 宿主、comfy-mcp 参考服务端（Streamable HTTP）与 dsh-comfymcp-client DSH 插件（含多模态创作台）。",
   "license": "MIT",
   "engines": {
     "node": ">=20"

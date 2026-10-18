@@ -56,9 +56,18 @@ const installMd = (pkgName) => `# INSTALL —— 交给 DSH 大模型自动执�
 设置页「ComfyUI MCP」→ comfyuiUrl 改为 ComfyUI 实际地址（官方默认端口 \`8188\`，如 \`http://<局域网IP>:8188\`）并保存（热重启内置服务）。
 ComfyUI 原版服务即可，无需装任何 MCP 组件（可选 custom_nodes/comfyui-unload-model 用于运行后释放显存）。
 
+## 5b. 多模态创作台（可选，独立第二引擎）
+工作台「创作」页可配置多模态服务商直连出图（不经 ComfyUI 工作流）：
+魔搭 ModelScope（Qwen-Image）、HuggingFace Inference Providers、Ollama（实验性）、vLLM-omni、A1111/SD WebUI、任意 OpenAI 兼容网关。
+- 点「＋ 添加服务商」→ 选预设模板 → 填 API key（推荐 \`env:环境变量名\` 引用）→ 保存 → 「测试连接」；
+- 支持文生图与图生图（参考图可上传/从成果物选择/URL）；图片落 \`comfymcp/artifacts/created/\`，进创作历史；
+- 会话内可直接让模型调 \`comfymcp_create\`（如「帮我快速画一张封面」）。
+- 没有配置服务商不影响 ComfyUI 工作流链路。
+
 ## 6. 备注
-- \`cordis.patch.yml\` 里的 hostEntry 是开发机绝对路径：内嵌模式用不到，可忽略；仅切「远程模式」时在设置页改指真实宿主入口。
-- 升级：用新版本包重做第 1–3 步。卸载：\`plugin_manager remove_bundle @ai-fux/fux-dsh-comfymcp\` 后重启；彻底清理删 DSH 数据目录下 \`comfymcp/\`（配置覆盖层与产物）。
+- 内嵌模式无需配置 MCP 宿主入口（comfy-mcp 服务端由插件内置 vendor 包自动拉起，随机端口随 DSH 启停）；
+  仅切「远程模式」时在设置页填 endpoint（及需要 hostEntry 时填真实宿主入口）。
+- 升级：用新版本包重做第 1–3 步。卸载：\`plugin_manager remove_bundle @ai-fux/fux-dsh-comfymcp\` 后重启；彻底清理删 DSH 数据目录下 \`comfymcp/\`（配置覆盖层、providers.json、创作历史与产物）。
 - 版本：${version}（${new Date().toISOString().slice(0, 10)} 打包）
 `
 

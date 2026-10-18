@@ -77,6 +77,7 @@ describe('createTools catalog', () => {
       'comfymcp_files',
       'comfymcp_workflow_pull',
       'comfymcp_call_remote',
+      'comfymcp_create',
       'comfymcp_dev',
     ])
     expect(new Set(names).size).toBe(names.length)

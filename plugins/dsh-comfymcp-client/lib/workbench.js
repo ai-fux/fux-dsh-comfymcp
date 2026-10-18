@@ -14,6 +14,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildPageDescriptor, renderIndexHtml, renderLibraryHtml, renderPageHtml, renderArtifactsHtml, renderCommandsHtml, renderBusinessHtml, artifactsRunsHtml } from './wfpage.js'
+import { renderCreateHtml } from './createpage.js'
+import * as providerApi from './providers/index.js'
 import { createTagStore } from './tags.js'
 import { createBusinessStore, BUSINESS_KINDS, businessLabel, extractBusinessParamFields, inferBusiness, matchBusiness, businessRanking, workflowOutcomeStats } from './business.js'
 import { parseQuickCommands, buildQuickRerun, applyBatchSize } from './quick.js'
@@ -263,7 +265,7 @@ async function chainSerialReruns({ daemon, lastRun, entry, count, name, subdir, 
   }
 }
 
-export function createWorkbenchMethods({ bridge, config, persistWrite = null, business = null }) {
+export function createWorkbenchMethods({ bridge, config, persistWrite = null, business = null, providersStore = null, creationService = null }) {
   const executeRun = createRunExecutor({ bridge })
   const daemon = createRunDaemon({ bridge, executeRun })
   const tagStore = createTagStore({ dataDir: config.dataDir })
@@ -926,6 +928,61 @@ export function createWorkbenchMethods({ bridge, config, persistWrite = null, bu
 
     async listArtifacts() {
       return { runs: bridge.listRuns(30), tags: tagStore.all() }
+    },
+
+    // ---- 创作（多模态服务商）----
+    /** 创作页：服务商（掩码）+ 最近创作历史 + 预设模板。 */
+    async pageCreate({ token } = {}) {
+      if (providersStore === null || creationService === null) return { error: '创作服务未初始化' }
+      const state = providersStore.list()
+      return {
+        html: renderCreateHtml({
+          providers: state.providers,
+          creations: creationService.history(20),
+          defaultId: state.defaultId,
+          token: token ?? '',
+        }),
+      }
+    },
+    async providersList() {
+      return providersStore.list()
+    },
+    async providersUpsert(payload) {
+      const outcome = providersStore.upsert(payload ?? {})
+      if (outcome.ok !== true) return { ok: false, error: outcome.reason ?? '保存失败' }
+      return { ok: true, value: providersStore.list() }
+    },
+    async providersRemove(payload) {
+      const outcome = providersStore.remove(String(payload?.id ?? ''))
+      if (outcome.ok !== true) return { ok: false, error: outcome.reason ?? '删除失败' }
+      return { ok: true, value: providersStore.list() }
+    },
+    async providersSetDefault(payload) {
+      const outcome = providersStore.setDefault(String(payload?.id ?? ''))
+      if (outcome.ok !== true) return { ok: false, error: outcome.reason ?? '设置默认失败' }
+      return { ok: true, value: providersStore.list() }
+    },
+    async providersTest(payload) {
+      const provider = providersStore.find(String(payload?.id ?? ''))
+      if (provider === null) return { ok: false, error: `服务商 ${payload?.id ?? ''} 不存在` }
+      return providerApi.testProvider(provider, { store: providersStore })
+    },
+    async createStart(payload) {
+      const outcome = creationService.start(payload ?? {})
+      if (outcome.ok !== true) return { ok: false, error: outcome.reason ?? '无法启动创作' }
+      return outcome
+    },
+    async createJob(payload) {
+      return creationService.job(String(payload?.id ?? ''))
+    },
+    async createCancel(payload) {
+      return creationService.cancel(String(payload?.id ?? ''))
+    },
+    async createHistory(payload) {
+      return creationService.history(payload?.limit)
+    },
+    async createRemove(payload) {
+      return creationService.remove(String(payload?.id ?? ''), { deleteFiles: payload?.deleteFiles === true })
     },
 
     async updateTags({ key, patch } = {}) {

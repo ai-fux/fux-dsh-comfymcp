@@ -106,6 +106,8 @@ ComfyUI http://127.0.0.1:8000（已手动安装 comfyui-unload-model）
 - [ ] `dsh-comfymcp-client` Client 半区（设置页：端点/工作流空间/卸载节点置灰；运行面板/产物卡）
 - [ ] 真机端到端：四条验收标准逐一验证并记录
 - [ ] 后续 0.2.0 候选：自定义 Chat 卡片表单、会话内产物卡片渲染增强、comfy-mcp 服务端原生 Streamable HTTP 实现
+- [x] **0.6.0 多模态创作台**（2026-10-17）：工作台「创作」页 + 六类服务商直连（`modelscope`/`huggingface`/`openai-images`/`ollama`/`vllm`/`sdwebui`）文生图与图生图、`comfymcp_create` 工具、创作历史与画廊——研发计划见 [`docs/0.6.0-plan.md`](./docs/0.6.0-plan.md)，交付清单见 [`docs/roadmap.md`](./docs/roadmap.md#snapshot-060功能迭代2026-10-17-)
+- [ ] 0.6.x 候选：创作结果作为 img2img 工作流输入、业务配置绑定创作服务商、看图写提示词（vision→prompt）、批量创作、创作记录入成果物检索
 
 ## 6. 测试与验收纪律
 

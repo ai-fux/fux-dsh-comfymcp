@@ -18,6 +18,8 @@ import { applyHomeDefaults, resolveConfig } from './lib/config.js'
 import { createTools } from './lib/catalog.js'
 import { createBusinessStore } from './lib/business.js'
 import { createDevLog } from './lib/devlog.js'
+import { createProviderStore } from './lib/providers/store.js'
+import { createCreationService } from './lib/create.js'
 import { GENERATION_FLOW_SKILL } from './lib/skills.js'
 import { createRpcMethods, registerConnectionSurface } from './lib/rpc.js'
 import { createControlServer } from './lib/control-server.js'
@@ -25,9 +27,9 @@ import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = '@ai-fux/fux-dsh-comfymcp'
-export const version = '0.5.2'
+export const version = '0.6.0'
 export const description =
-  'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显。'
+  'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显；内置多模态创作台（直连魔搭/HuggingFace/Ollama/vLLM/A1111 文生图与图生图）。'
 
 /** 硬依赖：没有工具注册能力本插件没有意义。面板通道不做注入声明——见 rpc.js 的就绪重试。 */
 export const inject = ['tools']
@@ -82,7 +84,10 @@ export function apply(ctx, config) {
     }
     // 业务配置（首次生成的工作流选择优化）：工具层与工作台共用同一个存储实例
     const business = createBusinessStore({ dataDir: effective.dataDir })
-    const tools = createTools({ define: defineTool, bridge, askUser, business, devLog, devMode: isDevMode })
+    // 多模态创作：服务商清单（providers.json）+ 创作任务/历史（creations/）
+    const providerStore = createProviderStore({ dataDir: effective.dataDir })
+    const creation = createCreationService({ config: bridge.config, store: providerStore, devLog })
+    const tools = createTools({ define: defineTool, bridge, askUser, business, devLog, devMode: isDevMode, providerStore, creation })
     for (const tool of tools) {
       disposers.push(ctx.tools.register(tool))
     }
@@ -111,6 +116,8 @@ export function apply(ctx, config) {
       bridge,
       config: effective,
       business,
+      providersStore: providerStore,
+      creationService: creation,
       persistWrite: (patch) => persist.writeOverlay(overlayPath, { ...persist.readOverlay(overlayPath), ...patch }),
     })
     Object.assign(methods, workbench)
