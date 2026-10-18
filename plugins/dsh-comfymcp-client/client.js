@@ -967,13 +967,14 @@ if (typeof window !== 'undefined' && window.__ModuleLoader__ !== undefined) {
           return function () { cancelled = true }
         }, [ready])
 
-        // 四 Tab 齐平：我的工作流 / 模板 / 成果物 / 指令（与宿主页顶部 Tab 一致）
-        var tabPath = tab === 'library' ? '/ui/library' : tab === 'artifacts' ? '/ui/artifacts' : tab === 'business' ? '/ui/business' : tab === 'commands' ? '/ui/commands' : '/ui'
+        // 六 Tab 齐平：我的工作流 / 创作 / 模板 / 成果物 / 业务配置 / 指令（与宿主页顶部 Tab 一致）
+        var tabPath = tab === 'create' ? '/ui/create' : tab === 'library' ? '/ui/library' : tab === 'artifacts' ? '/ui/artifacts' : tab === 'business' ? '/ui/business' : tab === 'commands' ? '/ui/commands' : '/ui'
         var href = ready && base !== null ? workbenchUrl(tabPath) : null
         return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: T.base } },
-          h('div', { className: 'dshmcp-row', style: { padding: '10px 14px', borderBottom: '1px solid ' + T.border, gap: 8 } },
+          h('div', { className: 'dshmcp-row', style: { padding: '10px 14px', borderBottom: '1px solid ' + T.border, gap: 8, flexWrap: 'wrap' } },
             h('span', { style: { color: T.text, fontWeight: 600, fontSize: 13, marginRight: 4 } }, 'ComfyUI 工作台'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'mine' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('mine') } }, '我的工作流'),
+            h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'create' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('create') } }, '创作'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'library' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('library') } }, '模板'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'artifacts' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('artifacts') } }, '成果物'),
             h('button', { className: 'dshmcp-btn dshmcp-btn-sm' + (tab === 'business' ? ' dshmcp-btn-primary' : ''), onClick: function () { setTab('business') } }, '业务配置'),

@@ -1,6 +1,6 @@
 {
   "name": "@ai-fux/fux-dsh-comfymcp",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "description": "DSH 插件：对接 comfy-mcp 服务（自然语言设计可运行工作流、定制表单、运行与成果物回显）+ 多模态创作台（直连魔搭/HuggingFace/Ollama/vLLM/A1111 文生图与图生图）。",
   "license": "MIT",

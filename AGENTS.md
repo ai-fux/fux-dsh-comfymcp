@@ -17,11 +17,12 @@
 
 ## 分支与版本
 
-- 当前版本：**0.6.1**（**多模态创作台**：工作台新增「创作」页——服务商 CRUD/连接测试/掩码密钥（支持 `env:VAR` 引用）、六类服务商直连（`modelscope`/`huggingface`/`openai-images`/`ollama`/`vllm`/`sdwebui`）文生图与图生图、异步任务轮询与取消、成果落盘 `<artifactsDir>/created/<日期>/` + `.json` 元数据、创作历史 `creations.json`（≤200）、`comfymcp_create` 模型工具（共 13 个工具）、pagekit 页面公共件抽取（wfpage 147KB→105KB）；0.6.1 修复创作页漏注入 PREVIEW_JS 导致灯箱/画廊失效（体检脚本补灯箱注入断言）；0.5.2 非开发模式固定留档；0.5.1 内嵌模式宿主缺失回退 HTTP 直连；0.5.0 行配置零绝对路径 + `timedAsk`；0.4.1 注册 id 修复；0.4.0 功能封板）。
+- 当前版本：**0.6.2**（**多模态创作台**：工作台新增「创作」页——服务商 CRUD/连接测试/掩码密钥（支持 `env:VAR` 引用）、六类服务商直连（`modelscope`/`huggingface`/`openai-images`/`ollama`/`vllm`/`sdwebui`）文生图与图生图、异步任务轮询与取消、成果落盘 `<artifactsDir>/created/<日期>/` + `.json` 元数据、创作历史 `creations.json`（≤200）、`comfymcp_create` 模型工具（共 13 个工具）、pagekit 页面公共件抽取（wfpage 147KB→105KB）；0.6.2 修复 **DSH 面板缺「创作」Tab**（iframe 内页头 Tab 被隐藏 → 新页在面板不可达）；0.6.1 修复创作页漏注入 PREVIEW_JS（灯箱/画廊失效）；0.5.2 非开发模式固定留档；0.5.1 内嵌模式宿主缺失回退 HTTP 直连；0.5.0 行配置零绝对路径 + `timedAsk`；0.4.1 注册 id 修复；0.4.0 功能封板）。
 - 稳定分支：`dev`（本次汇聚点，用户指定）；历史稳定分支 `snapshot-0.2.1`、`snapshot-0.2.0`、`snapshot-0.1.0`。
 - 开发分支：`dev-snapshot-20261016-0.4.0`（已合并）；上一轮 `dev-snapshot-20261016-0.3.1`（已合并）。
 - 版本：三段 `X.Y.Z`（平台 SEMVER 限制），四段仅用于分支/`.workplace` 目录名。
 - 严禁推送 `main`/`master`；远程推送与分支合并需用户二次确认。
+- **私库同步（纯研发版本，强制）**：`origin` = GitLab 私库 `http://192.168.1.7:28080/agent/dsh-comfymcp.git`（内网可达，凭据在 remote URL 中）。**每次迭代完成（dev 上提交后）立即 `git push origin dev`**，保证私库里有最新纯研发版本（含测试、文档、脚本）；`dev-snapshot-*` 讲代分支按需单独推。GitHub（`github` remote）只在稳定版发布时按四步流水线推快照（见「发布与离线安装包」），两线互不替代。0.6.1 时已补推（此前 0.4.0~0.6.0 的 dev 提交曾滞后 16 个提交，教训）。
 - 本地验证补充：`node scripts/check-page-templates.mjs`（页面模板完整性）、`node scripts/check-page-scripts.mjs`（页面脚本语法与关键监听）。
 
 ## 版本升级说明（0.4.0）
@@ -73,6 +74,7 @@ node mcp/bin/fux-comfymcp-host.mjs --selftest
   - 附 `checksums-v<ver>.txt`（SHA256）。
 - **包内 INSTALL.md** 面向 DSH 会话大模型：落盘解压 → `plugin_manager install_bundle` 或 profile `link:` 挂载 → 重启 DSH → `comfymcp_status` 验证 →（ComfyUI 在别的机器）设置页改 `comfyuiUrl`。用户把 zip 发进 DSH 对话框，大模型照做即可完成安装。
 - 打包脚本零依赖（Node 内置 + 系统 Compress-Archive）；插件本体运行零 npm 依赖是「source 包离线可装」的前提，改动插件依赖时必须同步评估打包清单。
+- **git HTTPS 不可用时的 API 快照通道（2026-10-17 实战）**：github.com:443 被 SNI 干扰时 git push 全挂（`Connection was reset` / `Recv failure`），可改用 GitHub 数据 API 推快照：`git diff --name-status <上次快照 tag> master` 取变更 → `POST /git/blobs` 上传 → `POST /git/trees`（`base_tree` = 远端 master tree）→ `POST /git/commits`（`parents` = [远端 master]）→ `PATCH /git/refs/heads/master`（快照线用 force 重排时保留链：0.5.2 → 0.6.0 → 0.6.1）→ `POST/PATCH /git/refs` 建/移 tag → `POST /releases` + `uploads.github.com/.../assets` 传离线包。本地 master 与远端分叉（树一致、提交不同）；网络恢复后 `git fetch github master && git reset --hard FETCH_HEAD` 对齐。**组织仓要写权限的 granular token：Resource owner 选 `ai-fux` + Contents: Read and write**（个人 token 对组织仓默认 403/401；token 已写入本机 git 凭据管理器，撤销后需重新配置）。
 
 ## npm 双源发布（国际 + 国内）
 

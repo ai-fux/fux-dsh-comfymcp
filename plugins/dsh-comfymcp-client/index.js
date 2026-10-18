@@ -27,7 +27,7 @@ import { createWorkbenchMethods } from './lib/workbench.js'
 import * as persist from './lib/persist.js'
 
 export const name = '@ai-fux/fux-dsh-comfymcp'
-export const version = '0.6.1'
+export const version = '0.6.2'
 export const description =
   'comfy-mcp 对接：自然语言设计可运行 ComfyUI 工作流、定制表单确认、强制保存运行与成果物回显；内置多模态创作台（直连魔搭/HuggingFace/Ollama/vLLM/A1111 文生图与图生图）。'
 
