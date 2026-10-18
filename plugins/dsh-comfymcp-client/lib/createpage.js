@@ -6,7 +6,7 @@
  * - JS 负责增删改查（/api/providers*）、生成（/api/create + 轮询 /api/create/job）、
  *   结果画廊与历史刷新；灯箱复用 pagekit 的 PREVIEW_JS。
  */
-import { escapeHtml, lightboxMarkup, pageShell, PREVIEW_CSS, TABS_CSS, workbenchTabs } from './pagekit.js'
+import { escapeHtml, lightboxMarkup, pageShell, PREVIEW_CSS, PREVIEW_JS, TABS_CSS, workbenchTabs } from './pagekit.js'
 import { PROVIDER_KINDS, PROVIDER_KIND_LABELS, PROVIDER_PRESETS } from './providers/index.js'
 
 const CREATE_CSS = `
@@ -142,6 +142,7 @@ var PROVIDERS = ${JSON.stringify(providers)};
 var PRESETS = ${JSON.stringify(presets)};
 var KIND_LABELS = ${JSON.stringify(PROVIDER_KIND_LABELS)};
 window.__defaultId = ${JSON.stringify(defaultId)};
+${PREVIEW_JS}
 ${CREATE_JS}
 </script>`
   return pageShell('创作', body, { extraCss: `${CREATE_CSS}${TABS_CSS}${PREVIEW_CSS}`, wrapClass: 'wide' })

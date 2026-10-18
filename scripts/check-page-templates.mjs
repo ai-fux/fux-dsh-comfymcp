@@ -38,8 +38,16 @@ const cases = {
 let failed = false
 for (const [name, html] of Object.entries(cases)) {
   const bodyLength = (html.match(/class="wrap[^"]*">([\s\S]*?)<script/) ?? [])[1]?.length ?? 0
-  const ok = bodyLength > 200
+  let ok = bodyLength > 200
+  let extra = ''
+  if (name === 'create') {
+    // 创作页必须带灯箱标记与 PREVIEW_JS（缺一即预览/画廊失效）
+    const hasLightbox = html.includes('id="preview-body"')
+    const hasPreviewJs = /function viewZoomTo\([\s\S]*function showPreview\(/.test(html)
+    if (!hasLightbox || !hasPreviewJs) ok = false
+    extra = ` · 灯箱标记 ${hasLightbox ? '✓' : '✗'} · 灯箱脚本 ${hasPreviewJs ? '✓' : '✗'}`
+  }
   if (!ok) failed = true
-  console.log(`${name.padEnd(9)} body ${String(bodyLength).padStart(6)} 字符 · ${ok ? '完整 ✓' : '疑似被模板截断 ✗'}`)
+  console.log(`${name.padEnd(9)} body ${String(bodyLength).padStart(6)} 字符 · ${ok ? '完整 ✓' : '疑似被模板截断 ✗'}${extra}`)
 }
 process.exit(failed ? 1 : 0)

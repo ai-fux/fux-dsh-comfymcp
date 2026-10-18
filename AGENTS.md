@@ -17,7 +17,7 @@
 
 ## 分支与版本
 
-- 当前版本：**0.6.0**（**多模态创作台**：工作台新增「创作」页——服务商 CRUD/连接测试/掩码密钥（支持 `env:VAR` 引用）、六类服务商直连（`modelscope`/`huggingface`/`openai-images`/`ollama`/`vllm`/`sdwebui`）文生图与图生图、异步任务轮询与取消、成果落盘 `<artifactsDir>/created/<日期>/` + `.json` 元数据、创作历史 `creations.json`（≤200）、`comfymcp_create` 模型工具（共 13 个工具）、pagekit 页面公共件抽取（wfpage 147KB→105KB）；0.5.2 非开发模式固定留档；0.5.1 内嵌模式宿主缺失回退 HTTP 直连；0.5.0 行配置零绝对路径 + `timedAsk`；0.4.1 注册 id 修复；0.4.0 功能封板）。
+- 当前版本：**0.6.1**（**多模态创作台**：工作台新增「创作」页——服务商 CRUD/连接测试/掩码密钥（支持 `env:VAR` 引用）、六类服务商直连（`modelscope`/`huggingface`/`openai-images`/`ollama`/`vllm`/`sdwebui`）文生图与图生图、异步任务轮询与取消、成果落盘 `<artifactsDir>/created/<日期>/` + `.json` 元数据、创作历史 `creations.json`（≤200）、`comfymcp_create` 模型工具（共 13 个工具）、pagekit 页面公共件抽取（wfpage 147KB→105KB）；0.6.1 修复创作页漏注入 PREVIEW_JS 导致灯箱/画廊失效（体检脚本补灯箱注入断言）；0.5.2 非开发模式固定留档；0.5.1 内嵌模式宿主缺失回退 HTTP 直连；0.5.0 行配置零绝对路径 + `timedAsk`；0.4.1 注册 id 修复；0.4.0 功能封板）。
 - 稳定分支：`dev`（本次汇聚点，用户指定）；历史稳定分支 `snapshot-0.2.1`、`snapshot-0.2.0`、`snapshot-0.1.0`。
 - 开发分支：`dev-snapshot-20261016-0.4.0`（已合并）；上一轮 `dev-snapshot-20261016-0.3.1`（已合并）。
 - 版本：三段 `X.Y.Z`（平台 SEMVER 限制），四段仅用于分支/`.workplace` 目录名。

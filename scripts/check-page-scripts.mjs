@@ -117,6 +117,7 @@ const PAGE_CHECKS = {
     '模式切换显隐': /function syncModeUi\(/,
     '图生图参考图（上传与成果物）': /FileReader[\s\S]*gen-artifact/,
     '灯箱事件绑定': /bindPreviewEvents\('preview'\)/,
+    '灯箱脚本已注入（缩放/预览函数存在）': /function viewZoomTo\([\s\S]*function showPreview\(/,
     '结果画廊渲染': /function renderResults\(images\)/,
   },
 }
